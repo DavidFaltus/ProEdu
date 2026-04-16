@@ -61,7 +61,9 @@ export default function Practice() {
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'practiceCourses'), (snap) => {
-      setDbCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
+      const allDbCourses = snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse));
+      // Only show visible courses to students (default is true if undefined)
+      setDbCourses(allDbCourses.filter(c => c.isVisible !== false));
     });
     return () => unsub();
   }, []);

@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
-import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit } from 'lucide-react';
+import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -70,6 +70,9 @@ export default function TeacherDashboard() {
 
   const [isEditingQuestion, setIsEditingQuestion] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Partial<Question> & { id?: string, imageFile?: File | null }>({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', courseId: '', imageFile: null });
+
+  const [editingCourse, setEditingCourse] = useState<PracticeCourse | null>(null);
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
 
   const [selectedSheetForView, setSelectedSheetForView] = useState<LearningSheet | null>(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
@@ -189,6 +192,67 @@ export default function TeacherDashboard() {
       unsubTopics();
     };
   }, [profile]);
+
+  const toggleCourseVisibility = async (course: PracticeCourse) => {
+    try {
+      await updateDoc(doc(db, 'practiceCourses', course.id), {
+        isVisible: course.isVisible === false ? true : false
+      });
+      toast.success(course.isVisible === false ? 'Předmět je nyní viditelný' : 'Předmět byl skryt před žáky');
+    } catch (err) {
+      toast.error('Chyba při změně viditelnosti');
+      console.error(err);
+    }
+  };
+
+  const handleDeleteCourse = async (courseId: string) => {
+    try {
+      await deleteDoc(doc(db, 'practiceCourses', courseId));
+      toast.success('Procvičování bylo smazáno');
+    } catch (error) {
+      toast.error('Chyba při mazání procvičování');
+      console.error(error);
+    }
+  };
+
+  const handleBulkDeleteQuestions = async () => {
+    try {
+      const promises = Array.from(selectedQuestionIds).map((id: string) => deleteDoc(doc(db, 'questions', id)));
+      await Promise.all(promises);
+      toast.success(`Smazáno ${selectedQuestionIds.size} otázek`);
+      setSelectedQuestionIds(new Set());
+    } catch (error) {
+      toast.error('Chyba při hromadném mazání');
+      console.error(error);
+    }
+  };
+
+  const handleEditCourse = async () => {
+    if (!editingCourse) return;
+    if (!editingCourse.title || !editingCourse.topics?.length) {
+      toast.error('Zadejte prosím název a alespoň jedno téma.');
+      return;
+    }
+    try {
+      await updateDoc(doc(db, 'practiceCourses', editingCourse.id), {
+        title: editingCourse.title,
+        description: editingCourse.description,
+        topics: editingCourse.topics,
+        difficulty: editingCourse.difficulty,
+        duration: editingCourse.duration
+      });
+      for (const t of editingCourse.topics) {
+        if (!allTopics.includes(t)) {
+          await addDoc(collection(db, 'customTopics'), { name: t });
+        }
+      }
+      toast.success('Procvičování úspěšně upraveno');
+      setEditingCourse(null);
+    } catch (err) {
+      toast.error('Chyba při úpravě procvičování');
+      console.error(err);
+    }
+  };
 
   const handleDeleteTest = async (id: string) => {
     try {
@@ -546,14 +610,48 @@ export default function TeacherDashboard() {
                   className={`pb-8 px-8 pt-8 relative ${course.color?.startsWith('bg-') ? course.color : ''}`}
                   style={{ backgroundColor: course.color?.startsWith('#') ? course.color : undefined }}
                 >
-                  <div className="flex justify-between items-start mb-6">
-                    <div className="flex flex-wrap gap-2">
+                  <div className="flex justify-between items-start mb-6 w-full">
+                    <div className="flex flex-wrap gap-2 pr-2">
                       {(course.topics?.length ? course.topics : [course.topic]).map(t => (
                         <span key={t} className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
                           {t}
                         </span>
                       ))}
                     </div>
+                    <div className="flex gap-2 shrink-0 bg-white/60 backdrop-blur-md p-1 rounded-xl">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-8 w-8 rounded-lg ${course.isVisible === false ? 'text-gray-400 hover:text-gray-600' : 'text-brand-blue hover:text-blue-600'}`}
+                        onClick={(e) => { e.stopPropagation(); toggleCourseVisibility(course); }}
+                        title={course.isVisible === false ? 'Kurz je skrytý. Kliknutím zobrazíte.' : 'Kurz je viditelný. Kliknutím skryjete.'}
+                      >
+                        {course.isVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-brand-orange hover:text-orange-600"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingCourse(course);
+                        }}
+                        title="Upravit kurz"
+                      >
+                        <Edit size={16} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-red-500 hover:text-red-700"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCourse(course.id); }}
+                        title="Smazat kurz"
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="mb-2">
                     <span className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
                       {course.difficulty}
                     </span>
@@ -878,17 +976,41 @@ export default function TeacherDashboard() {
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
-                <DialogTitle className="text-3xl font-display font-bold text-brand-blue">
-                  Otázky v sekci: {practiceCourses.find(c => c.id === viewingCourseId)?.title}
-                </DialogTitle>
+                <div className="flex justify-between items-center w-full">
+                  <DialogTitle className="text-3xl font-display font-bold text-brand-blue">
+                    Otázky v sekci: {practiceCourses.find(c => c.id === viewingCourseId)?.title}
+                  </DialogTitle>
+                  {selectedQuestionIds.size > 0 && (
+                    <Button onClick={handleBulkDeleteQuestions} className="bg-red-500 hover:bg-red-600 text-white rounded-xl shadow-md">
+                      <Trash2 size={18} className="mr-2" />
+                      Smazat vybrané ({selectedQuestionIds.size})
+                    </Button>
+                  )}
+                </div>
               </DialogHeader>
             </div>
           </div>
           <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
             <div className="max-w-6xl mx-auto space-y-6 w-full">
               {questions.filter(q => q.courseId === viewingCourseId).map(q => (
-                <Card key={q.id} className="rounded-[2rem] border-none shadow-sm bg-white overflow-hidden">
-                  <CardHeader>
+                <Card key={q.id} className="rounded-[2rem] border-none shadow-sm bg-white overflow-hidden relative">
+                  <div className="absolute top-6 left-6 z-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedQuestionIds.has(q.id)}
+                      onChange={(e) => {
+                        const newSelected = new Set(selectedQuestionIds);
+                        if (e.target.checked) {
+                          newSelected.add(q.id);
+                        } else {
+                          newSelected.delete(q.id);
+                        }
+                        setSelectedQuestionIds(newSelected);
+                      }}
+                      className="w-5 h-5 rounded border-gray-300 text-brand-blue focus:ring-brand-blue cursor-pointer"
+                    />
+                  </div>
+                  <CardHeader className="pl-16">
                     <div className="flex justify-between items-start">
                       <div className="flex flex-wrap gap-1">
                         {q.topics && q.topics.length > 0 ? (
@@ -1656,6 +1778,134 @@ export default function TeacherDashboard() {
               <DialogFooter>
                 <Button onClick={handleSaveCourse} className="btn-blue w-full h-14 rounded-2xl text-lg font-bold">
                   Vytvořit sekci
+                </Button>
+              </DialogFooter>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Course Dialog */}
+      <Dialog open={!!editingCourse} onOpenChange={(open) => !open && setEditingCourse(null)}>
+        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+          <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30 flex-shrink-0">
+            <div className="max-w-6xl mx-auto w-full">
+              <DialogHeader>
+                <DialogTitle className="text-3xl font-display font-bold text-brand-orange">Úprava sekce procvičování</DialogTitle>
+              </DialogHeader>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
+            <div className="max-w-6xl mx-auto space-y-8 w-full">
+              <div className="space-y-2">
+                <Label className="font-bold text-gray-700">Název sekce</Label>
+                <Input
+                  value={editingCourse?.title || ''}
+                  onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, title: e.target.value } : null)}
+                  className="rounded-xl h-14 border-gray-100 bg-white"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold text-gray-700">Popis</Label>
+                <Textarea
+                  value={editingCourse?.description || ''}
+                  onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, description: e.target.value } : null)}
+                  className="rounded-xl min-h-[120px] border-gray-100 bg-white"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="space-y-4 md:col-span-2">
+                  <Label className="font-bold text-gray-700">Témata (vyberte nebo vytvořte)</Label>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {editingCourse?.topics && editingCourse.topics.length > 0 ? editingCourse.topics.map(t => (
+                      <span key={t} className="px-3 py-1 bg-blue-100 text-brand-blue rounded-full text-sm font-bold flex items-center gap-2">
+                        {t}
+                        <button onClick={(e) => {
+                          e.preventDefault();
+                          if (editingCourse) setEditingCourse({ ...editingCourse, topics: editingCourse.topics?.filter(topic => topic !== t) });
+                        }} className="hover:text-red-500">×</button>
+                      </span>
+                    )) : (
+                      <span className="text-sm text-gray-400 italic">Zatím nebylo vybráno žádné téma</span>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Select onValueChange={(val: string) => {
+                      if (editingCourse && !editingCourse.topics?.includes(val)) {
+                        setEditingCourse({ ...editingCourse, topics: [...(editingCourse.topics || []), val] });
+                      }
+                    }}>
+                      <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white max-w-[200px]">
+                        <SelectValue placeholder="Vyberte existující..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allTopics.filter(t => typeof t === 'string' && !editingCourse?.topics?.includes(t as string)).map(topic => (
+                          <SelectItem key={topic as string} value={topic as string}>{topic as string}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    <div className="flex-1 flex gap-2">
+                      <Input
+                        value={customCourseTopic}
+                        onChange={e => setCustomCourseTopic(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (editingCourse && customCourseTopic && !editingCourse.topics?.includes(customCourseTopic)) {
+                              setEditingCourse({ ...editingCourse, topics: [...(editingCourse.topics || []), customCourseTopic] });
+                              setCustomCourseTopic('');
+                            }
+                          }
+                        }}
+                        placeholder="Nebo zadejte nové a stiskněte Enter"
+                        className="rounded-xl h-14 border-gray-100 bg-white"
+                      />
+                      <Button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          if (editingCourse && customCourseTopic && !editingCourse.topics?.includes(customCourseTopic)) {
+                            setEditingCourse({ ...editingCourse, topics: [...(editingCourse.topics || []), customCourseTopic] });
+                            setCustomCourseTopic('');
+                          }
+                        }}
+                        className="h-14 rounded-xl px-6 bg-gray-100 text-gray-700 hover:bg-gray-200 border-none font-bold"
+                      >
+                        Přidat
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="font-bold text-gray-700">Obtížnost</Label>
+                  <Select value={editingCourse?.difficulty || ''} onValueChange={(val: any) => setEditingCourse(editingCourse ? { ...editingCourse, difficulty: val } : null)}>
+                    <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white">
+                      <SelectValue placeholder="Vyberte obtížnost..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Začátečník">Začátečník</SelectItem>
+                      <SelectItem value="Středně pokročilý">Středně pokročilý</SelectItem>
+                      <SelectItem value="Pokročilý">Pokročilý</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="font-bold text-gray-700">Délka (např. 4 týdny)</Label>
+                  <Input
+                    value={editingCourse?.duration || ''}
+                    onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, duration: e.target.value } : null)}
+                    className="rounded-xl h-14 border-gray-100 bg-white"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="p-6 border-t border-gray-100 bg-white flex-shrink-0">
+            <div className="max-w-6xl mx-auto w-full">
+              <DialogFooter>
+                <Button onClick={handleEditCourse} className="bg-brand-orange hover:bg-orange-600 w-full h-14 rounded-2xl text-lg font-bold text-white shadow-xl shadow-orange-200">
+                  Uložit změny
                 </Button>
               </DialogFooter>
             </div>

@@ -28,16 +28,20 @@ const executeWithRetry = async <T>(operation: () => Promise<T>, maxRetries = 4):
 export const extractTestFromFile = async (base64Data: string, mimeType: string): Promise<{ title: string, description: string, questions: Question[] }> => {
   try {
     const response = await executeWithRetry(() => ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType
+      model: "gemini-3.1-pro-preview",
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType
+            }
+          },
+          {
+            text: "Analyzuj tento dokument a vytvoř z něj elektronický test. Vrať název testu, krátký popis a seznam otázek. Každá otázka musí mít 4 možnosti (pokud v dokumentu nejsou, vymysli smysluplné nesprávné možnosti), jednu správnou odpověď a vysvětlení. Vrať výsledek v češtině."
           }
-        },
-        "Analyzuj tento dokument a vytvoř z něj elektronický test. Vrať název testu, krátký popis a seznam otázek. Každá otázka musí mít 4 možnosti (pokud v dokumentu nejsou, vymysli smysluplné nesprávné možnosti), jednu správnou odpověď a vysvětlení. Vrať výsledek v češtině."
-      ],
+        ]
+      },
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -85,7 +89,7 @@ export const extractTestFromFile = async (base64Data: string, mimeType: string):
 export const generateMathQuestions = async (topic: MathTopic, count: number = 5): Promise<Question[]> => {
   try {
     const response = await executeWithRetry(() => ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.1-pro-preview",
       contents: `Generuj ${count} testových otázek z matematiky pro 9. třídu ZŠ (příprava na přijímací zkoušky na SŠ) na téma: ${topic}. 
       Každá otázka musí mít 4 možnosti, jednu správnou odpověď a krátké vysvětlení.
       Vrať výsledek v češtině.`,
@@ -125,29 +129,26 @@ export const generateMathQuestions = async (topic: MathTopic, count: number = 5)
 export const extractQuestionsFromTwoPDFs = async (questionsBase64: string, answersBase64: string, topic: MathTopic): Promise<Question[]> => {
   try {
     const response = await executeWithRetry(() => ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              inlineData: {
-                data: questionsBase64,
-                mimeType: "application/pdf"
-              }
-            },
-            {
-              inlineData: {
-                data: answersBase64,
-                mimeType: "application/pdf"
-              }
-            },
-            {
-              text: "Analyzuj tato dvě PDF. První obsahuje otázky, druhé obsahuje správné odpovědi. Extrahuj otázky z prvního PDF. Ke každé otázce vytvoř 4 možnosti (jedna správná z druhého PDF, 3 smysluplné nesprávné, pokud v PDF nejsou). Přiřaď správnou odpověď z druhého PDF. Vrať jako JSON pole otázek. Vše v češtině."
+      model: "gemini-3.1-pro-preview",
+      contents: {
+        parts: [
+          {
+            inlineData: {
+              data: questionsBase64,
+              mimeType: "application/pdf"
             }
-          ]
-        }
-      ],
+          },
+          {
+            inlineData: {
+              data: answersBase64,
+              mimeType: "application/pdf"
+            }
+          },
+          {
+            text: "Analyzuj tato dvě PDF. První obsahuje otázky, druhé obsahuje správné odpovědi. Extrahuj otázky z prvního PDF. Ke každé otázce vytvoř 4 možnosti (jedna správná z druhého PDF, 3 smysluplné nesprávné, pokud v PDF nejsou). Přiřaď správnou odpověď z druhého PDF. Vrať jako JSON pole otázek. Vše v češtině."
+          }
+        ]
+      },
       config: {
         responseMimeType: "application/json",
         responseSchema: {

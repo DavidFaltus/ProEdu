@@ -110,6 +110,7 @@ service cloud.firestore {
              data.title is string && data.title.size() > 0 &&
              (!('topic' in data) || data.topic is string) &&
              (!('topics' in data) || data.topics is list) &&
+             (!('isVisible' in data) || data.isVisible is bool) &&
              data.difficulty is string &&
              data.createdBy == request.auth.uid &&
              data.createdAt is timestamp;
@@ -179,6 +180,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidPracticeCourse(request.resource.data);
       allow update: if isAdmin() && isValidPracticeCourse(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /customTopics/{topicId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && request.resource.data.keys().hasAll(['name']) && request.resource.data.name is string;
+      allow update: if isAdmin() && request.resource.data.keys().hasAll(['name']) && request.resource.data.name is string;
       allow delete: if isAdmin();
     }
   }

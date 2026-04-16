@@ -79,4 +79,5 @@ export interface PracticeCourse {
   color: string;
   createdBy: string;
   createdAt: Timestamp;
+  isVisible?: boolean;
 }
