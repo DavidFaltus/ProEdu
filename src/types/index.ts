@@ -13,13 +13,7 @@ export interface UserProfile {
   focusAreas?: string[]; // Recommended areas to focus on
 }
 
-export type MathTopic = 
-  | 'Aritmetika' 
-  | 'Geometrie' 
-  | 'Zlomky a procenta' 
-  | 'Rovnice' 
-  | 'Slovní úlohy' 
-  | 'Jednotky a měření';
+export type MathTopic = string;
 
 export interface Question {
   id: string;
@@ -27,7 +21,8 @@ export interface Question {
   options: string[];
   correctAnswer: string;
   explanation?: string;
-  topic: MathTopic;
+  topic: string;
+  topics?: string[];
   diagram?: 'square' | 'triangle' | 'circle' | 'coordinate';
   courseId?: string;
   imageUrl?: string;
@@ -76,7 +71,9 @@ export interface PracticeCourse {
   id: string;
   title: string;
   description: string;
-  topic: MathTopic;
+  topic: MathTopic | string;
+  topics?: string[];
+  customTopics?: string[]; // deprecated/alternative, let's just use `topics`
   difficulty: Difficulty;
   duration: string;
   color: string;

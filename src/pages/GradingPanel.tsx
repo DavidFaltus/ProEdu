@@ -89,7 +89,7 @@ export default function GradingPanel() {
   );
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-10 pb-20">
+    <div className="focus-container">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-6">
           <Button 

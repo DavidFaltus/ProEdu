@@ -1,0 +1,15 @@
+{
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "ProEdu",
+        "supportEmail": "davidfaltus03@gmail.com"
+      }
+    }
+  },
+  "firestore": {
+    "database": "ai-studio-1fc75345-16e5-4af6-a275-4152ed6176ba",
+    "rules": "firestore.rules"
+  }
+}

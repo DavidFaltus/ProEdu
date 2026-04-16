@@ -25,6 +25,33 @@ export default function LearningSheets() {
   const [search, setSearch] = useState('');
   const [selectedTopic, setSelectedTopic] = useState<MathTopic | 'Vše'>('Vše');
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (selectedSheet?.fileUrl && selectedSheet.fileUrl.startsWith('data:')) {
+      try {
+        const dataURI = selectedSheet.fileUrl;
+        const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+        const byteString = atob(dataURI.split(',')[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+          ia[i] = byteString.charCodeAt(i);
+        }
+        const blob = new Blob([ab], { type: mimeString });
+        const url = URL.createObjectURL(blob);
+        setPdfBlobUrl(url);
+        return () => URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error('Failed to create blob from data URI', e);
+        setPdfBlobUrl(selectedSheet.fileUrl);
+      }
+    } else if (selectedSheet?.fileUrl) {
+      setPdfBlobUrl(selectedSheet.fileUrl);
+    } else {
+      setPdfBlobUrl(null);
+    }
+  }, [selectedSheet]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'learningSheets'), (snap) => {
@@ -34,14 +61,13 @@ export default function LearningSheets() {
   }, []);
 
   const filteredSheets = sheets.filter(s => {
-    const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase()) || 
-                         s.content.toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase());
     const matchesTopic = selectedTopic === 'Vše' || s.topic === selectedTopic;
     return matchesSearch && matchesTopic;
   });
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-10 pb-20">
+    <div className="page-container">
       <header className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div className="flex items-center gap-4">
@@ -116,7 +142,7 @@ export default function LearningSheets() {
                 </CardHeader>
                 <CardContent className="p-8 pt-0 flex-1">
                   <p className="text-gray-500 text-lg line-clamp-4 leading-relaxed">
-                    {sheet.content}
+                    Výukový materiál {sheet.subject} - {sheet.level}.
                   </p>
                 </CardContent>
                 <div className="px-8 py-6 bg-purple-50/30 border-t border-purple-50 text-sm font-black text-brand-purple uppercase tracking-widest flex items-center justify-between">
@@ -140,36 +166,63 @@ export default function LearningSheets() {
       )}
 
       <Dialog open={!!selectedSheet} onOpenChange={() => setSelectedSheet(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto rounded-[3rem] p-0 border-none shadow-3xl">
+        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[98vh] h-[98vh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
           {selectedSheet && (
-            <div className="flex flex-col h-full bg-white">
-              <div className="p-12 bg-gradient-to-br from-brand-purple to-purple-700 text-white relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl" />
-                <div className="relative z-10 space-y-4">
-                  <div className="flex items-center gap-2">
-                    <span className="px-4 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-black uppercase tracking-widest">
-                      {selectedSheet.topic || 'Matematika'}
-                    </span>
-                  </div>
+            <div className="flex flex-col h-full w-full bg-white">
+              {/* Header Bar */}
+              <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
+                <div className="flex items-center gap-4">
+                  <span className="px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-xs font-bold uppercase tracking-widest">
+                    {selectedSheet.topic || 'Matematika'}
+                  </span>
                   <DialogHeader>
-                    <DialogTitle className="text-5xl font-display font-bold leading-tight">
+                    <DialogTitle className="text-xl font-display font-bold m-0">
                       {selectedSheet.title}
                     </DialogTitle>
                   </DialogHeader>
                 </div>
-              </div>
-              <div className="p-12 prose prose-purple max-w-none">
-                <div className="whitespace-pre-wrap text-xl text-gray-700 leading-relaxed font-medium">
-                  {selectedSheet.content}
+                
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
+                      const a = document.createElement('a');
+                      a.href = selectedSheet.fileUrl || '';
+                      a.download = `${selectedSheet.title || 'material'}.pdf`;
+                      a.click();
+                    }}>
+                      <FileText size={18} className="mr-2" />
+                      Stáhnout (PDF)
+                  </Button>
+                  <Button 
+                    variant="ghost"
+                    onClick={() => setSelectedSheet(null)}
+                    className="h-10 w-10 p-0 rounded-full bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500"
+                  >
+                    <ArrowRight size={20} />
+                  </Button>
                 </div>
               </div>
-              <div className="p-8 bg-gray-50 border-t border-gray-100 flex justify-center">
-                <Button 
-                  onClick={() => setSelectedSheet(null)}
-                  className="btn-purple rounded-2xl px-12 h-14 text-lg font-bold"
-                >
-                  Rozumím, zavřít
-                </Button>
+              
+              {/* PDF Area */}
+              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
+                {selectedSheet.fileUrl ? (
+                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    {pdfBlobUrl ? (
+                      <iframe 
+                        src={pdfBlobUrl} 
+                        className="w-full h-full border-none" 
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center">
+                        <div className="animate-spin w-8 h-8 rounded-full border-4 border-brand-purple border-t-transparent" />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center">
+                    <FileText size={48} className="text-gray-300 mb-4" />
+                    <p className="text-gray-500 font-bold mb-6">K tomuto materiálu nebyl přiložen žádný soubor.</p>
+                  </div>
+                )}
               </div>
             </div>
           )}

@@ -113,7 +113,7 @@ export const GEOMETRY_QUESTIONS: Question[] = [
   }
 ];
 
-export const startPracticeCourse = async (userId: string, userName: string, topic: MathTopic = 'Geometrie') => {
+export const startPracticeCourse = async (userId: string, userName: string, topic: MathTopic = 'Geometrie', customTitle?: string, customDescription?: string) => {
   // Fetch questions from the database for the given topic
   const qSnapshot = await getDocs(query(collection(db, 'questions'), where('topic', '==', topic)));
   let pool = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Question));
@@ -132,8 +132,8 @@ export const startPracticeCourse = async (userId: string, userName: string, topi
   const selectedQuestions = shuffled.slice(0, 5);
 
   const testData: Partial<Test> = {
-    title: `${topic}: Náhodné procvičování`,
-    description: `Procvič si téma ${topic} s náhodně vybranými úlohami. Každý pokus je jiný!`,
+    title: customTitle || `${topic}: Náhodné procvičování`,
+    description: customDescription || `Procvič si téma ${topic} s náhodně vybranými úlohami. Každý pokus je jiný!`,
     autoGrade: true,
     topic: topic,
     questions: selectedQuestions

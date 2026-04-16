@@ -145,7 +145,7 @@ export default function TestTaker() {
 
   if (showResults && resultStats) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-8 space-y-10">
+      <div className="focus-container">
         <motion.div 
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -221,7 +221,7 @@ export default function TestTaker() {
   const progress = ((currentQuestionIdx + 1) / testData.questions.length) * 100;
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-10 pb-20">
+    <div className="focus-container">
       <header className="space-y-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -297,7 +297,7 @@ export default function TestTaker() {
                 onValueChange={(val) => handleAnswer(currentQuestion.id, val)}
                 className="grid grid-cols-1 md:grid-cols-2 gap-6"
               >
-                {currentQuestion.options.map((opt, idx) => (
+                {currentQuestion.options?.map((opt, idx) => (
                   <div 
                     key={idx} 
                     onClick={() => handleAnswer(currentQuestion.id, opt)}

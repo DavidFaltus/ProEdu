@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+
+<html lang="cs"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&amp;family=Lexend:wght@300;400;500;600&amp;family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "secondary-container": "#ffc3be",
+                    "secondary": "#b61321",
+                    "tertiary-container": "#ffd709",
+                    "surface-tint": "#4c40df",
+                    "on-surface": "#283035",
+                    "surface-container-low": "#e9f2fa",
+                    "primary-container": "#9995ff",
+                    "secondary-dim": "#a40018",
+                    "surface": "#eff7fe",
+                    "surface-variant": "#d2dee8",
+                    "on-tertiary-fixed-variant": "#665500",
+                    "on-background": "#283035",
+                    "on-error-container": "#510017",
+                    "surface-container-highest": "#d2dee8",
+                    "tertiary": "#6c5a00",
+                    "inverse-surface": "#070f14",
+                    "on-surface-variant": "#545d62",
+                    "inverse-primary": "#8781ff",
+                    "primary-fixed": "#9995ff",
+                    "on-tertiary": "#fff2cd",
+                    "on-primary-container": "#16007d",
+                    "on-secondary-fixed-variant": "#a60018",
+                    "surface-container-high": "#d9e4ed",
+                    "surface-bright": "#eff7fe",
+                    "on-secondary": "#ffefee",
+                    "on-error": "#ffefef",
+                    "surface-container": "#dfeaf2",
+                    "error": "#b41340",
+                    "primary": "#4c40df",
+                    "inverse-on-surface": "#969ea4",
+                    "on-tertiary-fixed": "#453900",
+                    "secondary-fixed": "#ffc3be",
+                    "tertiary-fixed-dim": "#efc900",
+                    "outline": "#70787e",
+                    "surface-container-lowest": "#ffffff",
+                    "primary-fixed-dim": "#8a85ff",
+                    "tertiary-fixed": "#ffd709",
+                    "tertiary-dim": "#5e4e00",
+                    "primary-dim": "#4030d3",
+                    "on-primary-fixed-variant": "#1d0098",
+                    "background": "#eff7fe",
+                    "on-tertiary-container": "#5b4b00",
+                    "error-container": "#f74b6d",
+                    "on-secondary-container": "#940014",
+                    "outline-variant": "#a6aeb5",
+                    "surface-dim": "#c9d6e0",
+                    "error-dim": "#a70138",
+                    "secondary-fixed-dim": "#ffafaa",
+                    "on-primary-fixed": "#000000",
+                    "on-primary": "#f5f1ff",
+                    "on-secondary-fixed": "#70000d"
+            },
+            "borderRadius": {
+                    "DEFAULT": "1rem",
+                    "lg": "2rem",
+                    "xl": "3rem",
+                    "full": "9999px"
+            },
+            "fontFamily": {
+                    "headline": ["Plus Jakarta Sans"],
+                    "body": ["Lexend"],
+                    "label": ["Lexend"]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .handwritten {
+            font-family: 'Lexend', cursive;
+            transform: rotate(-3deg);
+            display: inline-block;
+        }
+        .glass-nav {
+            backdrop-filter: blur(24px);
+            background-color: rgba(255, 255, 255, 0.7);
+        }
+        .hero-gradient {
+            background: linear-gradient(135deg, #eff7fe 0%, #ffffff 100%);
+        }
+    </style>
+</head>
+<body class="bg-surface font-body text-on-surface selection:bg-primary-container selection:text-on-primary-container">
+<!-- TopNavBar -->
+<nav class="fixed top-0 left-0 right-0 z-50 bg-[#eff7fe] dark:bg-slate-900 tonal-shift">
+<div class="flex justify-between items-center w-full px-6 py-4 max-w-7xl mx-auto">
+<div class="flex items-center gap-2">
+<div class="relative">
+<span class="text-2xl font-black text-[#4c40df] dark:text-[#6c63ff] font-headline tracking-tight">Proedu-cator</span>
+<span class="material-symbols-outlined absolute -top-3 -right-3 text-primary rotate-12 text-lg">school</span>
+</div>
+</div>
+<div class="hidden md:flex items-center gap-8">
+<a class="text-[#283035] dark:text-slate-400 font-medium hover:text-[#4c40df] dark:hover:text-[#6c63ff] transition-colors duration-200" href="#">Domů</a>
+<a class="text-[#283035] dark:text-slate-400 font-medium hover:text-[#4c40df] dark:hover:text-[#6c63ff] transition-colors duration-200" href="#">Kurzy</a>
+<a class="text-[#4c40df] dark:text-[#6c63ff] font-bold border-b-2 border-[#4c40df]" href="#">Můj účet</a>
+</div>
+<div class="flex items-center gap-4">
+<button class="p-2 rounded-full hover:bg-surface-container transition-colors scale-95 active:transition-transform">
+<span class="material-symbols-outlined text-[#4c40df]" data-icon="account_circle">account_circle</span>
+</button>
+</div>
+</div>
+</nav>
+<main class="pt-24 hero-gradient min-h-screen flex items-center overflow-hidden">
+<div class="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center w-full">
+<!-- Left Content -->
+<div class="flex flex-col items-start space-y-8 relative">
+<!-- Floating Decorative Icon -->
+<div class="absolute -top-12 -left-12 opacity-80 animate-bounce">
+<span class="material-symbols-outlined text-6xl text-tertiary-container" data-icon="emoji_events" style="font-variation-settings: 'FILL' 1;">emoji_events</span>
+</div>
+<div class="space-y-4 max-w-xl">
+<h1 class="text-5xl md:text-6xl font-headline font-extrabold text-on-surface leading-tight tracking-tight">
+                        Výuková aplikace, která se <span class="text-primary">Ti přizpůsobí.</span>
+</h1>
+<p class="text-lg text-on-surface-variant font-light leading-relaxed">
+                        Jednoduché ovládání - maximální procvičení. Připrav se s námi na přijímačky nebo na didaktáky ještě dnes.
+                    </p>
+</div>
+<div class="flex flex-col sm:flex-row gap-4 w-full sm:w-auto items-center">
+<button class="group relative px-8 py-5 bg-gradient-to-br from-secondary to-secondary-dim text-white rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 w-full sm:w-auto">
+                        Přijímačky na SŠ
+                    </button>
+<button class="group px-8 py-5 bg-gradient-to-br from-primary to-primary-dim text-white rounded-xl font-bold text-lg shadow-xl hover:shadow-2xl transition-all transform hover:-translate-y-1 w-full sm:w-auto">
+                        Příprava na maturitu
+                    </button>
+</div>
+<div class="flex items-center gap-3 py-4">
+<span class="text-on-surface font-semibold">Procvičuj</span>
+<span class="handwritten bg-tertiary-container px-4 py-1 rounded-lg text-on-tertiary-container font-black text-xl shadow-sm">ZDARMA</span>
+</div>
+<!-- Trust Badges (Extra Content) -->
+<div class="flex items-center gap-6 pt-4 opacity-70">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="check_circle">check_circle</span>
+<span class="text-sm font-medium">98% úspěšnost</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-sm" data-icon="groups">groups</span>
+<span class="text-sm font-medium">15k+ studentů</span>
+</div>
+</div>
+</div>
+<!-- Right Content: Bento/Asymmetric Illustration -->
+<div class="relative flex justify-center items-center">
+<div class="relative w-full max-w-lg aspect-square">
+<!-- Background Shapes -->
+<div class="absolute inset-0 bg-primary-container/20 rounded-full blur-3xl transform -translate-x-10 translate-y-10"></div>
+<div class="absolute inset-0 bg-secondary-container/20 rounded-full blur-3xl transform translate-x-10 -translate-y-10"></div>
+<!-- Main Illustration -->
+<div class="relative z-10 flex flex-col items-center">
+<div class="relative transform hover:scale-105 transition-transform duration-500">
+<img alt="Study materials" class="rounded-lg shadow-2xl w-full max-w-[320px] h-[400px] object-cover ring-8 ring-white/50" data-alt="A tall artistic stack of vintage colorful educational books topped with a professional blue graduation cap, studio lighting on soft background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB7gvup-StDqu9pt2ZMAh9g0tTO4_iSM0ZW3aqJwAohFY_4abq0DkweVmQnPqCmW1c6CpG8HScgwMR_BN4WaxO62IewX81Fqm4s3YCKYDJHqB5NhPCTHFnEiq3Lg9Ancca-vDU3QY-LpGmcoMcRuwrMmcKUCzSvruA4m7X1Wbzy7pOlo4ve8GSumqYaUwLGptDRSEwxkVmpQWRCNzj5vV4q8OMyhrJqoRNm97zGqU3ZNOP5GXR7coMAmVfUlFqPOBY2ZMwbHWtw8gSV"/>
+<!-- Floating Badge -->
+<div class="absolute -bottom-6 -right-6 bg-surface-container-lowest p-6 rounded-lg shadow-2xl border border-surface-variant flex flex-col items-center gap-2 animate-pulse">
+<span class="material-symbols-outlined text-4xl text-tertiary" data-icon="stars" style="font-variation-settings: 'FILL' 1;">stars</span>
+<span class="text-xs font-bold uppercase tracking-widest text-on-surface-variant">Prémiový obsah</span>
+</div>
+</div>
+</div>
+<!-- Floating 3D Elements Simulated with Tonal Cards -->
+<div class="absolute top-10 left-0 bg-white/70 backdrop-blur-md p-4 rounded-lg shadow-lg -rotate-12 border border-white/50">
+<span class="material-symbols-outlined text-primary" data-icon="edit_note">edit_note</span>
+<p class="text-xs font-bold">100+ Testů</p>
+</div>
+<div class="absolute top-1/2 -right-4 bg-white/70 backdrop-blur-md p-4 rounded-lg shadow-lg rotate-6 border border-white/50">
+<span class="material-symbols-outlined text-secondary" data-icon="timer">timer</span>
+<p class="text-xs font-bold">Simulace času</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- Why Us Section (Asymmetric Bento) -->
+<section class="py-24 bg-surface">
+<div class="max-w-7xl mx-auto px-6">
+<div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+<div class="col-span-1 md:col-span-2 bg-surface-container-low p-10 rounded-lg flex flex-col justify-between">
+<div class="max-w-md">
+<h2 class="text-3xl font-headline font-bold mb-4 text-on-surface">Uč se kdykoliv a kdekoliv</h2>
+<p class="text-on-surface-variant">Optimalizováno pro tvůj mobil, tablet i počítač. Synchronizujeme tvůj pokrok v reálném čase, abys mohl začít v autobuse a skončit doma v posteli.</p>
+</div>
+<div class="mt-8 flex gap-4">
+<span class="px-4 py-2 bg-white rounded-full text-xs font-bold shadow-sm">iOS</span>
+<span class="px-4 py-2 bg-white rounded-full text-xs font-bold shadow-sm">Android</span>
+<span class="px-4 py-2 bg-white rounded-full text-xs font-bold shadow-sm">Web App</span>
+</div>
+</div>
+<div class="bg-primary p-10 rounded-lg text-on-primary flex flex-col items-center justify-center text-center">
+<span class="material-symbols-outlined text-6xl mb-4" data-icon="auto_awesome">auto_awesome</span>
+<h3 class="text-xl font-bold mb-2">AI Algoritmus</h3>
+<p class="text-sm opacity-80">Najdeme tvoje slabé stránky a na ty se zaměříme. Učení nebylo nikdy efektivnější.</p>
+</div>
+</div>
+</div>
+</section>
+<!-- Footer -->
+<footer class="bg-[#eff7fe] dark:bg-slate-950 tonal-shift">
+<div class="flex flex-col md:flex-row justify-between items-center w-full px-8 py-12 max-w-7xl mx-auto">
+<div class="flex flex-col items-center md:items-start mb-8 md:mb-0">
+<span class="text-lg font-bold text-[#4c40df] font-headline mb-2">Proedu-cator</span>
+<p class="font-['Lexend'] text-sm text-[#283035] dark:text-slate-400">© 2024 Proedu-cator. Všechna práva vyhrazena.</p>
+</div>
+<div class="flex flex-wrap justify-center gap-8">
+<a class="font-['Lexend'] text-sm text-[#283035] dark:text-slate-400 hover:text-[#b61321] transition-colors opacity-80 hover:opacity-100" href="#">Web s obchodními podmínkami</a>
+<a class="font-['Lexend'] text-sm text-[#283035] dark:text-slate-400 hover:text-[#b61321] transition-colors opacity-80 hover:opacity-100" href="#">Ochrana soukromí</a>
+<a class="font-['Lexend'] text-sm text-[#283035] dark:text-slate-400 hover:text-[#b61321] transition-colors opacity-80 hover:opacity-100" href="#">Kontakt</a>
+</div>
+<div class="flex items-center gap-4 mt-8 md:mt-0">
+<div class="w-10 h-10 bg-surface-container rounded-full flex items-center justify-center text-primary cursor-pointer hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-xl" data-icon="facebook">social_leaderboard</span>
+</div>
+<div class="w-10 h-10 bg-surface-container rounded-full flex items-center justify-center text-primary cursor-pointer hover:bg-primary hover:text-white transition-all">
+<span class="material-symbols-outlined text-xl" data-icon="camera">camera</span>
+</div>
+</div>
+</div>
+</footer>
+</body></html>

@@ -1,10 +1,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&family=Oswald:wght@200;300;400;500;600;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 @import "tailwindcss";
 
+@font-face {
+    font-family: 'Le Petit Cochon';
+    src: url('/PetitCochon.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
 @theme {
   --font-sans: "PT Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Oswald", sans-serif;
-  --font-playful: "Fredoka", cursive;
+  --font-playful: "Le Petit Cochon", cursive;
+  --font-headline: "Plus Jakarta Sans", sans-serif;
+  --font-body: "Lexend", sans-serif;
+  --font-label: "Lexend", sans-serif;
   
   --color-brand-blue: #3273dc;
   --color-brand-orange: #ff4133;
@@ -12,8 +21,25 @@
   --color-brand-purple: #6c5ce7;
   --color-brand-teal: #4ecdc4;
 
-  --color-background: #fcfcfc;
-  --color-foreground: #2d3436;
+  --color-primary: #4c40df;
+  --color-primary-dim: #4030d3;
+  --color-primary-container: #9995ff;
+  --color-secondary: #b61321;
+  --color-secondary-dim: #a40018;
+  --color-secondary-container: #ffc3be;
+  --color-tertiary: #6c5a00;
+  --color-tertiary-container: #ffd709;
+  
+  --color-surface: #eff7fe;
+  --color-surface-container: #dfeaf2;
+  --color-surface-container-low: #e9f2fa;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-variant: #d2dee8;
+  --color-on-surface: #283035;
+  --color-on-surface-variant: #545d62;
+
+  --color-background-old: #fcfcfc;
+  --color-foreground-old: #2d3436;
   
   --radius-xl: 1rem;
   --radius-2xl: 1.5rem;
@@ -22,11 +48,24 @@
 
 @layer base {
   body {
-    @apply font-sans text-gray-600 bg-[radial-gradient(circle,_#ffffff_0%,_#e1f1ff_100%)] min-h-screen;
+    @apply font-sans;
   }
   
   h1, h2, h3, h4, h5, h6 {
     @apply font-display text-gray-800;
+  }
+
+  .handwritten {
+    font-family: 'Lexend', cursive;
+    transform: rotate(-3deg);
+    display: inline-block;
+  }
+  .glass-nav {
+    backdrop-filter: blur(24px);
+    background-color: rgba(255, 255, 255, 0.7);
+  }
+  .hero-gradient {
+    background: linear-gradient(135deg, #eff7fe 0%, #ffffff 100%);
   }
 }
 
@@ -45,6 +84,14 @@
   
   .playful-text {
     @apply font-playful;
+  }
+
+  .page-container {
+    @apply max-w-[1600px] mx-auto px-4 md:px-10 py-8 md:py-12 space-y-10 md:space-y-14 pb-24;
+  }
+
+  .focus-container {
+    @apply max-w-6xl mx-auto px-4 py-8 md:py-12 space-y-10 md:space-y-12 pb-24;
   }
 }
 

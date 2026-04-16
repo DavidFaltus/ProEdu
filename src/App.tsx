@@ -4,7 +4,7 @@
  */
 
 import * as React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster } from './components/ui/sonner';
 import Navbar from './components/Navbar';
@@ -45,10 +45,12 @@ function PrivateRoute({ children, role }: { children: React.ReactNode, role?: 's
 }
 
 function AppContent() {
+  const location = useLocation();
+
   return (
-    <div className="min-h-screen bg-[#fcfcfc] text-[#2d3436] font-sans flex flex-col">
+    <div className="min-h-screen bg-[radial-gradient(circle,_#ffffff_0%,_#e1f1ff_100%)] text-[#555] font-sans flex flex-col">
       <Navbar />
-      <main className="flex-grow">
+      <main className="flex-grow flex flex-col overflow-hidden">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />
@@ -79,7 +81,7 @@ function AppContent() {
           <Route 
             path="/test/:id" 
             element={
-              <PrivateRoute role="student">
+              <PrivateRoute>
                 <TestTaker />
               </PrivateRoute>
             } 
@@ -87,7 +89,7 @@ function AppContent() {
           <Route 
             path="/review/:id" 
             element={
-              <PrivateRoute role="student">
+              <PrivateRoute>
                 <TestReview />
               </PrivateRoute>
             } 

@@ -89,7 +89,7 @@ export default function StudentDashboard() {
   const completedTests = assignedTests.filter(t => t.status !== 'pending');
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-8 space-y-10 pb-20">
+    <div className="page-container">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="space-y-2">
           <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-blue">
@@ -337,34 +337,59 @@ export default function StudentDashboard() {
 
       {/* Sheet Viewer Dialog */}
       <Dialog open={!!selectedSheet} onOpenChange={(open) => !open && setSelectedSheet(null)}>
-        <DialogContent className="max-w-5xl w-full h-[90vh] flex flex-col rounded-[2.5rem] border-none shadow-2xl p-0 overflow-hidden">
-          <div className="p-6 pb-4 border-b border-gray-100 flex-shrink-0">
-            <DialogTitle className="text-3xl font-display font-bold text-brand-blue">
-              {selectedSheet?.title}
-            </DialogTitle>
-            {selectedSheet?.topic && (
-              <span className="inline-block mt-2 px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-xs font-bold uppercase">
-                {selectedSheet.topic}
-              </span>
-            )}
-          </div>
-          <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50">
-            {selectedSheet?.fileUrl ? (
-              <div className="w-full h-full min-h-[60vh] rounded-2xl overflow-hidden border-2 border-gray-100 bg-white">
-                <iframe 
-                  src={selectedSheet.fileUrl} 
-                  className="w-full h-full border-none"
-                  title={selectedSheet.title}
-                />
+        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[98vh] h-[98vh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
+          {selectedSheet && (
+            <div className="flex flex-col h-full w-full bg-white">
+              <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
+                <div className="flex items-center gap-4">
+                  <span className="px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-xs font-bold uppercase tracking-widest">
+                    {selectedSheet.topic || 'Matematika'}
+                  </span>
+                  <DialogHeader>
+                    <DialogTitle className="text-xl font-display font-bold m-0">
+                      {selectedSheet.title}
+                    </DialogTitle>
+                  </DialogHeader>
+                </div>
+                
+                <div className="flex items-center gap-3">
+                  <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
+                      const a = document.createElement('a');
+                      a.href = selectedSheet.fileUrl || '';
+                      a.download = `${selectedSheet.title || 'material'}.pdf`;
+                      a.click();
+                    }}>
+                      <FileText size={18} className="mr-2" />
+                      Stáhnout (PDF)
+                  </Button>
+                  <Button 
+                    variant="ghost"
+                    onClick={() => setSelectedSheet(null)}
+                    className="h-10 w-10 p-0 rounded-full bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500"
+                  >
+                    <ArrowRight size={20} />
+                  </Button>
+                </div>
               </div>
-            ) : (
-              <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-100 min-h-[60vh]">
-                <p className="text-gray-700 leading-relaxed whitespace-pre-wrap text-lg">
-                  {selectedSheet?.content}
-                </p>
+              
+              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
+                {selectedSheet.fileUrl ? (
+                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <iframe 
+                      src={selectedSheet.fileUrl} 
+                      className="w-full h-full border-none"
+                      title={selectedSheet.title}
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full h-full flex flex-col items-center justify-center">
+                    <FileText size={48} className="text-gray-300 mb-4" />
+                    <p className="text-gray-500 font-bold mb-6">K tomuto materiálu nebyl přiložen žádný soubor.</p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

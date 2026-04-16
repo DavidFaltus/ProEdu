@@ -15,7 +15,7 @@ export default function Contact() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-12 space-y-16">
+    <div className="page-container">
       <section className="text-center space-y-6 max-w-3xl mx-auto">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }}

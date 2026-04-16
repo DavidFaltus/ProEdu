@@ -106,9 +106,10 @@ service cloud.firestore {
     }
 
     function isValidPracticeCourse(data) {
-      return data.keys().hasAll(['title', 'description', 'topic', 'difficulty', 'duration', 'color', 'createdBy', 'createdAt']) &&
+      return data.keys().hasAll(['title', 'description', 'difficulty', 'duration', 'color', 'createdBy', 'createdAt']) &&
              data.title is string && data.title.size() > 0 &&
-             data.topic is string &&
+             (!('topic' in data) || data.topic is string) &&
+             (!('topics' in data) || data.topics is list) &&
              data.difficulty is string &&
              data.createdBy == request.auth.uid &&
              data.createdAt is timestamp;

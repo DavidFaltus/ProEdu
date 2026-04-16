@@ -67,28 +67,29 @@ export default function Practice() {
   }, []);
 
   const allCourses = [
-    ...defaultCourses,
+    ...defaultCourses.map(c => ({ ...c, topics: [c.topic] })),
     ...dbCourses.map(c => ({
       id: c.id,
       title: c.title,
       description: c.description,
-      icon: <BookOpen className={`text-${c.color.replace('bg-', '').replace('-50', '')}-500`} size={32} />,
+      icon: <BookOpen className={`text-${c.color && c.color.startsWith('bg-') ? c.color.replace('bg-', '').replace('-50', '') : 'blue'}-500`} size={32} />,
       duration: c.duration,
       students: 'Nové',
       rating: 5.0,
       color: c.color,
       topic: c.topic,
+      topics: c.topics && c.topics.length > 0 ? c.topics : [c.topic],
       difficulty: c.difficulty
     }))
   ];
 
   const filteredCourses = allCourses.filter(c => {
-    if (filterTopic !== 'all' && c.topic !== filterTopic) return false;
+    if (filterTopic !== 'all' && !c.topics.includes(filterTopic as any)) return false;
     if (filterDifficulty !== 'all' && c.difficulty !== filterDifficulty) return false;
     return true;
   });
 
-  const handleStartCourse = async (courseId: string, topic: MathTopic) => {
+  const handleStartCourse = async (courseId: string, topic: MathTopic, title: string, description: string) => {
     if (!user) {
       toast.error('Pro spuštění procvičování se musíš přihlásit.');
       navigate('/login');
@@ -97,7 +98,7 @@ export default function Practice() {
 
     setStartingCourse(courseId);
     try {
-      const assignedId = await startPracticeCourse(user.uid, profile?.name || 'Student', topic);
+      const assignedId = await startPracticeCourse(user.uid, profile?.name || 'Student', topic, title, description);
       toast.success('Procvičování bylo úspěšně spuštěno!');
       navigate(`/test/${assignedId}`);
     } catch (error: any) {
@@ -108,7 +109,7 @@ export default function Practice() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-12 space-y-16">
+    <div className="page-container">
       <section className="text-center space-y-6 max-w-3xl mx-auto">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }}
@@ -198,7 +199,7 @@ export default function Practice() {
                 </div>
                 <div className="pt-6 mt-auto">
                   <Button 
-                    onClick={() => handleStartCourse(course.id, course.topic)}
+                    onClick={() => handleStartCourse(course.id, course.topic, course.title, course.description)}
                     disabled={startingCourse === course.id}
                     className="w-full btn-blue rounded-xl h-12 gap-2 text-lg font-bold"
                   >

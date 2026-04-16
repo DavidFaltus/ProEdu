@@ -1,0 +1,232 @@
+:root {
+    --bg-gradient: radial-gradient(circle, #ffffff 0%, #e1f1ff 100%);
+    --orange-btn: linear-gradient(90deg, #ff4133 0%, #ff8c4b 100%);
+    --purple-btn: linear-gradient(90deg, #6c5ce7 0%, #4ecdc4 100%);
+    --blue-text: #3273dc;
+}
+
+.home-container {
+    background: var(--bg-gradient);
+    height: 100%; /* Převezme zbývající výšku po navigaci od <main> bez přetečení */
+    flex: 1;
+    overflow: hidden;
+    font-family: 'PT Sans', sans-serif;
+    color: #555;
+    display: flex;
+    flex-direction: column;
+}
+
+
+
+#logout-btn:hover {
+    color: #d63031;
+}
+
+/* MAIN CONTENT */
+.hero {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 5%;
+    flex-grow: 1;
+    gap: 40px;
+    margin: auto;
+    /* Vertikální centrování bez zbytečného přetečení nahoru/dolu */
+    max-width: 1280px;
+    width: 100%;
+}
+
+.content {
+    flex: 1;
+    z-index: 2;
+    min-width: 320px;
+}
+
+.logo-wrapper {
+    display: flex;
+    align-items: center;
+    position: relative;
+    margin-bottom: 25px;
+    width: fit-content;
+}
+
+.logo-img {
+    height: 100px;
+    width: auto;
+}
+
+.cator {
+    font-family: 'Le Petit Cochon', cursive;
+    font-size: 80px;
+    color: #3273dc;
+    margin-left: 10px;
+    margin-top: 20px;
+    line-height: 1;
+}
+
+.trophy-img {
+    position: absolute;
+    width: 130px;
+    top: -25px;
+    right: -105px;
+    transform: rotate(-5deg);
+    z-index: 10;
+}
+
+.slogan {
+    font-family: 'Oswald', sans-serif;
+    font-size: 36px;
+    color: #444;
+    margin-bottom: 10px;
+}
+
+.description {
+    font-size: 24px;
+    line-height: 1.4;
+    margin-bottom: 20px;
+}
+
+.cta-text {
+    font-family: 'Le Petit Cochon', cursive;
+    font-size: 38px;
+    color: #555;
+    margin-bottom: 15px;
+}
+
+.cta-text span {
+    color: #f1c40f;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* BUTTONS */
+.button-group {
+    display: flex;
+    gap: 20px;
+}
+
+.btn-custom {
+    padding: 16px 30px;
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-family: 'Oswald', sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.2s;
+    box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+    text-decoration: none;
+    display: inline-block;
+    text-align: center;
+}
+
+.btn-custom:hover {
+    transform: translateY(-3px);
+}
+
+.btn-orange-custom {
+    background: var(--orange-btn);
+}
+
+.btn-purple-custom {
+    background: var(--purple-btn);
+}
+
+/* ILLUSTRATION */
+.illustration {
+    flex: 1;
+    display: flex;
+    justify-content: flex-end;
+    position: relative;
+    align-items: center;
+}
+
+.illustration img {
+    max-width: 480px;
+    max-height: 55vh; /* Zabrání tomu, aby obrázek rozhodil stránku na výšku */
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+}
+
+/* FOOTER - TEĎ BUDE VŽDY DOLE */
+footer.home-footer {
+    padding: 20px 40px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+    color: #777;
+    width: 100%;
+    background: transparent;
+}
+
+footer.home-footer a {
+    color: #444;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+
+/* --- TABLETY (Oprava rozhozených knih) --- */
+@media (max-width: 1100px) {
+    .hero {
+        flex-direction: column;
+        /* Přepneme pod sebe dříve, aby knihy nevrážely do textu */
+        text-align: center;
+        justify-content: center;
+        padding: 40px 5%;
+    }
+
+    .logo-wrapper {
+        margin: 0 auto 30px auto;
+    }
+
+    .illustration {
+        display: none;
+        /* Na mobilech knihy skryjeme úplně pro čistý design */
+    }
+
+    .button-group {
+        justify-content: center;
+    }
+}
+
+/* --- MOBILY --- */
+@media (max-width: 768px) {
+    .logo-img {
+        height: 70px;
+    }
+
+    .cator {
+        font-size: 50px;
+        margin-bottom: 20px;
+        margin-right: -5px;
+    }
+
+    .trophy-img {
+        width: 80px;
+        right: -70px;
+        top: 10px;
+    }
+
+    .illustration {
+        display: none;
+        /* Na mobilech knihy skryjeme úplně pro čistý design */
+    }
+
+    .button-group {
+        flex-direction: column;
+        width: 100%;
+    }
+
+    .button-group .btn-custom {
+        width: 100%;
+    }
+
+    footer.home-footer {
+        flex-direction: column;
+        text-align: center;
+        gap: 10px;
+    }
+}

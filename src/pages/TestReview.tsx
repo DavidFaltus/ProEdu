@@ -56,7 +56,7 @@ export default function TestReview() {
   const answers = assignedTest.answers || {};
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-8 space-y-10 pb-20">
+    <div className="focus-container">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div className="flex items-center gap-4">
           <Button variant="ghost" onClick={() => navigate('/student')} className="rounded-xl">
@@ -123,7 +123,7 @@ export default function TestReview() {
                 </CardHeader>
                 <CardContent className="p-8 pt-0 space-y-6">
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {q.options.map((opt, optIdx) => {
+                    {q.options?.map((opt, optIdx) => {
                       const isUserChoice = userAnswer === opt;
                       const isCorrectChoice = q.correctAnswer === opt;
                       
