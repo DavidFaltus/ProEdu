@@ -113,10 +113,29 @@ export const GEOMETRY_QUESTIONS: Question[] = [
   }
 ];
 
+// Jednoduchá in-memory cache pro otázky
+const questionsCache: Record<string, { questions: Question[], timestamp: number }> = {};
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minut
+
 export const startPracticeCourse = async (userId: string, userName: string, topic: MathTopic = 'Geometrie', customTitle?: string, customDescription?: string) => {
-  // Fetch questions from the database for the given topic
-  const qSnapshot = await getDocs(query(collection(db, 'questions'), where('topic', '==', topic)));
-  let pool = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+  let pool: Question[] = [];
+
+  // Zkontrolovat cashi
+  const now = Date.now();
+  if (questionsCache[topic] && (now - questionsCache[topic].timestamp < CACHE_DURATION)) {
+    pool = questionsCache[topic].questions;
+  } else {
+    // Načíst z DB if není v cache nebo vypršela
+    const qSnapshot = await getDocs(query(collection(db, 'questions'), where('topic', '==', topic)));
+    pool = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+    
+    // Uložit do cache
+    questionsCache[topic] = {
+      questions: pool,
+      timestamp: now
+    };
+  }
+
 
   // Fallback to hardcoded geometry questions if DB is empty for geometry
   if (pool.length < 5 && topic === 'Geometrie') {

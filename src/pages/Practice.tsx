@@ -8,7 +8,7 @@ import { startPracticeCourse } from '../services/courseService';
 import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { MathTopic, PracticeCourse } from '../types';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
@@ -60,12 +60,17 @@ export default function Practice() {
   const [filterDifficulty, setFilterDifficulty] = useState<string>('all');
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'practiceCourses'), (snap) => {
-      const allDbCourses = snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse));
-      // Only show visible courses to students (default is true if undefined)
-      setDbCourses(allDbCourses.filter(c => c.isVisible !== false));
-    });
-    return () => unsub();
+    const fetchCourses = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'practiceCourses'));
+        const allDbCourses = snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse));
+        // Zobrazit pouze viditelné kurzy (default je true pokud není uvedeno)
+        setDbCourses(allDbCourses.filter(c => c.isVisible !== false));
+      } catch (error) {
+        console.error("Chyba při načítání kurzů:", error);
+      }
+    };
+    fetchCourses();
   }, []);
 
   const allCourses = [

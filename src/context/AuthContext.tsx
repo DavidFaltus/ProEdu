@@ -6,9 +6,12 @@ import {
   createUserWithEmailAndPassword,
   signInWithPopup,
   GoogleAuthProvider,
-  signOut as firebaseSignOut
+  signOut as firebaseSignOut,
+  updateEmail,
+  updatePassword,
+  updateProfile as updateAuthProfile
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, Timestamp, onSnapshot, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 
@@ -17,10 +20,14 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   isAuthReady: boolean;
+  isProfileSettingsOpen: boolean;
+  setIsProfileSettingsOpen: (open: boolean) => void;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
   signOut: () => Promise<void>;
+  updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
+  updateUserPassword: (newPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,10 +35,14 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   isAuthReady: false,
+  isProfileSettingsOpen: false,
+  setIsProfileSettingsOpen: () => {},
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
   signOut: async () => {},
+  updateProfileData: async () => {},
+  updateUserPassword: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -39,48 +50,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
 
   useEffect(() => {
-    let unsubscribeProfile: (() => void) | null = null;
-
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       setUser(user);
-      
-      if (unsubscribeProfile) {
-        unsubscribeProfile();
-        unsubscribeProfile = null;
-      }
 
       if (user) {
         const docRef = doc(db, 'users', user.uid);
-        
-        unsubscribeProfile = onSnapshot(docRef, async (docSnap) => {
-          if (docSnap.exists()) {
-            setProfile(docSnap.data() as UserProfile);
-            setLoading(false);
-            setIsAuthReady(true);
-          } else {
-            const role: UserRole = user.email === 'davidfaltus03@gmail.com' ? 'teacher' : 'student';
-            const newProfile: UserProfile = {
-              uid: user.uid,
-              email: user.email || '',
-              name: user.displayName || 'Nový uživatel',
-              role,
-              createdAt: Timestamp.now(),
-            };
-            await setDoc(docRef, newProfile);
-          }
-        });
+        // Jednorázové čtení místo real-time listeneru — šetří Firestore reads
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setProfile(docSnap.data() as UserProfile);
+        } else {
+          const role: UserRole = user.email === 'davidfaltus03@gmail.com' ? 'teacher' : 'student';
+          const newProfile: UserProfile = {
+            uid: user.uid,
+            email: user.email || '',
+            name: user.displayName || 'Nový uživatel',
+            role,
+            createdAt: Timestamp.now(),
+          };
+          await setDoc(docRef, newProfile);
+          setProfile(newProfile);
+        }
       } else {
         setProfile(null);
-        setLoading(false);
-        setIsAuthReady(true);
       }
+      setLoading(false);
+      setIsAuthReady(true);
     });
 
     return () => {
       unsubscribeAuth();
-      if (unsubscribeProfile) unsubscribeProfile();
     };
   }, []);
 
@@ -94,17 +96,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signUpWithEmail = async (email: string, pass: string, name: string) => {
-    // Nejdříve zkontrolujeme, zda uživatel se stejným e-mailem už neexistuje v databázi
-    const usersRef = collection(db, 'users');
-    const q = query(usersRef, where('email', '==', email));
-    const querySnapshot = await getDocs(q);
-
-    if (!querySnapshot.empty) {
-      const error = new Error('Tento e-mail se již používá (pravděpodobně jste se dříve přihlásili přes Google).');
-      (error as any).code = 'auth/email-already-in-use';
-      throw error;
-    }
-
     const { user } = await createUserWithEmailAndPassword(auth, email, pass);
     const docRef = doc(db, 'users', user.uid);
     const role: UserRole = email === 'davidfaltus03@gmail.com' ? 'teacher' : 'student';
@@ -123,8 +114,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await firebaseSignOut(auth);
   };
 
+  const updateProfileData = async (data: Partial<UserProfile>) => {
+    if (!user) return;
+    const docRef = doc(db, 'users', user.uid);
+    await updateDoc(docRef, data);
+    
+    // Also update Auth profile if name or photoURL is changed
+    if (data.name || data.photoURL) {
+      const authUpdates: any = {};
+      if (data.name) authUpdates.displayName = data.name;
+      
+      // ONLY update Auth photoURL if it's NOT a base64 (because Auth has strict length limits)
+      // We rely on Firestore profile for the actual photo
+      if (data.photoURL && !data.photoURL.startsWith('data:')) {
+        authUpdates.photoURL = data.photoURL;
+      }
+      
+      if (Object.keys(authUpdates).length > 0) {
+        await updateAuthProfile(user, authUpdates);
+      }
+    }
+
+    setProfile(prev => prev ? { ...prev, ...data } : null);
+  };
+
+  const updateUserPassword = async (newPassword: string) => {
+    if (!user) return;
+    await updatePassword(user, newPassword);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAuthReady, signInWithGoogle, signInWithEmail, signUpWithEmail, signOut }}>
+    <AuthContext.Provider value={{ 
+      user, 
+      profile, 
+      loading, 
+      isAuthReady, 
+      isProfileSettingsOpen,
+      setIsProfileSettingsOpen,
+      signInWithGoogle, 
+      signInWithEmail, 
+      signUpWithEmail, 
+      signOut,
+      updateProfileData,
+      updateUserPassword
+    }}>
       {children}
     </AuthContext.Provider>
   );

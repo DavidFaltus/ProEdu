@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, updateDoc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { useAuth } from '../context/AuthContext';
@@ -7,7 +7,7 @@ import { AssignedTest, LearningSheet, MathTopic } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, BarChart3 } from 'lucide-react';
+import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, BarChart3, Settings, User as UserIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getRecommendations } from '../services/geminiService';
@@ -18,7 +18,7 @@ interface TopicStats {
 }
 
 export default function StudentDashboard() {
-  const { profile } = useAuth();
+  const { profile, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
@@ -28,19 +28,21 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!profile) return;
 
+    // Real-time listener pro testy, aby žák hned viděl přiřazený úkol
     const unsubAssigned = onSnapshot(query(collection(db, 'assignedTests'), where('studentId', '==', profile.uid)), (snap) => {
       setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)));
     });
 
-    const unsubSheets = onSnapshot(collection(db, 'learningSheets'), (snap) => {
+    // Materiály se mění zřídka, stačí jednorázový fetch pro úsporu reads
+    const fetchSheets = async () => {
+      const snap = await getDocs(collection(db, 'learningSheets'));
       setLearningSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
-    });
-
-    return () => {
-      unsubAssigned();
-      unsubSheets();
     };
+    fetchSheets();
+
+    return () => unsubAssigned();
   }, [profile]);
+
 
   // Logic to update recommendations based on graded tests
   useEffect(() => {
@@ -91,24 +93,40 @@ export default function StudentDashboard() {
   return (
     <div className="page-container">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-2">
-          <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-blue">
-            Ahoj, {profile?.name}! 👋
-          </h1>
-          <p className="text-gray-500 text-lg">Tady je tvůj přehled studia a úkolů.</p>
+        <div className="flex items-center gap-6">
+          <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-white shadow-xl flex items-center justify-center overflow-hidden border-4 border-white">
+            {profile?.photoURL ? (
+              <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+            ) : (
+              <UserIcon size={40} className="text-brand-blue" />
+            )}
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-blue">
+              Ahoj, {profile?.name}! 👋
+            </h1>
+            <p className="text-gray-500 text-lg">Tady je tvůj přehled studia a úkolů.</p>
+          </div>
         </div>
-        <div className="flex gap-4">
-          <div className="bg-white p-4 rounded-3xl shadow-xl flex items-center gap-3 border-2 border-blue-50">
-            <div className="w-12 h-12 bg-blue-100 rounded-2xl flex items-center justify-center text-brand-blue">
-              <Trophy size={24} />
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="bg-white px-6 py-4 rounded-[1.5rem] shadow-xl flex items-center gap-3 border-2 border-blue-50">
+            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-brand-blue">
+              <Trophy size={20} />
             </div>
             <div>
-              <div className="text-2xl font-black text-brand-blue leading-none">
+              <div className="text-xl font-black text-brand-blue leading-none">
                 {completedTests.filter(t => t.status === 'graded').length}
               </div>
               <div className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Hotovo</div>
             </div>
           </div>
+          <Button 
+            onClick={() => setIsProfileSettingsOpen(true)}
+            className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
+          >
+            <Settings size={22} className="text-brand-orange" />
+            <span>Nastavení profilu</span>
+          </Button>
         </div>
       </header>
 

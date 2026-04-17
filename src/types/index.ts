@@ -11,6 +11,7 @@ export interface UserProfile {
   role: UserRole;
   createdAt: Timestamp;
   focusAreas?: string[]; // Recommended areas to focus on
+  photoURL?: string; // profile picture URL
 }
 
 export type MathTopic = string;

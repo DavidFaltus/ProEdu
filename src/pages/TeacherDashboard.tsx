@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
-import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff } from 'lucide-react';
+import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -46,7 +46,7 @@ const MATH_TOPICS: MathTopic[] = [
 ];
 
 export default function TeacherDashboard() {
-  const { profile } = useAuth();
+  const { profile, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
   const [tests, setTests] = useState<Test[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
@@ -154,10 +154,7 @@ export default function TeacherDashboard() {
   useEffect(() => {
     if (!profile) return;
 
-    const unsubTests = onSnapshot(collection(db, 'tests'), (snap) => {
-      setTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
-    });
-
+    // Real-time listenery pouze pro data, kde je to skutečně potřeba
     const unsubStudents = onSnapshot(query(collection(db, 'users'), where('role', '==', 'student')), (snap) => {
       setStudents(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
     });
@@ -166,39 +163,37 @@ export default function TeacherDashboard() {
       setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)));
     });
 
-    const unsubSheets = onSnapshot(collection(db, 'learningSheets'), (snap) => {
-      setLearningSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
-    });
-
-    const unsubQuestions = onSnapshot(collection(db, 'questions'), (snap) => {
-      setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Question)));
-    });
-
-    const unsubCourses = onSnapshot(collection(db, 'practiceCourses'), (snap) => {
-      setPracticeCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
-    });
-
-    const unsubTopics = onSnapshot(collection(db, 'customTopics'), (snap) => {
-      setDbCustomTopics(snap.docs.map(d => d.data().name as string));
-    });
+    // Jednorázové načtení pro data, která se v průběhu session nemění — šetří Firestore reads
+    const loadStaticData = async () => {
+      const [testsSnap, questionsSnap, sheetsSnap, coursesSnap, topicsSnap] = await Promise.all([
+        getDocs(collection(db, 'tests')),
+        getDocs(collection(db, 'questions')),
+        getDocs(collection(db, 'learningSheets')),
+        getDocs(collection(db, 'practiceCourses')),
+        getDocs(collection(db, 'customTopics')),
+      ]);
+      setTests(testsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
+      setQuestions(questionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Question)));
+      setLearningSheets(sheetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
+      setPracticeCourses(coursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
+      setDbCustomTopics(topicsSnap.docs.map(d => d.data().name as string));
+    };
+    loadStaticData();
 
     return () => {
-      unsubTests();
       unsubStudents();
       unsubAssigned();
-      unsubSheets();
-      unsubQuestions();
-      unsubCourses();
-      unsubTopics();
     };
   }, [profile]);
 
+
   const toggleCourseVisibility = async (course: PracticeCourse) => {
+    const newVisibility = course.isVisible === false ? true : false;
     try {
-      await updateDoc(doc(db, 'practiceCourses', course.id), {
-        isVisible: course.isVisible === false ? true : false
-      });
-      toast.success(course.isVisible === false ? 'Předmět je nyní viditelný' : 'Předmět byl skryt před žáky');
+      await updateDoc(doc(db, 'practiceCourses', course.id), { isVisible: !newVisibility });
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setPracticeCourses(prev => prev.map(c => c.id === course.id ? { ...c, isVisible: !newVisibility } : c));
+      toast.success(newVisibility ? 'Předmět je nyní viditelný' : 'Předmět byl skryt před žáky');
     } catch (err) {
       toast.error('Chyba při změně viditelnosti');
       console.error(err);
@@ -208,6 +203,8 @@ export default function TeacherDashboard() {
   const handleDeleteCourse = async (courseId: string) => {
     try {
       await deleteDoc(doc(db, 'practiceCourses', courseId));
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setPracticeCourses(prev => prev.filter(c => c.id !== courseId));
       toast.success('Procvičování bylo smazáno');
     } catch (error) {
       toast.error('Chyba při mazání procvičování');
@@ -216,10 +213,12 @@ export default function TeacherDashboard() {
   };
 
   const handleBulkDeleteQuestions = async () => {
+    const idsToDelete = Array.from(selectedQuestionIds);
     try {
-      const promises = Array.from(selectedQuestionIds).map((id: string) => deleteDoc(doc(db, 'questions', id)));
-      await Promise.all(promises);
-      toast.success(`Smazáno ${selectedQuestionIds.size} otázek`);
+      await Promise.all(idsToDelete.map((id: string) => deleteDoc(doc(db, 'questions', id))));
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setQuestions(prev => prev.filter(q => !selectedQuestionIds.has(q.id)));
+      toast.success(`Smazáno ${idsToDelete.length} otázek`);
       setSelectedQuestionIds(new Set());
     } catch (error) {
       toast.error('Chyba při hromadném mazání');
@@ -234,17 +233,21 @@ export default function TeacherDashboard() {
       return;
     }
     try {
-      await updateDoc(doc(db, 'practiceCourses', editingCourse.id), {
+      const updatePayload = {
         title: editingCourse.title,
         description: editingCourse.description,
         topics: editingCourse.topics,
         difficulty: editingCourse.difficulty,
         duration: editingCourse.duration
-      });
-      for (const t of editingCourse.topics) {
-        if (!allTopics.includes(t)) {
-          await addDoc(collection(db, 'customTopics'), { name: t });
-        }
+      };
+      await updateDoc(doc(db, 'practiceCourses', editingCourse.id), updatePayload);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setPracticeCourses(prev => prev.map(c => c.id === editingCourse.id ? { ...c, ...updatePayload } : c));
+      // Nová témata uložit asynchronně v pozadí (nečekej na výsledek)
+      const newTopics = editingCourse.topics.filter(t => !allTopics.includes(t));
+      if (newTopics.length > 0) {
+        Promise.all(newTopics.map(t => addDoc(collection(db, 'customTopics'), { name: t })))
+          .then(() => setDbCustomTopics(prev => [...new Set([...prev, ...newTopics])]));
       }
       toast.success('Procvičování úspěšně upraveno');
       setEditingCourse(null);
@@ -257,6 +260,8 @@ export default function TeacherDashboard() {
   const handleDeleteTest = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'tests', id));
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setTests(prev => prev.filter(t => t.id !== id));
       toast.success('Test byl smazán');
     } catch (error) {
       toast.error('Chyba při mazání testu');
@@ -321,7 +326,9 @@ export default function TeacherDashboard() {
       if (newQuestion.courseId && newQuestion.courseId !== 'none') questionData.courseId = newQuestion.courseId;
       if (imageUrl) questionData.imageUrl = imageUrl;
 
-      await addDoc(collection(db, 'questions'), questionData);
+      const docRef = await addDoc(collection(db, 'questions'), questionData);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setQuestions(prev => [...prev, { id: docRef.id, ...questionData }]);
       toast.success('Otázka byla úspěšně přidána');
       setIsAddingQuestion(false);
       setNewQuestion({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
@@ -361,6 +368,8 @@ export default function TeacherDashboard() {
       if (imageUrl) questionData.imageUrl = imageUrl;
 
       await updateDoc(doc(db, 'questions', editingQuestion.id), questionData);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setQuestions(prev => prev.map(q => q.id === editingQuestion.id ? { ...q, ...questionData } : q));
       toast.success('Otázka byla úspěšně upravena');
       setIsEditingQuestion(false);
       setEditingQuestion({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
@@ -373,6 +382,8 @@ export default function TeacherDashboard() {
   const handleDeleteQuestion = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'questions', id));
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setQuestions(prev => prev.filter(q => q.id !== id));
       toast.success('Otázka byla smazána');
     } catch (error) {
       toast.error('Chyba při mazání otázky');
@@ -411,7 +422,7 @@ export default function TeacherDashboard() {
         fileUrl = await getDownloadURL(snapshot.ref);
       }
 
-      await addDoc(collection(db, 'learningSheets'), {
+      const sheetData = {
         title: newSheet.title,
         subject: newSheet.subject,
         level: newSheet.level,
@@ -420,10 +431,14 @@ export default function TeacherDashboard() {
         fileType,
         createdBy: profile?.uid,
         createdAt: Timestamp.now()
-      });
+      };
+      const docRef = await addDoc(collection(db, 'learningSheets'), sheetData);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setLearningSheets(prev => [...prev, { id: docRef.id, ...sheetData } as LearningSheet]);
       toast.success('Materiál byl úspěšně vytvořen');
       setIsAddingSheet(false);
       setNewSheet({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', file: null });
+
     } catch (error) {
       console.error(error);
       toast.error('Chyba při ukládání materiálu');
@@ -435,6 +450,8 @@ export default function TeacherDashboard() {
   const handleDeleteSheet = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'learningSheets', id));
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setLearningSheets(prev => prev.filter(s => s.id !== id));
       toast.success('Materiál byl smazán');
     } catch (error) {
       toast.error('Chyba při mazání materiálu');
@@ -490,7 +507,8 @@ export default function TeacherDashboard() {
         return;
       }
 
-      for (const q of extractedQuestions) {
+      // Paralelní zápis všech otázek najednou (místo sekvenčního for loopu)
+      const savePromises = extractedQuestions.map(q => {
         const qData: any = {
           ...q,
           topic: pdfImport.topic,
@@ -498,11 +516,12 @@ export default function TeacherDashboard() {
           createdBy: profile?.uid,
           createdAt: Timestamp.now()
         };
-        if (pdfImport.courseId && pdfImport.courseId !== 'none') {
-          qData.courseId = pdfImport.courseId;
-        }
-        await addDoc(collection(db, 'questions'), qData);
-      }
+        if (pdfImport.courseId && pdfImport.courseId !== 'none') qData.courseId = pdfImport.courseId;
+        return addDoc(collection(db, 'questions'), qData).then(ref => ({ id: ref.id, ...qData }));
+      });
+      const savedQuestions = await Promise.all(savePromises);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setQuestions(prev => [...prev, ...savedQuestions]);
 
       toast.success(`Úspěšně importováno ${extractedQuestions.length} otázek.`);
       setIsImportingPDF(false);
@@ -522,11 +541,14 @@ export default function TeacherDashboard() {
     }
 
     try {
-      await addDoc(collection(db, 'practiceCourses'), {
+      const courseData = {
         ...newCourse,
         createdBy: profile?.uid,
         createdAt: Timestamp.now()
-      });
+      };
+      const docRef = await addDoc(collection(db, 'practiceCourses'), courseData);
+      // Optmistická aktualizace lokálního stavu — bez re-fetch
+      setPracticeCourses(prev => [...prev, { id: docRef.id, ...courseData } as PracticeCourse]);
       toast.success('Nová sekce procvičování byla vytvořena.');
       setIsAddingCourse(false);
       setNewCourse({ title: '', description: '', topics: [], difficulty: 'Začátečník', duration: '4 týdny', color: '#eff6ff' });
@@ -538,10 +560,30 @@ export default function TeacherDashboard() {
 
   return (
     <div className="w-[80%] mx-auto py-12 space-y-10 overflow-x-hidden">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-4xl font-display font-bold text-brand-blue">Učitelský portál</h1>
-          <p className="text-gray-500 text-lg">Spravujte své studenty, testy a výukové materiály.</p>
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-4 md:px-0">
+        <div className="flex items-center gap-6">
+          <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-white shadow-xl flex items-center justify-center overflow-hidden border-4 border-white">
+            {profile?.photoURL ? (
+              <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+            ) : (
+              <UserIcon size={40} className="text-brand-blue" />
+            )}
+          </div>
+          <div className="space-y-1">
+            <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-blue">
+              Učitelský portál
+            </h1>
+            <p className="text-gray-500 text-lg">Ahoj, {profile?.name}! Spravujte své studenty a materiály.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <Button 
+            onClick={() => setIsProfileSettingsOpen(true)}
+            className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
+          >
+            <Settings size={22} className="text-brand-orange" />
+            <span>Nastavení profilu</span>
+          </Button>
         </div>
       </header>
 

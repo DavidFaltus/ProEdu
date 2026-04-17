@@ -19,9 +19,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
+import ProfileSettings from './ProfileSettings';
 
 export default function Navbar() {
-  const { user, profile, signOut } = useAuth();
+  const { user, profile, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -69,8 +70,12 @@ export default function Navbar() {
                 </div>
               </div>
               <DropdownMenu>
-                <DropdownMenuTrigger className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-brand-blue hover:bg-blue-100 transition-all group outline-none">
-                  <UserIcon size={24} className="group-hover:rotate-12 transition-transform" />
+                <DropdownMenuTrigger className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center text-brand-blue hover:bg-blue-100 transition-all group overflow-hidden outline-none">
+                  {profile?.photoURL ? (
+                    <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <UserIcon size={24} className="group-hover:rotate-12 transition-transform" />
+                  )}
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-64 rounded-[2rem] p-3 shadow-3xl border-none bg-white/95 backdrop-blur-md">
                   <DropdownMenuGroup>
@@ -109,6 +114,18 @@ export default function Navbar() {
                     </DropdownMenuItem>
                   )}
 
+                  <DropdownMenuItem 
+                    onClick={() => setIsProfileSettingsOpen(true)}
+                    className="rounded-2xl cursor-pointer focus:bg-gray-50 focus:text-brand-blue p-3 transition-colors"
+                  >
+                    <div className="flex items-center gap-3 font-bold w-full">
+                      <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
+                        <Settings size={20} />
+                      </div>
+                      Nastavení profilu
+                    </div>
+                  </DropdownMenuItem>
+
                   <DropdownMenuSeparator className="bg-gray-50 mx-2" />
                   
                   <DropdownMenuItem 
@@ -137,6 +154,10 @@ export default function Navbar() {
           )}
         </div>
       </div>
+      <ProfileSettings 
+        open={isProfileSettingsOpen} 
+        onOpenChange={setIsProfileSettingsOpen} 
+      />
     </nav>
   );
 }
