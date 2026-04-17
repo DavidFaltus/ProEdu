@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { MathTopic, Question } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY || "" });
 
 const executeWithRetry = async <T>(operation: () => Promise<T>, maxRetries = 4): Promise<T> => {
   let attempt = 0;

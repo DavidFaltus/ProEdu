@@ -76,9 +76,22 @@ export interface PracticeCourse {
   topics?: string[];
   customTopics?: string[]; // deprecated/alternative, let's just use `topics`
   difficulty: Difficulty;
-  duration: string;
+  questionCount: number;
   color: string;
   createdBy: string;
   createdAt: Timestamp;
   isVisible?: boolean;
+}
+
+export interface TodoItem {
+  id: string;
+  studentId: string;
+  title: string;
+  type: 'practice' | 'custom' | 'test' | 'material';
+  referenceId?: string; // ID of the test, course or sheet
+  completed: boolean;
+  dueDate?: Timestamp;
+  createdAt: Timestamp;
+  addedBy: string; // UID of the student or teacher
+  completedAt?: Timestamp;
 }

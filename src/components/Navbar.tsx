@@ -47,7 +47,7 @@ export default function Navbar() {
           
           <div className="hidden lg:flex items-center gap-8">
             <Link to="/" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">O nás</Link>
-            <Link to="/learning" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Materiály</Link>
+            {user && <Link to="/learning" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Materiály</Link>}
             <Link to="/practice" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Procvičování</Link>
             <Link to="/contact" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Kontakt</Link>
             {profile?.role === 'teacher' && (

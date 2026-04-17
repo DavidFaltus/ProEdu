@@ -113,46 +113,91 @@ export const GEOMETRY_QUESTIONS: Question[] = [
   }
 ];
 
-// Jednoduchá in-memory cache pro otázky
+// Cache za kličem (courseId nebo topic)
 const questionsCache: Record<string, { questions: Question[], timestamp: number }> = {};
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minut
 
-export const startPracticeCourse = async (userId: string, userName: string, topic: MathTopic = 'Geometrie', customTitle?: string, customDescription?: string) => {
+export const startPracticeCourse = async (
+  userId: string, 
+  userName: string, 
+  topic: string, 
+  title: string, 
+  description: string,
+  courseId?: string,
+  topics?: string[],
+  questionCount?: number
+) => {
   let pool: Question[] = [];
+  const cacheKey = courseId || (topics && topics.join(',')) || topic;
 
   // Zkontrolovat cashi
   const now = Date.now();
-  if (questionsCache[topic] && (now - questionsCache[topic].timestamp < CACHE_DURATION)) {
-    pool = questionsCache[topic].questions;
+  if (questionsCache[cacheKey] && (now - questionsCache[cacheKey].timestamp < CACHE_DURATION)) {
+    pool = questionsCache[cacheKey].questions;
   } else {
-    // Načíst z DB if není v cache nebo vypršela
-    const qSnapshot = await getDocs(query(collection(db, 'questions'), where('topic', '==', topic)));
-    pool = qSnapshot.docs.map(d => ({ id: d.id, ...d.data() } as Question));
-    
-    // Uložit do cache
-    questionsCache[topic] = {
-      questions: pool,
-      timestamp: now
-    };
-  }
+    // Načíst z DB
+    try {
+      let q;
+      if (courseId && courseId !== 'prep' && courseId !== 'maturita' && courseId !== 'geometry') {
+        // Pokud je to DB kurz, prioritně bereme otázky pro tento kurz
+        q = query(collection(db, 'questions'), where('courseId', '==', courseId));
+        const snap = await getDocs(q);
+        pool = snap.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+      }
 
+      // Pokud máme málo otázek pro specifický kurz, nebo to není DB kurz, doplníme podle témat
+      if (pool.length < 10) {
+        const topicsToSearch = topics && topics.length > 0 ? topics : [topic];
+        for (const t of topicsToSearch) {
+          const qTopic = query(collection(db, 'questions'), where('topics', 'array-contains', t));
+          const snapTopic = await getDocs(qTopic);
+          const topicQuestions = snapTopic.docs.map(d => ({ id: d.id, ...d.data() } as Question));
+          
+          // Sloučení a odstranění duplicit
+          topicQuestions.forEach(tq => {
+            if (!pool.some(p => p.id === tq.id)) pool.push(tq);
+          });
 
-  // Fallback to hardcoded geometry questions if DB is empty for geometry
-  if (pool.length < 5 && topic === 'Geometrie') {
-    pool = [...pool, ...GEOMETRY_QUESTIONS];
+          // Zkusíme i starý formát (single topic)
+          const qOld = query(collection(db, 'questions'), where('topic', '==', t));
+          const snapOld = await getDocs(qOld);
+          snapOld.docs.forEach(d => {
+            const data = { id: d.id, ...d.data() } as Question;
+            if (!pool.some(p => p.id === data.id)) pool.push(data);
+          });
+        }
+      }
+
+      // Fallback pro Geometrii
+      if (pool.length < 5 && (topic === 'Geometrie' || topics?.includes('Geometrie'))) {
+        GEOMETRY_QUESTIONS.forEach(gq => {
+          if (!pool.some(p => p.id === gq.id)) pool.push(gq);
+        });
+      }
+
+      // Uložit do cache
+      questionsCache[cacheKey] = {
+        questions: pool,
+        timestamp: now
+      };
+    } catch (error) {
+      console.error("Chyba při načítání otázek:", error);
+    }
   }
 
   if (pool.length < 5) {
-    throw new Error(`Nedostatek otázek v bance pro téma ${topic}. Přidejte alespoň 5 otázek.`);
+    throw new Error(`Nedostatek otázek v bance pro toto téma (nalezeno ${pool.length}). Přidejte alespoň 5 otázek v administraci.`);
   }
 
-  // Select 5 random questions from the pool
+  // Select random questions from the pool based on course setting
+  const finalCount = questionCount || 10;
+  const count = Math.min(pool.length, finalCount);
   const shuffled = [...pool].sort(() => 0.5 - Math.random());
-  const selectedQuestions = shuffled.slice(0, 5);
+  const selectedQuestions = shuffled.slice(0, count);
 
   const testData: Partial<Test> = {
-    title: customTitle || `${topic}: Náhodné procvičování`,
-    description: customDescription || `Procvič si téma ${topic} s náhodně vybranými úlohami. Každý pokus je jiný!`,
+    title: title || `${topic}: Procvičování`,
+    description: description || `Procvič si téma ${topic}. Každý pokus ti vybere náhodné úlohy z naší banky.`,
     autoGrade: true,
     topic: topic,
     questions: selectedQuestions

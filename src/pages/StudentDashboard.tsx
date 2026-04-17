@@ -1,16 +1,19 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, doc, getDoc, updateDoc, getDocs } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, doc, getDoc, updateDoc, getDocs, orderBy, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { useAuth } from '../context/AuthContext';
-import { AssignedTest, LearningSheet, MathTopic } from '../types';
+import { AssignedTest, LearningSheet, MathTopic, TodoItem } from '../types/index';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
+import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, BarChart3, Settings, User as UserIcon } from 'lucide-react';
+import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, BarChart3, Settings, User as UserIcon, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getRecommendations } from '../services/geminiService';
+import TodoManager from '../components/TodoManager';
+import QuickCalendar from '../components/QuickCalendar';
 
 interface TopicStats {
   correct: number;
@@ -18,31 +21,68 @@ interface TopicStats {
 }
 
 export default function StudentDashboard() {
-  const { profile, setIsProfileSettingsOpen } = useAuth();
+  const { user, profile, loading, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [isUpdatingRecommendations, setIsUpdatingRecommendations] = useState(false);
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [isAddingTodo, setIsAddingTodo] = useState<string | null>(null);
+
+  const handleAddToTodo = async (title: string, type: TodoItem['type'] = 'practice') => {
+    if (!user) return;
+    setIsAddingTodo(title);
+    try {
+      const todoData: Omit<TodoItem, 'id'> = {
+        studentId: user.uid,
+        title,
+        type,
+        completed: false,
+        addedBy: user.uid,
+        createdAt: Timestamp.now(),
+      };
+      await addDoc(collection(db, 'todos'), todoData);
+      toast.success(`Úkol "${title}" byl přidán do tvého TODO listu!`);
+    } catch (error) {
+      console.error("Todo error:", error);
+      toast.error('Chyba při přidávání úkolu.');
+    } finally {
+      setIsAddingTodo(null);
+    }
+  };
 
   useEffect(() => {
     if (!profile) return;
 
-    // Real-time listener pro testy, aby žák hned viděl přiřazený úkol
     const unsubAssigned = onSnapshot(query(collection(db, 'assignedTests'), where('studentId', '==', profile.uid)), (snap) => {
       setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)));
     });
 
-    // Materiály se mění zřídka, stačí jednorázový fetch pro úsporu reads
     const fetchSheets = async () => {
       const snap = await getDocs(collection(db, 'learningSheets'));
       setLearningSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
     };
     fetchSheets();
 
-    return () => unsubAssigned();
-  }, [profile]);
+    const unsubTodos = onSnapshot(
+      query(collection(db, 'todos'), where('studentId', '==', profile.uid)),
+      (snap) => {
+        const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as TodoItem));
+        const sorted = items.sort((a, b) => {
+          const tA = (a.createdAt as any)?.toMillis?.() || 0;
+          const tB = (b.createdAt as any)?.toMillis?.() || 0;
+          return tB - tA;
+        });
+        setTodos(sorted);
+      }
+    );
 
+    return () => {
+      unsubAssigned();
+      unsubTodos();
+    };
+  }, [profile]);
 
   // Logic to update recommendations based on graded tests
   useEffect(() => {
@@ -52,7 +92,6 @@ export default function StudentDashboard() {
       const gradedTests = assignedTests.filter(t => t.status === 'graded' && t.topicPerformance);
       if (gradedTests.length === 0) return;
 
-      // Aggregate performance
       const performance: Record<string, { correct: number, total: number }> = {};
       gradedTests.forEach(test => {
         if (test.topicPerformance) {
@@ -153,11 +192,22 @@ export default function StudentDashboard() {
               </CardHeader>
               <CardContent className="relative z-10 grid md:grid-cols-3 gap-4">
                 {profile.focusAreas?.map((area, i) => (
-                  <div key={i} className="bg-white/20 backdrop-blur-md p-6 rounded-3xl border border-white/20 flex items-center gap-4 group hover:bg-white/30 transition-all cursor-default">
-                    <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-purple font-bold">
-                      {i + 1}
+                  <div key={i} className="bg-white/20 backdrop-blur-md p-6 rounded-3xl border border-white/20 flex flex-col gap-4 group hover:bg-white/30 transition-all cursor-default">
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-purple font-bold">
+                        {i + 1}
+                      </div>
+                      <span className="font-bold text-lg">{area}</span>
                     </div>
-                    <span className="font-bold text-lg">{area}</span>
+                    <Button 
+                      variant="ghost" 
+                      size="sm"
+                      disabled={!!isAddingTodo}
+                      onClick={() => handleAddToTodo(area)}
+                      className="mt-auto w-full bg-white/10 hover:bg-white text-white hover:text-brand-purple rounded-xl font-bold gap-2 transition-all"
+                    >
+                      {isAddingTodo === area ? <Loader2 size={16} className="animate-spin" /> : <><Clock size={16} /> Naplánovat</>}
+                    </Button>
                   </div>
                 ))}
               </CardContent>
@@ -214,18 +264,56 @@ export default function StudentDashboard() {
         </Card>
       </div>
 
-      <Tabs defaultValue="pending" className="space-y-8">
-        <TabsList className="bg-white border-2 border-gray-50 p-1 rounded-2xl h-16 shadow-sm w-full md:w-auto overflow-x-auto flex-nowrap justify-start">
-          <TabsTrigger value="pending" className="rounded-xl px-8 h-full data-[state=active]:bg-blue-50 data-[state=active]:text-brand-blue font-bold">
-            Aktuální úkoly
+      <Tabs defaultValue="todos" className="space-y-10">
+        <TabsList className="bg-white/50 backdrop-blur-md border-2 border-gray-100/50 p-1.5 rounded-3xl h-20 shadow-sm flex items-center mb-10 overflow-x-auto justify-start md:justify-center w-full">
+          <TabsTrigger value="todos" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-blue data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-brand-blue group-data-[state=active]:bg-brand-blue group-data-[state=active]:text-white transition-colors">
+              <Clock size={20} />
+            </div>
+            TODO & Kalendář
           </TabsTrigger>
-          <TabsTrigger value="completed" className="rounded-xl px-8 h-full data-[state=active]:bg-blue-50 data-[state=active]:text-brand-blue font-bold">
+          <TabsTrigger value="pending" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-orange data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-brand-orange">
+              <FileText size={20} />
+            </div>
+            Moje testy
+          </TabsTrigger>
+          <TabsTrigger value="completed" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-blue data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
+              <Trophy size={20} />
+            </div>
             Historie
           </TabsTrigger>
-          <TabsTrigger value="sheets" className="rounded-xl px-8 h-full data-[state=active]:bg-blue-50 data-[state=active]:text-brand-blue font-bold">
+          <TabsTrigger value="sheets" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-purple-600 data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600">
+              <BookOpen size={20} />
+            </div>
             Materiály
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="todos" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 space-y-8">
+              <div className="bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
+                <TodoManager targetStudentId={profile?.uid || ''} />
+              </div>
+            </div>
+            <div className="space-y-8">
+              <QuickCalendar todos={todos} />
+              
+              <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-8 opacity-10">
+                  <Lightbulb size={120} />
+                </div>
+                <h3 className="text-xl font-display font-bold mb-2">Tip pro tebe</h3>
+                <p className="text-blue-100 text-sm leading-relaxed">
+                  Pravidelné procvičování alespoň 15 minut denně výrazně zlepšuje dlouhodobou paměť. Naplánuj si úkoly do kalendáře!
+                </p>
+              </div>
+            </div>
+          </div>
+        </TabsContent>
 
         <TabsContent value="pending">
           <div className="grid md:grid-cols-2 gap-8">

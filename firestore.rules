@@ -3,54 +3,6 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: users
-    // Document ID: {uid}
-    // Fields:
-    //   - uid: string (required)
-    //   - email: string (required)
-    //   - name: string (optional)
-    //   - role: string (required, enum: ['student', 'teacher'])
-    //   - createdAt: timestamp (required)
-    //
-    // Collection: tests
-    // Document ID: {testId}
-    // Fields:
-    //   - id: string
-    //   - title: string (required)
-    //   - description: string
-    //   - questions: list (required)
-    //   - createdBy: string (required)
-    //   - createdAt: timestamp (required)
-    //
-    // Collection: assignedTests
-    // Document ID: {assignedTestId}
-    // Fields:
-    //   - id: string
-    //   - testId: string (required)
-    //   - studentId: string (required)
-    //   - status: string (required, enum: ['pending', 'submitted', 'graded'])
-    //   - answers: map
-    //   - grade: string
-    //   - feedback: string
-    //   - assignedAt: timestamp (required)
-    //   - submittedAt: timestamp
-    //   - gradedAt: timestamp
-    //
-    // Collection: learningSheets
-    // Document ID: {sheetId}
-    // Fields:
-    //   - id: string
-    //   - title: string (required)
-    //   - content: string (required)
-    //   - createdBy: string (required)
-    //   - createdAt: timestamp (required)
-    //
-    // ===============================================================
-
-    // ===============================================================
     // Helper Functions
     // ===============================================================
 
@@ -65,67 +17,16 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() &&
         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
-          (request.auth.token.email == "davidfaltus03@gmail.com" && request.auth.token.email_verified == true));
+         request.auth.token.email == "davidfaltus03@gmail.com");
     }
 
-    function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role', 'createdAt']) &&
-             data.uid == request.auth.uid &&
-             data.email == request.auth.token.email &&
-             data.role in ['student', 'teacher'] &&
-             data.createdAt is timestamp;
+    // Helper to check if fields are unchanged
+    function unchanged(field) {
+      return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
     }
 
-    function isValidTest(data) {
-      return data.keys().hasAll(['title', 'questions', 'createdBy', 'createdAt']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.questions is list && data.questions.size() < 100 &&
-             data.createdBy == request.auth.uid &&
-             data.createdAt is timestamp;
-    }
-
-    function isValidAssignedTest(data) {
-      return data.keys().hasAll(['testId', 'studentId', 'status', 'assignedAt']) &&
-             data.testId is string &&
-             data.studentId is string &&
-             data.status in ['pending', 'submitted', 'graded'] &&
-             data.assignedAt is timestamp &&
-             (!('dueDate' in data) || data.dueDate is timestamp);
-    }
-
-    function isValidLearningSheet(data) {
-      return data.keys().hasAll(['title', 'subject', 'level', 'createdBy', 'createdAt']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.subject is string &&
-             data.level is string &&
-             (!('fileUrl' in data) || data.fileUrl is string) &&
-             (!('fileType' in data) || data.fileType is string) &&
-             (!('topic' in data) || data.topic is string) &&
-             data.createdBy == request.auth.uid &&
-             data.createdAt is timestamp;
-    }
-
-    function isValidPracticeCourse(data) {
-      return data.keys().hasAll(['title', 'description', 'difficulty', 'duration', 'color', 'createdBy', 'createdAt']) &&
-             data.title is string && data.title.size() > 0 &&
-             (!('topic' in data) || data.topic is string) &&
-             (!('topics' in data) || data.topics is list) &&
-             (!('isVisible' in data) || data.isVisible is bool) &&
-             data.difficulty is string &&
-             data.createdBy == request.auth.uid &&
-             data.createdAt is timestamp;
-    }
-
-    function isValidQuestion(data) {
-      return data.keys().hasAll(['question', 'options', 'correctAnswer', 'topic', 'createdBy', 'createdAt']) &&
-             data.question is string && data.question.size() > 0 &&
-             data.options is list && data.options.size() > 1 &&
-             data.correctAnswer is string &&
-             data.topic is string &&
-             (!('courseId' in data) || data.courseId is string) &&
-             (!('imageUrl' in data) || data.imageUrl is string) &&
-             data.createdBy == request.auth.uid &&
-             data.createdAt is timestamp;
+    function isImmutable() {
+      return unchanged('uid') && unchanged('createdAt') && unchanged('createdBy') && unchanged('studentId');
     }
 
     // ===============================================================
@@ -133,60 +34,90 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{uid} {
-      allow read: if true; // Allow reading to check if email exists during registration
-      allow create: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data);
-      allow update: if isAuthenticated() && isOwner(uid) && isValidUser(request.resource.data) && 
-                    request.resource.data.role == resource.data.role; // Role cannot be changed by user
+      // Rule 9: No broad reads. Only owner or teacher can read profile.
+      allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
+      // Rule 3: Document-level ownership.
+      allow create: if isAuthenticated() && isOwner(uid) && 
+                    request.resource.data.role == 'student'; // Force student role on sign-up
+      allow update: if isAuthenticated() && (isOwner(uid) || isAdmin()) && 
+                    isImmutable() &&
+                    (isAdmin() || request.resource.data.role == resource.data.role); // Only admin can change role
     }
 
     match /tests/{testId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidTest(request.resource.data);
-      allow update: if (isAdmin() || isOwner(resource.data.createdBy)) && isValidTest(request.resource.data);
-      allow delete: if (isAdmin() || isOwner(resource.data.createdBy));
+      allow create: if isAdmin() && 
+                    request.resource.data.createdBy == request.auth.uid &&
+                    request.resource.data.createdAt == request.time;
+      allow update: if isAdmin() && 
+                    isImmutable() &&
+                    resource.data.createdBy == request.auth.uid;
+      allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
     match /questions/{questionId} {
-      allow read: if isAuthenticated();
-      allow create: if isAdmin() && isValidQuestion(request.resource.data);
-      allow update: if isAdmin() && isValidQuestion(request.resource.data);
+      // Rule 9: Veřejná banka otázek přístupná pro náhledy
+      allow read: if true;
+      allow create: if isAdmin() && 
+                    request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && isImmutable();
       allow delete: if isAdmin();
     }
 
     match /assignedTests/{assignedTestId} {
+      // Rule 9: Only owner or teacher can read
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
-      allow create: if isAuthenticated() && isOwner(request.resource.data.studentId) && isValidAssignedTest(request.resource.data);
+      
+      // Rule 11: Creation by teacher ONLY
+      allow create: if isAdmin() && 
+                    request.resource.data.status == 'pending';
+      
       allow update: if isAuthenticated() && (
-        // Student can submit and auto-grade if allowed
+        // Student path: Submission only
         (isOwner(resource.data.studentId) && 
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'submittedAt', 'topicPerformance', 'grade', 'feedback', 'gradedAt']) &&
-         (request.resource.data.status == 'submitted' || request.resource.data.status == 'graded') &&
+         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'submittedAt', 'topicPerformance']) &&
+         request.resource.data.status == 'submitted' &&
          resource.data.status == 'pending') ||
-        // Teacher can grade
+        
+        // Teacher path: Grading only (Rule 5)
         (isAdmin() && 
          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['grade', 'feedback', 'status', 'gradedAt']) &&
-         request.resource.data.status == 'graded')
+         request.resource.data.status == 'graded' &&
+         isImmutable())
       );
+      
+      allow delete: if isAdmin();
     }
 
     match /learningSheets/{sheetId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() && isValidLearningSheet(request.resource.data);
-      allow update: if isAdmin() && isValidLearningSheet(request.resource.data) && request.resource.data.createdBy == resource.data.createdBy;
+      allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && isImmutable() && resource.data.createdBy == request.auth.uid;
       allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
     match /practiceCourses/{courseId} {
-      allow read: if isAuthenticated();
-      allow create: if isAdmin() && isValidPracticeCourse(request.resource.data);
-      allow update: if isAdmin() && isValidPracticeCourse(request.resource.data);
+      // Rule 9: Veřejná banka procvičování přístupná i pro hosty
+      allow read: if true;
+      allow create: if isAdmin();
+      allow update: if isAdmin() && isImmutable();
       allow delete: if isAdmin();
+    }
+
+    match /todos/{todoId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && (isOwner(request.resource.data.studentId) || isAdmin());
+      allow update: if isAuthenticated() && (
+        (isOwner(resource.data.studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completed', 'completedAt'])) || 
+        (isAdmin() && isImmutable())
+      );
+      allow delete: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
     }
 
     match /customTopics/{topicId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() && request.resource.data.keys().hasAll(['name']) && request.resource.data.name is string;
-      allow update: if isAdmin() && request.resource.data.keys().hasAll(['name']) && request.resource.data.name is string;
+      allow create: if isAdmin();
+      allow update: if isAdmin();
       allow delete: if isAdmin();
     }
   }

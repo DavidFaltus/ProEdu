@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
-import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon } from 'lucide-react';
+import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
@@ -18,6 +18,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '../components/ui/dialog';
 import { extractQuestionsFromTwoPDFs } from '../services/geminiService';
 import TestImporter from '../components/TestImporter';
+import TodoManager from '../components/TodoManager';
+import { Clock } from 'lucide-react';
 
 const SUBJECTS = [
   'Matematika',
@@ -42,6 +44,8 @@ const MATH_TOPICS: MathTopic[] = [
   'Zlomky a procenta',
   'Rovnice',
   'Slovní úlohy',
+  'Funkce',
+  'Statistika',
   'Jednotky a měření'
 ];
 
@@ -76,6 +80,8 @@ export default function TeacherDashboard() {
 
   const [selectedSheetForView, setSelectedSheetForView] = useState<LearningSheet | null>(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [isTodoViewOpen, setIsTodoViewOpen] = useState(false);
+  const [viewingStudentForTodo, setViewingStudentForTodo] = useState<UserProfile | null>(null);
 
   useEffect(() => {
     if (selectedSheetForView?.fileUrl && selectedSheetForView.fileUrl.startsWith('data:')) {
@@ -107,8 +113,8 @@ export default function TeacherDashboard() {
   const [newSheet, setNewSheet] = useState<{ title: string, subject: string, level: string, topic: MathTopic, file: File | null }>({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', file: null });
   const [newQuestion, setNewQuestion] = useState<Partial<Question> & { imageFile?: File | null }>({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
   const [pdfImport, setPdfImport] = useState<{ questionsFile: File | null, answersFile: File | null, topic: string, topics?: string[], courseId: string }>({ questionsFile: null, answersFile: null, topic: 'Aritmetika', topics: [], courseId: '' });
-  const [newCourse, setNewCourse] = useState<{ title: string, description: string, topics: string[], difficulty: string, duration: string, color: string }>({
-    title: '', description: '', topics: [], difficulty: 'Začátečník', duration: '4 týdny', color: '#eff6ff'
+  const [newCourse, setNewCourse] = useState<{ title: string, description: string, topics: string[], difficulty: string, questionCount: number, color: string }>({
+    title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff'
   });
   const [dbCustomTopics, setDbCustomTopics] = useState<string[]>([]);
   const [newTopicInput, setNewTopicInput] = useState('');
@@ -186,32 +192,6 @@ export default function TeacherDashboard() {
     };
   }, [profile]);
 
-
-  const toggleCourseVisibility = async (course: PracticeCourse) => {
-    const newVisibility = course.isVisible === false ? true : false;
-    try {
-      await updateDoc(doc(db, 'practiceCourses', course.id), { isVisible: !newVisibility });
-      // Optmistická aktualizace lokálního stavu — bez re-fetch
-      setPracticeCourses(prev => prev.map(c => c.id === course.id ? { ...c, isVisible: !newVisibility } : c));
-      toast.success(newVisibility ? 'Předmět je nyní viditelný' : 'Předmět byl skryt před žáky');
-    } catch (err) {
-      toast.error('Chyba při změně viditelnosti');
-      console.error(err);
-    }
-  };
-
-  const handleDeleteCourse = async (courseId: string) => {
-    try {
-      await deleteDoc(doc(db, 'practiceCourses', courseId));
-      // Optmistická aktualizace lokálního stavu — bez re-fetch
-      setPracticeCourses(prev => prev.filter(c => c.id !== courseId));
-      toast.success('Procvičování bylo smazáno');
-    } catch (error) {
-      toast.error('Chyba při mazání procvičování');
-      console.error(error);
-    }
-  };
-
   const handleBulkDeleteQuestions = async () => {
     const idsToDelete = Array.from(selectedQuestionIds);
     try {
@@ -238,7 +218,7 @@ export default function TeacherDashboard() {
         description: editingCourse.description,
         topics: editingCourse.topics,
         difficulty: editingCourse.difficulty,
-        duration: editingCourse.duration
+        questionCount: editingCourse.questionCount
       };
       await updateDoc(doc(db, 'practiceCourses', editingCourse.id), updatePayload);
       // Optmistická aktualizace lokálního stavu — bez re-fetch
@@ -294,6 +274,7 @@ export default function TeacherDashboard() {
       toast.error('Chyba při přiřazování testu');
     }
   };
+
 
   const handleSaveQuestion = async () => {
     if (!newQuestion.question || !newQuestion.correctAnswer || newQuestion.options?.some(o => !o)) {
@@ -379,6 +360,30 @@ export default function TeacherDashboard() {
     }
   };
 
+  const toggleCourseVisibility = async (course: PracticeCourse) => {
+    try {
+      const newVisibility = course.isVisible !== false ? false : true;
+      await updateDoc(doc(db, 'practiceCourses', course.id), {
+        isVisible: newVisibility
+      });
+      setPracticeCourses(prev => prev.map(c => c.id === course.id ? { ...c, isVisible: newVisibility } : c));
+      toast.success(newVisibility ? 'Kurz je nyní viditelný pro studenty' : 'Kurz byl skryt pro studenty');
+    } catch (err) {
+      toast.error('Chyba při změně viditelnosti');
+    }
+  };
+
+  const handleDeleteCourse = async (id: string) => {
+    if (!window.confirm('Opravdu chcete smazat tuto sekci? Otázky v ní zůstanou, ale nebudou k ní přiřazeny.')) return;
+    try {
+      await deleteDoc(doc(db, 'practiceCourses', id));
+      setPracticeCourses(prev => prev.filter(c => c.id !== id));
+      toast.success('Sekce byla smazána');
+    } catch (err) {
+      toast.error('Chyba při mazání sekce');
+    }
+  };
+
   const handleDeleteQuestion = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'questions', id));
@@ -410,8 +415,9 @@ export default function TeacherDashboard() {
 
         fileType = newSheet.file.type;
 
-        // Upload the file to Firebase Storage
-        const fileRef = ref(storage, `learningSheets/${Date.now()}_${newSheet.file.name}`);
+        // Rule 12: Storage paths must be namespaced: learningSheets/{teacherUid}/{fileId}
+        const teacherUid = profile?.uid || 'anonymous';
+        const fileRef = ref(storage, `learningSheets/${teacherUid}/${Date.now()}_${newSheet.file.name}`);
         const snapshot = await uploadBytes(fileRef, newSheet.file, {
           contentType: fileType,
           // Ensure it opens inline in the browser iframe instead of auto-downloading
@@ -551,7 +557,7 @@ export default function TeacherDashboard() {
       setPracticeCourses(prev => [...prev, { id: docRef.id, ...courseData } as PracticeCourse]);
       toast.success('Nová sekce procvičování byla vytvořena.');
       setIsAddingCourse(false);
-      setNewCourse({ title: '', description: '', topics: [], difficulty: 'Začátečník', duration: '4 týdny', color: '#eff6ff' });
+      setNewCourse({ title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff' });
     } catch (error) {
       console.error(error);
       toast.error('Chyba při vytváření sekce.');
@@ -660,38 +666,38 @@ export default function TeacherDashboard() {
                         </span>
                       ))}
                     </div>
-                    <div className="flex gap-2 shrink-0 bg-white/60 backdrop-blur-md p-1 rounded-xl">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className={`h-8 w-8 rounded-lg ${course.isVisible === false ? 'text-gray-400 hover:text-gray-600' : 'text-brand-blue hover:text-blue-600'}`}
-                        onClick={(e) => { e.stopPropagation(); toggleCourseVisibility(course); }}
-                        title={course.isVisible === false ? 'Kurz je skrytý. Kliknutím zobrazíte.' : 'Kurz je viditelný. Kliknutím skryjete.'}
-                      >
-                        {course.isVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 rounded-lg text-brand-orange hover:text-orange-600"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingCourse(course);
-                        }}
-                        title="Upravit kurz"
-                      >
-                        <Edit size={16} />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 rounded-lg text-red-500 hover:text-red-700"
-                        onClick={(e) => { e.stopPropagation(); handleDeleteCourse(course.id); }}
-                        title="Smazat kurz"
-                      >
-                        <Trash2 size={16} />
-                      </Button>
-                    </div>
+                      <div className="flex gap-2 shrink-0 bg-white/60 backdrop-blur-md p-1 rounded-xl">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 rounded-lg ${course.isVisible === false ? 'text-gray-400 hover:text-gray-600' : 'text-brand-blue hover:text-blue-600'}`}
+                          onClick={(e) => { e.stopPropagation(); toggleCourseVisibility(course); }}
+                          title={course.isVisible === false ? 'Kurz je skrytý. Kliknutím zobrazíte.' : 'Kurz je viditelný. Kliknutím skryjete.'}
+                        >
+                          {course.isVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-lg text-brand-orange hover:text-orange-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingCourse(course);
+                          }}
+                          title="Upravit kurz"
+                        >
+                          <Edit size={16} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 rounded-lg text-red-500 hover:text-red-700"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteCourse(course.id); }}
+                          title="Smazat kurz"
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
                   </div>
                   <div className="mb-2">
                     <span className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
@@ -712,7 +718,11 @@ export default function TeacherDashboard() {
                       <span className="text-sm">Počet otázek:</span>
                     </div>
                     <span className="font-black text-xl text-brand-blue">
-                      {questions.filter(q => q.courseId === course.id).length}
+                      {questions.filter(q => 
+                        q.courseId === course.id || 
+                        (q.topics && course.topics && q.topics.some(t => course.topics?.includes(t))) ||
+                        (q.topic === course.topic)
+                      ).length}
                     </span>
                   </div>
                   <div className="space-y-3">
@@ -958,6 +968,16 @@ export default function TeacherDashboard() {
                     >
                       Profil žáka
                     </Button>
+                    <Button
+                      onClick={() => {
+                        setViewingStudentForTodo(student);
+                        setIsTodoViewOpen(true);
+                      }}
+                      className="h-14 rounded-2xl gap-2 bg-brand-blue hover:bg-brand-blue/90 text-white font-black shadow-lg shadow-blue-100"
+                    >
+                      <Clock size={16} />
+                      TODO List
+                    </Button>
                     <Dialog open={isAssigningTest && selectedStudent?.uid === student.uid} onOpenChange={(open) => {
                       setIsAssigningTest(open);
                       if (open) setSelectedStudent(student);
@@ -981,8 +1001,8 @@ export default function TeacherDashboard() {
                                 <SelectValue placeholder="Vyberte téma procvičování..." />
                               </SelectTrigger>
                               <SelectContent className="rounded-2xl">
-                                {practiceCourses.map(course => (
-                                  <SelectItem key={course.id} value={course.id} className="rounded-xl">{course.title}</SelectItem>
+                                {([...practiceCourses]).map(course => (
+                                  <SelectItem key={course.id} value={course.id || ''} className="rounded-xl">{course.title}</SelectItem>
                                 ))}
                               </SelectContent>
                             </Select>
@@ -1012,6 +1032,38 @@ export default function TeacherDashboard() {
         </TabsContent>
       </Tabs>
 
+      {/* TodoView Dialog for Teacher */}
+      <Dialog open={isTodoViewOpen} onOpenChange={setIsTodoViewOpen}>
+        <DialogContent className="max-w-4xl rounded-[3rem] p-0 overflow-hidden border-none shadow-3xl bg-gray-50/95 backdrop-blur-xl">
+          <div className="p-10 pb-6 border-b border-white bg-brand-blue text-white relative">
+            <div className="absolute top-0 right-0 p-10 opacity-10">
+              <Clock size={120} />
+            </div>
+            <DialogHeader>
+              <div className="flex items-center gap-4 mb-2">
+                <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
+                  <UserIcon size={24} />
+                </div>
+                <div className="space-y-0.5">
+                  <DialogTitle className="text-3xl font-display font-black">TODO List studenta</DialogTitle>
+                  <p className="font-bold text-blue-100">{viewingStudentForTodo?.name}</p>
+                </div>
+              </div>
+            </DialogHeader>
+          </div>
+          <div className="p-10 max-h-[70vh] overflow-y-auto">
+            {viewingStudentForTodo && (
+              <TodoManager targetStudentId={viewingStudentForTodo.uid} isTeacherView={true} />
+            )}
+          </div>
+          <div className="p-6 bg-white flex justify-end">
+            <Button onClick={() => setIsTodoViewOpen(false)} variant="outline" className="rounded-2xl h-12 px-8 font-black border-2 border-gray-100 hover:bg-gray-50">
+              Zavřít
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* View Questions Dialog */}
       <Dialog open={!!viewingCourseId} onOpenChange={(open) => !open && setViewingCourseId(null)}>
         <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
@@ -1034,85 +1086,93 @@ export default function TeacherDashboard() {
           </div>
           <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
             <div className="max-w-6xl mx-auto space-y-6 w-full">
-              {questions.filter(q => q.courseId === viewingCourseId).map(q => (
-                <Card key={q.id} className="rounded-[2rem] border-none shadow-sm bg-white overflow-hidden relative">
-                  <div className="absolute top-6 left-6 z-10">
-                    <input
-                      type="checkbox"
-                      checked={selectedQuestionIds.has(q.id)}
-                      onChange={(e) => {
-                        const newSelected = new Set(selectedQuestionIds);
-                        if (e.target.checked) {
-                          newSelected.add(q.id);
-                        } else {
-                          newSelected.delete(q.id);
-                        }
-                        setSelectedQuestionIds(newSelected);
-                      }}
-                      className="w-5 h-5 rounded border-gray-300 text-brand-blue focus:ring-brand-blue cursor-pointer"
-                    />
-                  </div>
-                  <CardHeader className="pl-16">
-                    <div className="flex justify-between items-start">
-                      <div className="flex flex-wrap gap-1">
-                        {q.topics && q.topics.length > 0 ? (
-                          q.topics.map(t => (
-                            <span key={t} className="px-2 py-1 bg-blue-50 text-brand-blue rounded-lg text-[10px] font-bold uppercase">
+              {(() => {
+                const currentCourse = practiceCourses.find(c => c.id === viewingCourseId);
+                const filteredQuestions = questions.filter(q => 
+                  q.courseId === viewingCourseId || 
+                  (currentCourse && (
+                    (q.topics && currentCourse.topics && q.topics.some(t => currentCourse.topics?.includes(t))) ||
+                    (q.topic === currentCourse.topic)
+                  ))
+                );
+
+                if (filteredQuestions.length === 0) {
+                  return (
+                    <div className="text-center py-20 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
+                      <FileText size={48} className="mx-auto text-gray-200 mb-4" />
+                      <p className="text-gray-400 font-bold">V této sekci zatím nejsou žádné otázky</p>
+                    </div>
+                  );
+                }
+
+                return filteredQuestions.map(q => (
+                  <Card key={q.id} className="rounded-[2rem] border-none shadow-sm bg-white overflow-hidden relative">
+                    <div className="absolute top-6 left-6 z-10">
+                      <input
+                        type="checkbox"
+                        checked={selectedQuestionIds.has(q.id)}
+                        onChange={(e) => {
+                          const newSelected = new Set(selectedQuestionIds);
+                          if (e.target.checked) {
+                            newSelected.add(q.id);
+                          } else {
+                            newSelected.delete(q.id);
+                          }
+                          setSelectedQuestionIds(newSelected);
+                        }}
+                        className="w-5 h-5 rounded-lg border-gray-300 text-brand-blue focus:ring-brand-blue"
+                      />
+                    </div>
+                    <CardHeader className="pl-16 pt-6">
+                      <div className="flex justify-between items-start">
+                        <div className="flex gap-2">
+                          {(q.topics?.length ? q.topics : [q.topic]).map(t => (
+                            <span key={t} className="px-2 py-1 bg-blue-50 text-brand-blue text-[10px] font-bold rounded-lg uppercase">
                               {t}
                             </span>
-                          ))
-                        ) : (
-                          <span className="px-2 py-1 bg-blue-50 text-brand-blue rounded-lg text-[10px] font-bold uppercase">
-                            {q.topic}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            setEditingQuestion(q);
-                            setIsEditingQuestion(true);
-                          }}
-                          className="text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
-                        >
-                          <Edit size={18} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteQuestion(q.id)}
-                          className="text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                        >
-                          <Trash2 size={18} />
-                        </Button>
-                      </div>
-                    </div>
-                    <CardTitle className="text-lg font-display mt-2">{q.question}</CardTitle>
-                    {q.imageUrl && (
-                      <div className="mt-4">
-                        <img src={q.imageUrl} alt="Obrázek k otázce" className="max-h-48 rounded-xl object-contain" />
-                      </div>
-                    )}
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-2">
-                      {q.options?.map((opt, i) => (
-                        <div key={i} className={`p-3 rounded-xl text-sm ${opt === q.correctAnswer ? 'bg-green-50 text-green-700 font-bold border border-green-200' : 'bg-gray-50 text-gray-600 border border-transparent'}`}>
-                          {opt}
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-              {questions.filter(q => q.courseId === viewingCourseId).length === 0 && (
-                <div className="text-center py-20 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
-                  <FileText size={48} className="mx-auto text-gray-200 mb-4" />
-                  <p className="text-gray-400 font-bold">V této sekci zatím nejsou žádné otázky</p>
-                </div>
-              )}
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setEditingQuestion(q);
+                              setIsEditingQuestion(true);
+                            }}
+                            className="text-gray-400 hover:text-brand-blue hover:bg-blue-50 rounded-lg"
+                          >
+                            <Edit size={18} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteQuestion(q.id)}
+                            className="text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                          >
+                            <Trash2 size={18} />
+                          </Button>
+                        </div>
+                      </div>
+                      <CardTitle className="text-lg font-display mt-2">{q.question}</CardTitle>
+                      {q.imageUrl && (
+                        <div className="mt-4">
+                          <img src={q.imageUrl} alt="Obrázek k otázce" className="max-h-48 rounded-xl object-contain" />
+                        </div>
+                      )}
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-2">
+                        {q.options?.map((opt, i) => (
+                          <div key={i} className={`p-3 rounded-xl text-sm ${opt === q.correctAnswer ? 'bg-green-50 text-green-700 font-bold border border-green-200' : 'bg-gray-50 text-gray-600 border border-transparent'}`}>
+                            {opt}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ));
+              })()}
             </div>
           </div>
         </DialogContent>
@@ -1432,37 +1492,142 @@ export default function TeacherDashboard() {
               </div>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
-            <h3 className="text-xl font-bold text-gray-900 mb-6">Historie aktivit a testů</h3>
-            <div className="space-y-4">
-              {assignedTests.filter(at => at.studentId === selectedStudent?.uid).map(at => (
-                <Card key={at.id} className="rounded-2xl border-none shadow-sm bg-white">
-                  <div className="p-6 flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-lg text-gray-900">{at.testTitle}</h4>
-                      <p className="text-sm text-gray-500">
-                        Přiřazeno: {at.assignedAt.toDate().toLocaleDateString('cs-CZ')}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      {at.status === 'pending' && <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase">Čeká na splnění</span>}
-                      {at.status === 'submitted' && <span className="px-3 py-1 bg-orange-50 text-brand-orange rounded-full text-xs font-bold uppercase">Čeká na opravu</span>}
-                      {at.status === 'graded' && (
-                        <div className="text-right">
-                          <div className="text-2xl font-black text-brand-blue">{at.grade}</div>
-                          <div className="text-[10px] uppercase font-bold text-gray-400">Známka</div>
+          <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-gray-50/50">
+            <Tabs defaultValue="history" className="w-full">
+              <TabsList className="grid w-full grid-cols-3 mb-8 bg-white/50 p-1.5 rounded-[1.5rem] border border-gray-100">
+                <TabsTrigger value="history" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm py-3">Historie</TabsTrigger>
+                <TabsTrigger value="todos" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm py-3">Úkoly (TODO)</TabsTrigger>
+                <TabsTrigger value="assign" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:text-brand-orange data-[state=active]:shadow-sm py-3">Přiřadit test</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="history" className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xl font-bold text-gray-900">Historie aktivit a výsledky</h3>
+                </div>
+                
+                <div className="space-y-4">
+                  {assignedTests
+                    .filter(at => at.studentId === selectedStudent?.uid)
+                    .sort((a, b) => {
+                      const tA = a.assignedAt?.toMillis ? a.assignedAt.toMillis() : 0;
+                      const tB = b.assignedAt?.toMillis ? b.assignedAt.toMillis() : 0;
+                      return tB - tA;
+                    })
+                    .map(at => (
+                    <Card key={at.id} className="rounded-2xl border-none shadow-sm bg-white overflow-hidden group hover:shadow-md transition-all">
+                      <div className="p-6 flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                            at.status === 'graded' ? 'bg-green-50 text-green-600' : 
+                            at.status === 'submitted' ? 'bg-orange-50 text-brand-orange' : 'bg-blue-50 text-brand-blue'
+                          }`}>
+                            <FileText size={24} />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-lg text-gray-900">{at.testTitle}</h4>
+                            <div className="flex items-center gap-3 text-sm text-gray-500">
+                              <span className="flex items-center gap-1">
+                                <Clock size={14} />
+                                {at.assignedAt.toDate().toLocaleDateString('cs-CZ')}
+                              </span>
+                              {at.dueDate && (
+                                <span className={`flex items-center gap-1 font-medium ${
+                                  at.status === 'pending' && at.dueDate.toDate() < new Date() ? 'text-red-500' : ''
+                                }`}>
+                                  <Target size={14} />
+                                  Termín: {at.dueDate.toDate().toLocaleDateString('cs-CZ')}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      )}
+                        <div className="flex items-center gap-4">
+                          {at.status === 'pending' && (
+                            <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-black uppercase tracking-wider">
+                              Rozpracováno
+                            </span>
+                          )}
+                          {at.status === 'submitted' && (
+                            <span className="px-3 py-1 bg-orange-50 text-brand-orange rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
+                              K opravě
+                            </span>
+                          )}
+                          {at.status === 'graded' && (
+                            <div className="flex items-center gap-3">
+                              <div className="text-right">
+                                <div className="text-2xl font-black text-brand-blue leading-none">{at.grade}</div>
+                                <div className="text-[10px] uppercase font-bold text-gray-400 tracking-tighter">Známka</div>
+                              </div>
+                              <Button variant="ghost" size="icon" className="rounded-full hover:bg-blue-50 text-brand-blue" onClick={() => navigate(`/test-review/${at.id}`)}>
+                                <ArrowRight size={18} />
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  ))}
+                  {assignedTests.filter(at => at.studentId === selectedStudent?.uid).length === 0 && (
+                    <div className="text-center py-16 bg-white/50 rounded-[2rem] border-2 border-dashed border-gray-200">
+                      <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-400 mx-auto mb-4">
+                        <FileText size={32} />
+                      </div>
+                      <p className="text-gray-500 font-bold">Student zatím nemá žádné přiřazené aktivity.</p>
+                      <p className="text-sm text-gray-400 mt-1">Můžete mu přiřadit test v záložce "Přiřadit test".</p>
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="todos" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="bg-white/50 p-1 rounded-[2.5rem]">
+                  {selectedStudent && (
+                    <TodoManager targetStudentId={selectedStudent.uid} isTeacherView={true} />
+                  )}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="assign" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-gray-100">
+                  <h3 className="text-2xl font-display font-black text-brand-orange mb-6">Přiřadit nový test</h3>
+                  <div className="space-y-6">
+                    <div className="space-y-3">
+                      <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Výběr procvičování</Label>
+                      <Select value={newAssignment.courseId} onValueChange={(val: string) => setNewAssignment({ ...newAssignment, courseId: val })}>
+                        <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6 bg-gray-50/50">
+                          <SelectValue placeholder="Vyberte téma procvičování..." />
+                        </SelectTrigger>
+                        <SelectContent className="rounded-2xl">
+                          {practiceCourses.map(course => (
+                            <SelectItem key={course.id} value={course.id || ''} className="rounded-xl">{course.title}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-3">
+                      <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Datum odevzdání (Deadline)</Label>
+                      <Input
+                        type="date"
+                        className="rounded-2xl h-14 border-gray-100 px-6 bg-gray-50/50 [color-scheme:light]"
+                        value={newAssignment.dueDate}
+                        onChange={(e) => setNewAssignment({ ...newAssignment, dueDate: e.target.value })}
+                      />
+                    </div>
+                    <div className="pt-4">
+                      <Button 
+                        onClick={async () => {
+                          await handleAssignTest();
+                          // Switch to history tab after success
+                        }} 
+                        className="btn-orange w-full rounded-2xl h-16 text-lg font-black shadow-xl shadow-orange-100"
+                      >
+                        Potvrdit a přiřadit žákovi
+                      </Button>
                     </div>
                   </div>
-                </Card>
-              ))}
-              {assignedTests.filter(at => at.studentId === selectedStudent?.uid).length === 0 && (
-                <div className="text-center py-12">
-                  <p className="text-gray-400 font-bold">Student zatím nemá žádné aktivity.</p>
                 </div>
-              )}
-            </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </DialogContent>
       </Dialog>
@@ -1785,10 +1950,11 @@ export default function TeacherDashboard() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="font-bold text-gray-700">Délka (např. 4 týdny)</Label>
+                  <Label className="font-bold text-gray-700">Počet otázek v procvičování</Label>
                   <Input
-                    value={newCourse.duration}
-                    onChange={e => setNewCourse({ ...newCourse, duration: e.target.value })}
+                    type="number"
+                    value={newCourse.questionCount}
+                    onChange={e => setNewCourse({ ...newCourse, questionCount: parseInt(e.target.value) || 0 })}
                     className="rounded-xl h-14 border-gray-100 bg-white"
                   />
                 </div>
@@ -1933,10 +2099,11 @@ export default function TeacherDashboard() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label className="font-bold text-gray-700">Délka (např. 4 týdny)</Label>
+                  <Label className="font-bold text-gray-700">Počet otázek v procvičování</Label>
                   <Input
-                    value={editingCourse?.duration || ''}
-                    onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, duration: e.target.value } : null)}
+                    type="number"
+                    value={editingCourse?.questionCount || 0}
+                    onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, questionCount: parseInt(e.target.value) || 0 } : null)}
                     className="rounded-xl h-14 border-gray-100 bg-white"
                   />
                 </div>

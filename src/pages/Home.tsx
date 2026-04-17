@@ -24,10 +24,10 @@ export default function Home() {
           <div className="cta-text">Procvičuj <span>ZDARMA</span></div>
 
           <div className="button-group">
-            <Link to={user ? "/practice" : "/login"} className="btn-custom btn-orange-custom">
+            <Link to="/practice" className="btn-custom btn-orange-custom">
               Přijímačky na SŠ
             </Link>
-            <Link to={user ? "/practice" : "/login"} className="btn-custom btn-purple-custom">
+            <Link to="/practice" className="btn-custom btn-purple-custom">
               Příprava na maturitu
             </Link>
           </div>

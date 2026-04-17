@@ -63,12 +63,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (docSnap.exists()) {
           setProfile(docSnap.data() as UserProfile);
         } else {
-          const role: UserRole = user.email === 'davidfaltus03@gmail.com' ? 'teacher' : 'student';
+          // Rule 4: Role never derived from email in frontend.
+          // Rule 16: Least privilege - default to student.
           const newProfile: UserProfile = {
             uid: user.uid,
             email: user.email || '',
             name: user.displayName || 'Nový uživatel',
-            role,
+            role: 'student',
             createdAt: Timestamp.now(),
           };
           await setDoc(docRef, newProfile);
@@ -98,12 +99,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const signUpWithEmail = async (email: string, pass: string, name: string) => {
     const { user } = await createUserWithEmailAndPassword(auth, email, pass);
     const docRef = doc(db, 'users', user.uid);
-    const role: UserRole = email === 'davidfaltus03@gmail.com' ? 'teacher' : 'student';
     const newProfile: UserProfile = {
       uid: user.uid,
       email: email,
       name: name,
-      role: role,
+      role: 'student',
       createdAt: Timestamp.now(),
     };
     await setDoc(docRef, newProfile);
@@ -117,17 +117,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const updateProfileData = async (data: Partial<UserProfile>) => {
     if (!user) return;
     const docRef = doc(db, 'users', user.uid);
-    await updateDoc(docRef, data);
+    
+    // Rule 5 & 7: Frontend never sets or changes privileged/immutable fields
+    const { role, uid, createdAt, ...safeData } = data as any;
+    
+    if (Object.keys(safeData).length > 0) {
+      await updateDoc(docRef, safeData);
+    }
     
     // Also update Auth profile if name or photoURL is changed
-    if (data.name || data.photoURL) {
+    if (safeData.name || safeData.photoURL) {
       const authUpdates: any = {};
-      if (data.name) authUpdates.displayName = data.name;
+      if (safeData.name) authUpdates.displayName = safeData.name;
       
       // ONLY update Auth photoURL if it's NOT a base64 (because Auth has strict length limits)
       // We rely on Firestore profile for the actual photo
-      if (data.photoURL && !data.photoURL.startsWith('data:')) {
-        authUpdates.photoURL = data.photoURL;
+      if (safeData.photoURL && !safeData.photoURL.startsWith('data:')) {
+        authUpdates.photoURL = safeData.photoURL;
       }
       
       if (Object.keys(authUpdates).length > 0) {
@@ -135,7 +141,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setProfile(prev => prev ? { ...prev, ...data } : null);
+    setProfile(prev => prev ? { ...prev, ...safeData } : null);
   };
 
   const updateUserPassword = async (newPassword: string) => {
@@ -143,21 +149,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await updatePassword(user, newPassword);
   };
 
+  const contextValue = React.useMemo(() => ({ 
+    user, 
+    profile, 
+    loading, 
+    isAuthReady, 
+    isProfileSettingsOpen,
+    setIsProfileSettingsOpen,
+    signInWithGoogle, 
+    signInWithEmail, 
+    signUpWithEmail, 
+    signOut,
+    updateProfileData,
+    updateUserPassword
+  }), [user, profile, loading, isAuthReady, isProfileSettingsOpen]);
+
   return (
-    <AuthContext.Provider value={{ 
-      user, 
-      profile, 
-      loading, 
-      isAuthReady, 
-      isProfileSettingsOpen,
-      setIsProfileSettingsOpen,
-      signInWithGoogle, 
-      signInWithEmail, 
-      signUpWithEmail, 
-      signOut,
-      updateProfileData,
-      updateUserPassword
-    }}>
+    <AuthContext.Provider value={contextValue}>
       {children}
     </AuthContext.Provider>
   );

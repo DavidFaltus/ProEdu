@@ -1,0 +1,42 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Pomocné funkce pro bezpečnost v souladu s proedu.md
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+
+    // Rule 12: Namespaced path pro učební materiály
+    match /learningSheets/{teacherUid}/{fileId} {
+      // Číst mohou všichni přihlášení (Rule 9: "veřejný obsah výslovně označený" - zde materiály pro studenty)
+      allow read: if isAuthenticated();
+      
+      // Zápis pouze vlastník složky (učitel)
+      // Rule 12: Limit velikosti 5MB, MIME PDF
+      allow write: if isAuthenticated() && isOwner(teacherUid)
+                   && request.resource.size < 5 * 1024 * 1024
+                   && request.resource.contentType == 'application/pdf';
+                   
+      // Smazání pouze vlastník
+      allow delete: if isAuthenticated() && isOwner(teacherUid);
+    }
+
+    // Obecná složka pro uživatelské assety (např. avatary)
+    match /users/{userId}/{allPaths=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && isOwner(userId)
+                   && request.resource.size < 1 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+    }
+    
+    // Zákaz všeho ostatního (Rule 16: Least Privilege)
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
