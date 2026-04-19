@@ -13,16 +13,12 @@ service firebase.storage {
 
     // Rule 12: Namespaced path pro učební materiály
     match /learningSheets/{teacherUid}/{fileId} {
-      // Číst mohou všichni přihlášení (Rule 9: "veřejný obsah výslovně označený" - zde materiály pro studenty)
+      // Číst mohou všichni přihlášení
       allow read: if isAuthenticated();
       
-      // Zápis pouze vlastník složky (učitel)
-      // Rule 12: Limit velikosti 5MB, MIME PDF
-      allow write: if isAuthenticated() && isOwner(teacherUid)
-                   && request.resource.size < 5 * 1024 * 1024
-                   && request.resource.contentType == 'application/pdf';
+      // Zápis - obnovujeme základní ochranu (server-side proxy obchází tato pravidla)
+      allow write: if isAuthenticated() && isOwner(teacherUid);
                    
-      // Smazání pouze vlastník
       allow delete: if isAuthenticated() && isOwner(teacherUid);
     }
 

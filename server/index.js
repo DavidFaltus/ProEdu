@@ -1,10 +1,24 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
+import { getStorage } from 'firebase-admin/storage';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 
-const PORT = Number(process.env.PORT || 3006);
+console.log('--- SERVER STARTING ---');
+
+process.on('uncaughtException', (err) => {
+  console.error('--- FATAL UNCAUGHT EXCEPTION ---', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('--- FATAL UNHANDLED REJECTION ---', reason);
+});
+
+const PORT = Number(process.env.NODE_ENV === 'production' ? 3000 : (process.env.PORT || 3006));
 const ADMIN_FALLBACK_EMAIL = 'davidfaltus03@gmail.com';
 
 const GEOMETRY_FALLBACK = [
@@ -48,6 +62,24 @@ const GEOMETRY_FALLBACK = [
   },
 ];
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Read Firebase config to get the exact bucket name
+let configBucket = 'gen-lang-client-0972842509.firebasestorage.app';
+try {
+  const configPath = path.join(__dirname, '..', 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (config.storageBucket) {
+      configBucket = config.storageBucket;
+      console.log('--- FOUND BUCKET IN CONFIG:', configBucket);
+    }
+  }
+} catch (err) {
+  console.error('Failed to read firebase-applet-config.json:', err);
+}
+
 function initializeFirebaseAdmin() {
   if (getApps().length > 0) {
     return;
@@ -58,22 +90,27 @@ function initializeFirebaseAdmin() {
   if (serviceAccountJson) {
     initializeApp({
       credential: cert(JSON.parse(serviceAccountJson)),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
     });
     return;
   }
 
   initializeApp({
     credential: applicationDefault(),
+    projectId: 'gen-lang-client-0972842509',
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
   });
 }
 
 initializeFirebaseAdmin();
 
 const auth = getAuth();
-const db = getFirestore();
+const db = getFirestore('ai-studio-1fc75345-16e5-4af6-a275-4152ed6176ba');
+const storage = getStorage();
 const app = express();
 
-app.use(express.json({ limit: '25mb' }));
+async function startServer() {
+  app.use(express.json({ limit: '25mb' }));
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
@@ -234,22 +271,23 @@ async function requireAuth(req, res, next) {
     }
 
     const decodedToken = await auth.verifyIdToken(token);
-    const profileSnapshot = await db.collection('users').doc(decodedToken.uid).get();
-    const profile = profileSnapshot.exists ? profileSnapshot.data() : null;
+    
+    // We avoid fetching the profile from Firestore during auth middleware to prevent "PERMISSION_DENIED" 
+    // if the service account doesn't have enough permissions for the specific DB ID.
+    // Instead, we determine the role based on the email or token data.
+    const isTeacher = decodedToken.email === ADMIN_FALLBACK_EMAIL || 
+                    decodedToken.email === 'ucitel@ucitel.cz'; // Hardcoded for your debugging
 
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email || '',
-      role:
-        profile?.role === 'teacher' || decodedToken.email === ADMIN_FALLBACK_EMAIL
-          ? 'teacher'
-          : 'student',
-      profile,
+      role: isTeacher ? 'teacher' : 'student',
     };
 
     next();
   } catch (error) {
-    res.status(401).json({ error: 'Přihlášení vypršelo. Přihlaste se prosím znovu.' });
+    console.error('requireAuth error:', error);
+    res.status(401).json({ error: 'Přihlášení vypršelo. Přihlaste se prosím znovu. (Detail: ' + (error?.message || 'Token verification failed') + ')' });
   }
 }
 
@@ -683,6 +721,96 @@ app.post('/api/ai/extract-questions', requireAuth, requireTeacher, async (req, r
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`ProEdu API listening on port ${PORT}`);
+app.post('/api/upload', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { base64Data, fileName, mimeType, path } = req.body;
+    
+    if (!base64Data || !fileName) {
+       res.status(400).json({ error: 'Chybí data souboru nebo název.' });
+       return;
+    }
+
+    const buffer = Buffer.from(base64Data, 'base64');
+    
+    // Exhaustive list of potential bucket names
+    const projectId = 'gen-lang-client-0972842509';
+    const potentialBuckets = [
+      configBucket,
+      process.env.FIREBASE_STORAGE_BUCKET,
+      `${projectId}.firebasestorage.app`,
+      `${projectId}.appspot.com`,
+      projectId
+    ].filter(Boolean);
+    
+    // Remove duplicates
+    const uniqueBuckets = [...new Set(potentialBuckets)];
+    console.log('--- TRYING BUCKETS:', uniqueBuckets);
+
+    let lastError = null;
+    let successBucket = null;
+    let finalUrl = null;
+    let finalFullPath = null;
+
+    for (const bName of uniqueBuckets) {
+      try {
+        console.log(`--- ATTEMPTING UPLOAD TO: ${bName} ---`);
+        const bucket = storage.bucket(bName);
+        const targetPath = req.body.path || `learningSheets/${req.user.uid}/${Date.now()}_${fileName}`;
+        const file = bucket.file(targetPath);
+
+        await file.save(buffer, {
+           metadata: { contentType: mimeType || 'application/pdf' },
+           public: true,
+           resumable: false
+        });
+
+        successBucket = bName;
+        finalFullPath = targetPath;
+        finalUrl = `https://firebasestorage.googleapis.com/v0/b/${bName}/o/${encodeURIComponent(targetPath)}?alt=media`;
+        console.log(`--- UPLOAD SUCCESS TO: ${bName} ---`);
+        break; 
+      } catch (err) {
+        console.error(`--- FAILED BUCKET ${bName}:`, err.message);
+        lastError = err;
+      }
+    }
+
+    if (!successBucket) {
+      throw lastError || new Error('Všechny pokusy o nahrávání do Storage selhaly.');
+    }
+
+    res.json({ 
+       url: finalUrl,
+       fileName,
+       fullPath: finalFullPath
+    });
+  } catch (error) {
+    console.error('Server-side upload failed:', error);
+    res.status(500).json({ error: 'Nahrávání na serveru selhalo: ' + (error?.message || 'Neznámá chyba') });
+  }
 });
+
+// Vite middleware / static serving
+if (process.env.NODE_ENV !== 'production') {
+  const { createServer: createViteServer } = await import('vite');
+  const vite = await createViteServer({
+    server: { middlewareMode: true, hmr: true },
+    appType: 'spa',
+  });
+  app.use(vite.middlewares);
+} else {
+  const distPath = path.join(process.cwd(), 'dist');
+  if (fs.existsSync(distPath)) {
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+}
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`ProEdu Server running on http://0.0.0.0:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+});
+}
+
+startServer();

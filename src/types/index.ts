@@ -113,11 +113,45 @@ export interface TodoItem {
   id: string;
   studentId: string;
   title: string;
-  type: 'practice' | 'custom' | 'test' | 'material';
+  type: 'practice' | 'custom' | 'test' | 'material' | 'course_lesson' | 'course_material' | 'course_practice';
   referenceId?: string;
+  courseId?: string; // Optional link to a course
   completed: boolean;
   dueDate?: Timestamp;
   createdAt: Timestamp;
   addedBy: string;
   completedAt?: Timestamp | null;
+  feedback?: string;
+}
+
+export interface Course {
+  id: string;
+  title: string;
+  description: string;
+  teacherId: string;
+  color: string;
+  studentIds: string[];
+  createdAt: Timestamp;
+  isPaid?: boolean;
+  price?: number;
+}
+
+export interface CourseItemAttachment {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  size: number;
+}
+
+export interface CourseItem {
+  id: string;
+  courseId: string;
+  title: string;
+  type: 'material' | 'test' | 'practice' | 'lesson';
+  content: string; // URL, or description, or testId
+  date: Timestamp | null; // For lessons or deadlines
+  createdAt: Timestamp;
+  addedBy: string;
+  attachments?: CourseItemAttachment[];
 }

@@ -95,5 +95,19 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update, delete: if isAdmin();
     }
+    
+    match /courses/{courseId} {
+      allow read: if isAuthenticated() && (
+        isAdmin() || request.auth.uid in resource.data.studentIds
+      );
+      allow create: if isAdmin() && request.resource.data.teacherId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    match /courseItems/{itemId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin() && request.resource.data.addedBy == request.auth.uid;
+    }
   }
 }

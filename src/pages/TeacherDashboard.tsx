@@ -1,10 +1,11 @@
-import { useState, useEffect } from 'react';
-import { collection, query, getDocs, addDoc, Timestamp, where, onSnapshot, doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { db, storage } from '../lib/firebase';
+import React, { useState, useEffect } from 'react';
+import { collection, query, getDocs, addDoc, Timestamp, where, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { db, storage, auth } from '../lib/firebase';
+import firebaseConfig from '../../firebase-applet-config.json';
 import { useAuth } from '../context/AuthContext';
-import { Test, UserProfile, AssignedTest, LearningSheet, MathTopic, Question, PracticeCourse, PublicQuestion } from '../types';
-import { safeToDate } from '../lib/utils';
+import { Test, UserProfile, AssignedTest, LearningSheet, MathTopic, Question, PracticeCourse, PublicQuestion, Course } from '../types';
+import { safeToDate, cn } from '../lib/utils';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -14,7 +15,7 @@ import { Textarea } from '../components/ui/textarea';
 import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '../components/ui/dialog';
 import { extractQuestionsFromTwoPDFs } from '../services/geminiService';
@@ -51,6 +52,19 @@ const MATH_TOPICS: MathTopic[] = [
   'Jednotky a měření'
 ];
 
+// Helper to convert File to Base64
+const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
 export default function TeacherDashboard() {
   const { profile, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
@@ -60,6 +74,7 @@ export default function TeacherDashboard() {
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [practiceCourses, setPracticeCourses] = useState<PracticeCourse[]>([]);
+  const [courses, setCourses] = useState<Course[]>([]);
   const [isAddingTest, setIsAddingTest] = useState(false);
   const [isAddingSheet, setIsAddingSheet] = useState(false);
   const [isAddingQuestion, setIsAddingQuestion] = useState(false);
@@ -78,6 +93,7 @@ export default function TeacherDashboard() {
   const [editingQuestion, setEditingQuestion] = useState<Partial<Question> & { id?: string, imageFile?: File | null }>({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', courseId: '', imageFile: null });
 
   const [editingCourse, setEditingCourse] = useState<PracticeCourse | null>(null);
+  const [editingFullCourse, setEditingFullCourse] = useState<Course | null>(null);
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
 
   const [selectedSheetForView, setSelectedSheetForView] = useState<LearningSheet | null>(null);
@@ -118,6 +134,13 @@ export default function TeacherDashboard() {
   const [newCourse, setNewCourse] = useState<{ title: string, description: string, topics: string[], difficulty: string, questionCount: number, color: string }>({
     title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff'
   });
+  
+  // New Course (from Courses.tsx logic)
+  const [newFullCourse, setNewFullCourse] = useState<{ title: string, description: string, color: string }>({
+    title: '', description: '', color: 'blue'
+  });
+  const [isSavingCourse, setIsSavingCourse] = useState(false);
+
   const [dbCustomTopics, setDbCustomTopics] = useState<string[]>([]);
   const [newTopicInput, setNewTopicInput] = useState('');
   const [customCourseTopic, setCustomCourseTopic] = useState('');
@@ -258,17 +281,19 @@ export default function TeacherDashboard() {
 
     // Jednorázové načtení pro data, která se v průběhu session nemění — šetří Firestore reads
     const loadStaticData = async () => {
-      const [testsSnap, questionsSnap, sheetsSnap, coursesSnap, topicsSnap] = await Promise.all([
+      const [testsSnap, questionsSnap, sheetsSnap, coursesSnap, topicsSnap, fullCoursesSnap] = await Promise.all([
         getDocs(collection(db, 'tests')),
         getDocs(collection(db, 'questions')),
         getDocs(collection(db, 'learningSheets')),
         getDocs(collection(db, 'practiceCourses')),
         getDocs(collection(db, 'customTopics')),
+        getDocs(query(collection(db, 'courses'), where('teacherId', '==', profile.uid))),
       ]);
       setTests(testsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
       setQuestions(questionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Question)));
       setLearningSheets(sheetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
       setPracticeCourses(coursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
+      setCourses(fullCoursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course)));
       setDbCustomTopics(topicsSnap.docs.map(d => d.data().name as string));
     };
     loadStaticData();
@@ -362,6 +387,70 @@ export default function TeacherDashboard() {
     } catch (error) {
       console.error(error);
       toast.error('Chyba při přiřazování testu');
+    }
+  };
+
+  const handleCreateCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!profile || profile.role !== 'teacher' || !newFullCourse.title) return;
+    
+    setIsSavingCourse(true);
+    try {
+      const courseData = {
+        title: newFullCourse.title,
+        description: newFullCourse.description,
+        teacherId: profile.uid,
+        color: newFullCourse.color,
+        studentIds: [],
+        createdAt: serverTimestamp(),
+      };
+      
+      const docRef = await addDoc(collection(db, 'courses'), courseData);
+      
+      setCourses(prev => [...prev, { id: docRef.id, ...courseData, createdAt: Timestamp.now() } as any]);
+      toast.success('Kurz byl úspěšně vytvořen!');
+      setIsAddingCourse(false);
+      setNewFullCourse({ title: '', description: '', color: 'blue' });
+    } catch (err: any) {
+      toast.error('Chyba při vytváření kurzu: ' + err.message);
+    } finally {
+      setIsSavingCourse(false);
+    }
+  };
+
+  const handleDeleteFullCourse = async (courseId: string) => {
+    if (!confirm('Opravdu chcete tento kurz smazat? Tato akce je nevratná.')) return;
+    
+    try {
+      await deleteDoc(doc(db, 'courses', courseId));
+      setCourses(prev => prev.filter(c => c.id !== courseId));
+      toast.success('Kurz byl smazán.');
+    } catch (err: any) {
+      toast.error('Chyba při mazání kurzu: ' + err.message);
+    }
+  };
+
+  const handleUpdateFullCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFullCourse || !editingFullCourse.title) return;
+    
+    setIsSavingCourse(true);
+    try {
+      const updateData = {
+        title: editingFullCourse.title,
+        description: editingFullCourse.description,
+        color: editingFullCourse.color,
+      };
+      
+      await updateDoc(doc(db, 'courses', editingFullCourse.id), updateData);
+      
+      setCourses(prev => prev.map(c => c.id === editingFullCourse.id ? { ...c, ...updateData } : c));
+      toast.success('Kurz byl úspěšně upraven!');
+      setEditingFullCourse(null);
+    } catch (err: any) {
+      toast.error('Chyba při úpravě kurzu: ' + err.message);
+    } finally {
+      setIsSavingCourse(false);
     }
   };
 
@@ -473,37 +562,75 @@ export default function TeacherDashboard() {
   };
 
   const handleSaveSheet = async () => {
+    if (!profile) {
+      toast.error('Uživatel není přihlášen');
+      return;
+    }
+
     if (!newSheet.title || !newSheet.file) {
       toast.error('Prosím vyplňte název materiálu a přiložte PDF soubor');
       return;
     }
 
     setIsUploadingSheet(true);
+    const loadingToastId = toast.loading('Nahrávání souboru...');
+
     try {
       let fileUrl = '';
-      let fileType = '';
+      let fileType = 'application/pdf';
 
       if (newSheet.file) {
-        if (newSheet.file.size > 5 * 1024 * 1024) {
-          toast.error('Soubor je příliš velký. K uložení lze nahrát max. 5 MB.');
+        // Force PDF check
+        const isPdf = newSheet.file.type === 'application/pdf' || newSheet.file.name.toLowerCase().endsWith('.pdf');
+        if (!isPdf) {
+          toast.dismiss(loadingToastId);
+          toast.error('Nahrajte prosím soubor ve formátu PDF.');
           setIsUploadingSheet(false);
           return;
         }
 
-        fileType = newSheet.file.type;
+        if (newSheet.file.size > 5 * 1024 * 1024) {
+          toast.dismiss(loadingToastId);
+          toast.error('Soubor je příliš velký (max. 5 MB).');
+          setIsUploadingSheet(false);
+          return;
+        }
 
-        // Rule 12: Storage paths must be namespaced: learningSheets/{teacherUid}/{fileId}
-        const teacherUid = profile?.uid || 'anonymous';
-        const fileRef = ref(storage, `learningSheets/${teacherUid}/${Date.now()}_${newSheet.file.name}`);
-        const snapshot = await uploadBytes(fileRef, newSheet.file, {
-          contentType: fileType,
-          // Ensure it opens inline in the browser iframe instead of auto-downloading
-          customMetadata: {
-            contentDisposition: 'inline'
-          }
-        });
-        fileUrl = await getDownloadURL(snapshot.ref);
+        const safeName = newSheet.file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const storagePath = `learningSheets/${profile.uid}/${Date.now()}_${safeName}`;
+        
+        console.log('--- STARTING CLIENT-SIDE UPLOAD ---');
+        
+        try {
+          const storageRef = ref(storage, storagePath);
+          const uploadTask = uploadBytesResumable(storageRef, newSheet.file);
+
+          fileUrl = await new Promise<string>((resolve, reject) => {
+            uploadTask.on(
+              'state_changed',
+              (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                console.log(`Upload progress: ${progress.toFixed(2)}%`);
+              },
+              (error) => {
+                console.error('Upload error detail:', error);
+                reject(error);
+              },
+              async () => {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve(downloadURL);
+              }
+            );
+          });
+
+          console.log('--- CLIENT-SIDE UPLOAD SUCCESS ---', fileUrl);
+        } catch (uploadErr: any) {
+          console.error('--- CLIENT-SIDE UPLOAD FAILED ---', uploadErr);
+          throw uploadErr;
+        }
       }
+
+      toast.loading('Ukládám do databáze...', { id: loadingToastId });
 
       const sheetData = {
         title: newSheet.title,
@@ -512,19 +639,27 @@ export default function TeacherDashboard() {
         topic: newSheet.topic,
         fileUrl,
         fileType,
-        createdBy: profile?.uid,
-        createdAt: Timestamp.now()
+        createdBy: profile.uid,
+        createdAt: serverTimestamp()
       };
+      
       const docRef = await addDoc(collection(db, 'learningSheets'), sheetData);
-      // Optmistická aktualizace lokálního stavu — bez re-fetch
-      setLearningSheets(prev => [...prev, { id: docRef.id, ...sheetData } as LearningSheet]);
+      
+      setLearningSheets(prev => [...prev, { 
+        id: docRef.id, 
+        ...sheetData, 
+        createdAt: Timestamp.now()
+      } as LearningSheet]);
+      
+      toast.dismiss(loadingToastId);
       toast.success('Materiál byl úspěšně vytvořen');
       setIsAddingSheet(false);
       setNewSheet({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', file: null });
 
-    } catch (error) {
-      console.error(error);
-      toast.error('Chyba při ukládání materiálu');
+    } catch (error: any) {
+      console.error('Save Sheet Error:', error);
+      toast.dismiss(loadingToastId);
+      toast.error(`Chyba: ${error.message || 'Nepodařilo se uložit materiál'}`);
     } finally {
       setIsUploadingSheet(false);
     }
@@ -964,15 +1099,249 @@ export default function TeacherDashboard() {
               </div>
               <p className="text-gray-500 text-lg">Sestavujte dlouhodobé výukové plány a sledujte progres skupin.</p>
             </div>
+            <div className="flex gap-3">
+              <Button onClick={() => setIsAddingCourse(true)} className="btn-green rounded-[1.25rem] px-8 h-14 font-bold shadow-xl shadow-green-100">
+                <Plus size={20} className="mr-2" /> Nový kurz
+              </Button>
+            </div>
           </div>
 
-          <div className="text-center py-32 bg-white/40 backdrop-blur-sm rounded-[3.5rem] border-2 border-dashed border-gray-200">
-            <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center text-green-200 mx-auto mb-8">
-              <Sparkles size={48} />
-            </div>
-            <h2 className="text-3xl font-display font-black text-gray-700 mb-4">Brzy k dispozici</h2>
-            <p className="text-gray-500 max-w-md mx-auto text-lg leading-relaxed">Pracujeme na modulu, který vám umožní spojit materiály a procvičování do ucelených kurzů s automatickým sledováním pokroku.</p>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {courses.map((course, index) => (
+              <motion.div
+                key={course.id}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.05 }}
+              >
+                <div className="block h-full group relative">
+                  <Link to={`/courses/${course.id}`} className="block h-full">
+                    <Card className={cn(
+                      "h-full rounded-[2.5rem] border-none shadow-xl transition-all duration-300 group-hover:-translate-y-2 relative overflow-hidden group-hover:shadow-2xl",
+                      course.color === 'blue' && "bg-gradient-to-br from-brand-blue to-blue-600 text-white shadow-blue-200/50",
+                      course.color === 'purple' && "bg-gradient-to-br from-purple-500 to-purple-700 text-white shadow-purple-200/50",
+                      course.color === 'orange' && "bg-gradient-to-br from-brand-orange to-orange-500 text-white shadow-orange-200/50",
+                      course.color === 'green' && "bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-emerald-200/50",
+                      course.color === 'rose' && "bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-rose-200/50",
+                      !['blue', 'purple', 'orange', 'green', 'rose'].includes(course.color) && "bg-gradient-to-br from-gray-700 to-gray-900 text-white"
+                    )}>
+                      <div className="absolute top-0 right-0 w-48 h-48 bg-white/10 rounded-full blur-2xl -mr-20 -mt-20 pointer-events-none group-hover:bg-white/20 transition-colors" />
+                      <CardHeader className="relative z-10 p-8 pb-4">
+                        <div className="flex justify-between items-start mb-4">
+                          <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center">
+                            <BookOpen size={24} className="text-white" />
+                          </div>
+                          <div className="flex items-center gap-2 bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider">
+                            <Users size={14} />
+                            {course.studentIds?.length || 0}
+                          </div>
+                        </div>
+                        <CardTitle className="text-2xl font-display font-bold group-hover:text-white/90 transition-colors">
+                          {course.title}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="p-8 pt-4 relative z-10 flex flex-col justify-between">
+                        <p className="text-white/80 line-clamp-3 leading-relaxed mb-6">
+                          {course.description}
+                        </p>
+                        
+                        <div className="flex items-center justify-between mt-auto">
+                          <div className="text-sm font-medium text-white/60">
+                            Správa kurzu
+                          </div>
+                          <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center group-hover:bg-white group-hover:text-current transition-colors text-white">
+                            <ArrowRight size={20} />
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                  
+                  <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-lg bg-white/20 hover:bg-white/40 text-white"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setEditingFullCourse(course);
+                      }}
+                    >
+                      <Edit size={16} />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 rounded-lg bg-red-500/20 hover:bg-red-500/40 text-red-200"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDeleteFullCourse(course.id);
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </div>
+                </div>
+              </motion.div>
+            ))}
+
+            {courses.length === 0 && (
+              <div className="col-span-full text-center py-32 bg-white/40 backdrop-blur-sm rounded-[3.5rem] border-2 border-dashed border-gray-200">
+                <div className="w-24 h-24 bg-green-50 rounded-full flex items-center justify-center text-green-200 mx-auto mb-8">
+                  <GraduationCap size={48} />
+                </div>
+                <h2 className="text-3xl font-display font-black text-gray-700 mb-4">Zatím nemáte žádné kurzy</h2>
+                <p className="text-gray-500 max-w-md mx-auto text-lg leading-relaxed">Vytvořte svůj první komplexní kurz a začněte organizovat výuku efektivně.</p>
+                <Button onClick={() => setIsAddingCourse(true)} className="mt-8 btn-green rounded-2xl h-14 px-10 font-bold">
+                  Vytvořit první kurz
+                </Button>
+              </div>
+            )}
           </div>
+
+          <Dialog open={isAddingCourse} onOpenChange={setIsAddingCourse}>
+            <DialogContent className="sm:max-w-[550px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
+              <div className="p-8 pb-6 border-b border-gray-100 bg-green-50/30">
+                <DialogTitle className="text-3xl font-display font-black text-green-600 flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
+                    <Plus size={24} className="text-green-600" />
+                  </div>
+                  Nový kurz
+                </DialogTitle>
+                <DialogDescription className="text-lg font-bold text-gray-500 mt-2">Vytvořte prostor pro své studenty a materiály.</DialogDescription>
+              </div>
+              
+              <form onSubmit={handleCreateCourse} className="p-8 space-y-6 bg-white">
+                <div className="space-y-2">
+                  <Label htmlFor="course_title" className="font-black text-gray-700 uppercase tracking-widest text-xs">Název kurzu</Label>
+                  <Input 
+                    id="course_title" 
+                    value={newFullCourse.title} 
+                    onChange={e => setNewFullCourse({...newFullCourse, title: e.target.value})} 
+                    placeholder="Např. Matematika 9. ročník" 
+                    className="h-14 rounded-2xl border-gray-100 px-6 font-bold"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="course_desc" className="font-black text-gray-700 uppercase tracking-widest text-xs">Popis kurzu</Label>
+                  <Textarea 
+                    id="course_desc" 
+                    value={newFullCourse.description} 
+                    onChange={e => setNewFullCourse({...newFullCourse, description: e.target.value})} 
+                    placeholder="O čem tento kurz bude?" 
+                    className="rounded-2xl border-gray-100 p-6 min-h-[120px] font-medium"
+                  />
+                </div>
+                
+                <div className="space-y-4">
+                  <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Barva kurzu</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {['blue', 'purple', 'orange', 'green', 'rose'].map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => setNewFullCourse({...newFullCourse, color: c})}
+                        className={cn(
+                          "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+                          c === 'blue' && "bg-brand-blue",
+                          c === 'purple' && "bg-purple-500",
+                          c === 'orange' && "bg-brand-orange",
+                          c === 'green' && "bg-emerald-500",
+                          c === 'rose' && "bg-rose-500",
+                          newFullCourse.color === c ? "ring-4 ring-offset-2 ring-gray-100 scale-110 shadow-lg" : "opacity-80 hover:opacity-100 hover:scale-105"
+                        )}
+                      >
+                        {newFullCourse.color === c && <CheckCircle size={20} className="text-white" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <DialogFooter className="pt-6 border-t border-gray-50">
+                  <Button type="button" variant="ghost" onClick={() => setIsAddingCourse(false)} className="rounded-2xl h-14 font-bold">
+                    Zrušit
+                  </Button>
+                  <Button type="submit" disabled={isSavingCourse || !newFullCourse.title} className="btn-green rounded-2xl h-14 px-10 font-bold shadow-lg shadow-green-100">
+                    {isSavingCourse ? <Loader2 className="animate-spin" /> : 'Vytvořit kurz'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={!!editingFullCourse} onOpenChange={(open) => !open && setEditingFullCourse(null)}>
+            <DialogContent className="sm:max-w-[550px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
+              <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30">
+                <DialogTitle className="text-3xl font-display font-black text-brand-blue flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
+                    <Edit size={24} className="text-brand-blue" />
+                  </div>
+                  Upravit kurz
+                </DialogTitle>
+                <DialogDescription className="text-lg font-bold text-gray-500 mt-2">Změňte základní údaje vašeho kurzu.</DialogDescription>
+              </div>
+              
+              <form onSubmit={handleUpdateFullCourse} className="p-8 space-y-6 bg-white">
+                <div className="space-y-2">
+                  <Label htmlFor="edit_course_title" className="font-black text-gray-700 uppercase tracking-widest text-xs">Název kurzu</Label>
+                  <Input 
+                    id="edit_course_title" 
+                    value={editingFullCourse?.title || ''} 
+                    onChange={e => editingFullCourse && setEditingFullCourse({...editingFullCourse, title: e.target.value})} 
+                    placeholder="Název kurzu"
+                    className="h-14 rounded-2xl border-gray-100 px-6 font-bold"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <Label htmlFor="edit_course_desc" className="font-black text-gray-700 uppercase tracking-widest text-xs">Popis kurzu</Label>
+                  <Textarea 
+                    id="edit_course_desc" 
+                    value={editingFullCourse?.description || ''} 
+                    onChange={e => editingFullCourse && setEditingFullCourse({...editingFullCourse, description: e.target.value})} 
+                    placeholder="Popis kurzu"
+                    className="rounded-2xl border-gray-100 p-6 min-h-[120px] font-medium"
+                  />
+                </div>
+                
+                <div className="space-y-4">
+                  <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Barva kurzu</Label>
+                  <div className="flex flex-wrap gap-3">
+                    {['blue', 'purple', 'orange', 'green', 'rose'].map(c => (
+                      <button
+                        key={c}
+                        type="button"
+                        onClick={() => editingFullCourse && setEditingFullCourse({...editingFullCourse, color: c})}
+                        className={cn(
+                          "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+                          c === 'blue' && "bg-brand-blue",
+                          c === 'purple' && "bg-purple-500",
+                          c === 'orange' && "bg-brand-orange",
+                          c === 'green' && "bg-emerald-500",
+                          c === 'rose' && "bg-rose-500",
+                          editingFullCourse?.color === c ? "ring-4 ring-offset-2 ring-gray-100 scale-110 shadow-lg" : "opacity-80 hover:opacity-100 hover:scale-105"
+                        )}
+                      >
+                        {editingFullCourse?.color === c && <CheckCircle size={20} className="text-white" />}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <DialogFooter className="pt-6 border-t border-gray-50">
+                  <Button type="button" variant="ghost" onClick={() => setEditingFullCourse(null)} className="rounded-2xl h-14 font-bold">
+                    Zrušit
+                  </Button>
+                  <Button type="submit" disabled={isSavingCourse || !editingFullCourse?.title} className="btn-blue rounded-2xl h-14 px-10 font-bold shadow-lg shadow-blue-100">
+                    {isSavingCourse ? <Loader2 className="animate-spin" /> : 'Uložit změny'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="students" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">

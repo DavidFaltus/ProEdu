@@ -18,6 +18,8 @@ import GradingPanel from './pages/GradingPanel';
 import LearningSheets from './pages/LearningSheets';
 import Practice from './pages/Practice';
 import Contact from './pages/Contact';
+import Courses from './pages/Courses';
+import CourseDetail from './pages/CourseDetail';
 
 function PrivateRoute({ children, role }: { children: React.ReactNode, role?: 'student' | 'teacher' }) {
   const { user, profile, loading } = useAuth();
@@ -99,6 +101,22 @@ function AppContent() {
             element={
               <PrivateRoute role="teacher">
                 <GradingPanel />
+              </PrivateRoute>
+            } 
+          />
+          <Route 
+            path="/courses" 
+            element={
+              <PrivateRoute>
+                <Courses />
+              </PrivateRoute>
+            } 
+          />
+          <Route 
+            path="/courses/:id" 
+            element={
+              <PrivateRoute>
+                <CourseDetail />
               </PrivateRoute>
             } 
           />

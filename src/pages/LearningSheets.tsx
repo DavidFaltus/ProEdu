@@ -4,7 +4,7 @@ import { db } from '../lib/firebase';
 import { LearningSheet, MathTopic } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { BookOpen, Search, FileText, Filter, GraduationCap, ArrowRight } from 'lucide-react';
+import { BookOpen, Search, FileText, Filter, GraduationCap, ArrowRight, Download, Loader2 } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { motion, AnimatePresence } from 'motion/react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -28,29 +28,59 @@ export default function LearningSheets() {
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (selectedSheet?.fileUrl && selectedSheet.fileUrl.startsWith('data:')) {
-      try {
-        const dataURI = selectedSheet.fileUrl;
-        const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-        const byteString = atob(dataURI.split(',')[1]);
-        const ab = new ArrayBuffer(byteString.length);
-        const ia = new Uint8Array(ab);
-        for (let i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-        }
-        const blob = new Blob([ab], { type: mimeString });
-        const url = URL.createObjectURL(blob);
-        setPdfBlobUrl(url);
-        return () => URL.revokeObjectURL(url);
-      } catch (e) {
-        console.error('Failed to create blob from data URI', e);
-        setPdfBlobUrl(selectedSheet.fileUrl);
-      }
-    } else if (selectedSheet?.fileUrl) {
-      setPdfBlobUrl(selectedSheet.fileUrl);
-    } else {
+    if (!selectedSheet?.fileUrl) {
       setPdfBlobUrl(null);
+      return;
     }
+
+    let currentUrl = selectedSheet.fileUrl;
+    let revokeUrl: string | null = null;
+
+    const loadPdf = async () => {
+      if (currentUrl.startsWith('data:')) {
+        try {
+          const dataURI = currentUrl;
+          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+          const byteString = atob(dataURI.split(',')[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([ab], { type: mimeString });
+          const url = URL.createObjectURL(blob);
+          revokeUrl = url;
+          setPdfBlobUrl(url);
+        } catch (e) {
+          console.error('Failed to create blob from data URI', e);
+          setPdfBlobUrl(currentUrl);
+        }
+      } else {
+        // Try fetching to create a blob URL (helps with some iframe display issues)
+        // If fetch fails (CORS), we fall back to the raw URL
+        try {
+          const response = await fetch(currentUrl);
+          if (response.ok) {
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            revokeUrl = url;
+            setPdfBlobUrl(url);
+          } else {
+            // Fallback to Google Docs Viewer instead of raw URL for better iframe support
+            setPdfBlobUrl(`https://docs.google.com/viewer?url=${encodeURIComponent(currentUrl)}&embedded=true`);
+          }
+        } catch (e) {
+          console.warn('CORS fetch failed, using Google Docs Viewer', e);
+          setPdfBlobUrl(`https://docs.google.com/viewer?url=${encodeURIComponent(currentUrl)}&embedded=true`);
+        }
+      }
+    };
+
+    loadPdf();
+
+    return () => {
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
   }, [selectedSheet]);
 
   useEffect(() => {
@@ -183,13 +213,21 @@ export default function LearningSheets() {
                 </div>
                 
                 <div className="flex items-center gap-3">
+                  <Button 
+                    variant="outline" 
+                    className="h-10 rounded-xl font-bold bg-blue-50 text-brand-blue border-blue-100 hover:bg-blue-100" 
+                    onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
+                  >
+                    <ArrowRight size={18} className="mr-2 rotate-[-45deg]" />
+                    Otevřít v panelu
+                  </Button>
                   <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
                       const a = document.createElement('a');
                       a.href = selectedSheet.fileUrl || '';
                       a.download = `${selectedSheet.title || 'material'}.pdf`;
                       a.click();
                     }}>
-                      <FileText size={18} className="mr-2" />
+                      <Download size={18} className="mr-2" />
                       Stáhnout (PDF)
                   </Button>
                   <Button 
@@ -203,17 +241,21 @@ export default function LearningSheets() {
               </div>
               
               {/* PDF Area */}
-              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
+              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
                 {selectedSheet.fileUrl ? (
-                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
                     {pdfBlobUrl ? (
                       <iframe 
+                        key={pdfBlobUrl}
                         src={pdfBlobUrl} 
                         className="w-full h-full border-none" 
+                        title={selectedSheet.title}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="animate-spin w-8 h-8 rounded-full border-4 border-brand-purple border-t-transparent" />
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+                        <Loader2 className="w-10 h-10 text-brand-purple animate-spin mb-4" />
+                        <p className="text-gray-500 font-bold">Načítám PDF materiál...</p>
+                        <p className="text-xs text-gray-400 mt-2">Pokud se soubor nezobrazí, klikněte na "Otevřít v panelu" nahoře.</p>
                       </div>
                     )}
                   </div>

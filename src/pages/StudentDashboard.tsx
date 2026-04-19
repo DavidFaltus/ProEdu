@@ -246,26 +246,29 @@ export default function StudentDashboard() {
         </TabsList>
 
         <TabsContent value="todos" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 space-y-8">
-              <div className="bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
-                <TodoManager targetStudentId={profile?.uid || ''} />
-              </div>
-            </div>
-            <div className="space-y-8">
-              <CountdownTimer todos={todos} compact />
-              <QuickCalendar todos={todos} />
-
-              <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-8 opacity-10">
-                  <Lightbulb size={120} />
+          <div className="space-y-10">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-8">
+                <div className="bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
+                  <TodoManager targetStudentId={profile?.uid || ''} />
                 </div>
-                <h3 className="text-xl font-display font-bold mb-2">Tip pro tebe</h3>
-                <p className="text-blue-100 text-sm leading-relaxed">
-                  Pravidelné procvičování alespoň 15 minut denně výrazně zlepšuje dlouhodobou paměť. Naplánuj si úkoly do kalendáře!
-                </p>
+              </div>
+              <div className="space-y-8">
+                <CountdownTimer todos={todos} compact />
+
+                <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+                  <div className="absolute top-0 right-0 p-8 opacity-10">
+                    <Lightbulb size={120} />
+                  </div>
+                  <h3 className="text-xl font-display font-bold mb-2">Tip pro tebe</h3>
+                  <p className="text-blue-100 text-sm leading-relaxed">
+                    Pravidelné procvičování alespoň 15 minut denně výrazně zlepšuje dlouhodobou paměť. Naplánuj si úkoly do kalendáře!
+                  </p>
+                </div>
               </div>
             </div>
+
+            <QuickCalendar todos={todos} />
           </div>
         </TabsContent>
 

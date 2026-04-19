@@ -2,17 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { TodoItem, UserProfile, PracticeCourse, Test, LearningSheet } from '../types';
-import { safeToDate } from '../lib/utils';
+import { safeToDate, cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
-import { CheckCircle2, Circle, Clock, Plus, Trash2, Calendar as CalendarIcon, ExternalLink, BookOpen, GraduationCap, FileText, Pencil, Info, Loader2 } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, Plus, Trash2, Calendar as CalendarIcon, ExternalLink, BookOpen, GraduationCap, FileText, Pencil, Info, Loader2, MessageSquare } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import { cs } from 'date-fns/locale';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from './ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Input } from './ui/input';
+import { Textarea } from './ui/textarea';
 import { Label } from './ui/label';
 import { useNavigate } from 'react-router-dom';
 
@@ -33,6 +34,9 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
   const [currentEditId, setCurrentEditId] = useState<string | null>(null);
   const [viewingDetails, setViewingDetails] = useState<TodoItem | null>(null);
   const [isLaunching, setIsLaunching] = useState<string | null>(null);
+  const [feedbackTodo, setFeedbackTodo] = useState<TodoItem | null>(null);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [isSavingFeedback, setIsSavingFeedback] = useState(false);
 
   // Form state
   const [newTodo, setNewTodo] = useState({
@@ -198,11 +202,36 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
     }
   };
 
+  const handleSaveFeedback = async () => {
+    if (!feedbackTodo) return;
+    setIsSavingFeedback(true);
+    try {
+      await updateDoc(doc(db, 'todos', feedbackTodo.id), {
+        feedback: feedbackText
+      });
+      toast.success('Zpětná vazba uložena');
+      setFeedbackTodo(null);
+      setFeedbackText('');
+    } catch (error) {
+      toast.error('Chyba při ukládání zpětné vazby');
+    } finally {
+      setIsSavingFeedback(false);
+    }
+  };
+
+  const openFeedback = (todo: TodoItem) => {
+    setFeedbackTodo(todo);
+    setFeedbackText(todo.feedback || '');
+  };
+
   const getIcon = (type: TodoItem['type']) => {
     switch (type) {
       case 'practice': return <GraduationCap size={18} className="text-brand-blue" />;
       case 'test': return <FileText size={18} className="text-brand-orange" />;
       case 'material': return <BookOpen size={18} className="text-purple-500" />;
+      case 'course_lesson': return <CalendarIcon size={18} className="text-indigo-500" />;
+      case 'course_material': return <BookOpen size={18} className="text-indigo-500" />;
+      case 'course_practice': return <GraduationCap size={18} className="text-indigo-500" />;
       default: return <CheckCircle2 size={18} className="text-gray-400" />;
     }
   };
@@ -278,6 +307,16 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
           <div className="py-2">
             <h4 className="text-xl font-bold text-brand-blue mb-4">{viewingDetails.title}</h4>
             {content}
+            
+            {viewingDetails.feedback && (
+              <div className="mt-6 p-4 bg-orange-50 rounded-2xl border border-orange-100 flex flex-col gap-2">
+                <div className="flex items-center gap-2 text-brand-orange">
+                  <MessageSquare size={16} />
+                  <span className="font-bold text-xs uppercase tracking-wider">Zpětná vazba od učitele</span>
+                </div>
+                <p className="text-gray-700 italic leading-relaxed">{viewingDetails.feedback}</p>
+              </div>
+            )}
           </div>
           <DialogFooter className="mt-6 gap-2 sm:flex-row flex-col">
             {viewingDetails.referenceId && (
@@ -425,91 +464,158 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
         </Dialog>
       </div>
 
-      <div className="grid gap-4">
-        {todos.length === 0 ? (
-          <div className="text-center py-12 bg-gray-50/50 rounded-[2rem] border-2 border-dashed border-gray-100">
-            <p className="text-gray-400 font-medium">Zatím nejsou naplánovány žádné úkoly.</p>
-          </div>
-        ) : (
-          todos.map(todo => (
-            <Card key={todo.id} className={`rounded-[1.5rem] border-none shadow-sm transition-all hover:shadow-md ${todo.completed ? 'opacity-60 bg-gray-50' : 'bg-white'}`}>
-              <CardContent className="p-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-4 flex-1">
-                  <button
-                    onClick={() => toggleTodo(todo)}
-                    className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${todo.completed ? 'bg-green-500 text-white' : 'border-2 border-gray-200 text-gray-300 hover:border-brand-blue hover:text-brand-blue'}`}
-                  >
-                    {todo.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
-                  </button>
+      <div className="max-h-[620px] overflow-y-auto pr-2 custom-scrollbar">
+        <div className="grid gap-4">
+          {todos.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50/50 rounded-[2rem] border-2 border-dashed border-gray-100">
+              <p className="text-gray-400 font-medium">Zatím nejsou naplánovány žádné úkoly.</p>
+            </div>
+          ) : (
+            todos.map(todo => (
+              <Card key={todo.id} className={`rounded-[1.5rem] border-none shadow-sm transition-all hover:shadow-md ${todo.completed ? 'opacity-60 bg-gray-50' : 'bg-white'}`}>
+                <CardContent className="p-4 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 flex-1">
+                    <button
+                      onClick={() => toggleTodo(todo)}
+                      className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${todo.completed ? 'bg-green-500 text-white' : 'border-2 border-gray-200 text-gray-300 hover:border-brand-blue hover:text-brand-blue'}`}
+                    >
+                      {todo.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
+                    </button>
 
-                  <div className="flex flex-col">
-                    <div className="flex items-center gap-2">
-                      <span className={`font-bold text-lg ${todo.completed ? 'line-through text-gray-400' : 'text-brand-blue'}`}>
-                        {todo.title}
-                      </span>
-                      <div className="p-1.5 bg-gray-50 rounded-lg">
-                        {getIcon(todo.type)}
-                      </div>
-                      {todo.referenceId && (
-                        <button
-                          onClick={() => setViewingDetails(todo)}
-                          className="p-1 text-brand-orange hover:bg-brand-orange/10 rounded-lg transition-colors"
-                          title="Zobrazit podrobnosti"
-                        >
-                          <Info size={16} />
-                        </button>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-4 mt-1">
-                      {todo.dueDate && (
-                        <span className={`text-sm flex items-center gap-1.5 font-medium ${new Date(todo.dueDate.toDate()) < new Date() && !todo.completed ? 'text-red-500' : 'text-gray-500'}`}>
-                          <CalendarIcon size={14} />
-                          {format(todo.dueDate.toDate(), 'd. MMMM HH:mm', { locale: cs })}
+                    <div className="flex flex-col">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold text-lg ${todo.completed ? 'line-through text-gray-400' : 'text-brand-blue'}`}>
+                          {todo.title}
                         </span>
+                        <div className="p-1.5 bg-gray-50 rounded-lg">
+                          {getIcon(todo.type)}
+                        </div>
+                        {todo.referenceId && (
+                          <button
+                            onClick={() => setViewingDetails(todo)}
+                            className="p-1 text-brand-orange hover:bg-brand-orange/10 rounded-lg transition-colors"
+                            title="Zobrazit podrobnosti"
+                          >
+                            <Info size={16} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-4 mt-1">
+                        {todo.dueDate && (
+                          <span className={`text-sm flex items-center gap-1.5 font-medium ${new Date(todo.dueDate.toDate()) < new Date() && !todo.completed ? 'text-red-500' : 'text-gray-500'}`}>
+                            <CalendarIcon size={14} />
+                            {format(todo.dueDate.toDate(), 'd. MMMM HH:mm', { locale: cs })}
+                          </span>
+                        )}
+                        <span className="text-xs text-gray-300 flex items-center gap-1">
+                          přidáno {format(todo.createdAt.toDate(), 'd.M.')}
+                        </span>
+                      </div>
+                      
+                      {todo.feedback && (
+                        <div className="mt-3 p-3 bg-blue-50/50 rounded-xl border border-blue-100/50 flex items-start gap-2 max-w-md animate-in fade-in slide-in-from-top-1 duration-300">
+                          <MessageSquare size={14} className="text-brand-blue mt-1 shrink-0" />
+                          <div className="text-sm text-gray-600 italic leading-relaxed">
+                            <span className="font-black text-brand-blue not-italic block text-[9px] uppercase tracking-widest mb-1 opacity-70">Zpětná vazba od učitele</span>
+                            {todo.feedback}
+                          </div>
+                        </div>
                       )}
-                      <span className="text-xs text-gray-300 flex items-center gap-1">
-                        přidáno {format(todo.createdAt.toDate(), 'd.M.')}
-                      </span>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center gap-1">
-                  {todo.referenceId && (
+                  <div className="flex items-center gap-1">
+                    {isTeacherView && todo.completed && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={cn(
+                          "rounded-xl transition-all",
+                          todo.feedback ? "text-brand-blue bg-blue-50" : "text-gray-300 hover:text-brand-blue hover:bg-brand-blue/10"
+                        )}
+                        title={todo.feedback ? "Upravit zpětnou vazbu" : "Přidat zpětnou vazbu"}
+                        onClick={() => openFeedback(todo)}
+                      >
+                        <MessageSquare size={18} />
+                      </Button>
+                    )}
+                    {todo.referenceId && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="rounded-xl text-brand-orange hover:text-brand-orange hover:bg-brand-orange/10"
+                        title="Spustit úkol"
+                        onClick={() => handleLaunchTask(todo)}
+                        disabled={isLaunching === todo.id}
+                      >
+                        {isLaunching === todo.id ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="rounded-xl text-brand-orange hover:text-brand-orange hover:bg-brand-orange/10"
-                      title="Spustit úkol"
-                      onClick={() => handleLaunchTask(todo)}
-                      disabled={isLaunching === todo.id}
+                      className="rounded-xl text-gray-300 hover:text-brand-blue hover:bg-brand-blue/10"
+                      onClick={() => startEdit(todo)}
                     >
-                      {isLaunching === todo.id ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                      <Pencil size={18} />
                     </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-xl text-gray-300 hover:text-brand-blue hover:bg-brand-blue/10"
-                    onClick={() => startEdit(todo)}
-                  >
-                    <Pencil size={18} />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="rounded-xl text-red-300 hover:text-red-500 hover:bg-red-50"
-                    onClick={() => deleteTodo(todo.id)}
-                  >
-                    <Trash2 size={18} />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))
-        )}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-xl text-red-300 hover:text-red-500 hover:bg-red-50"
+                      onClick={() => deleteTodo(todo.id)}
+                    >
+                      <Trash2 size={18} />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
       </div>
+
+      {/* Feedback Dialog */}
+      <Dialog open={!!feedbackTodo} onOpenChange={(open) => !open && setFeedbackTodo(null)}>
+        <DialogContent className="rounded-[2.5rem] p-8 border-none shadow-2xl max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 bg-blue-50 rounded-xl text-brand-blue">
+                <MessageSquare size={20} />
+              </div>
+              <DialogTitle className="text-2xl font-display font-bold text-brand-blue">
+                Zpětná vazba
+              </DialogTitle>
+            </div>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div>
+              <Label className="text-xs font-black text-gray-400 uppercase tracking-widest mb-2 block">Úkol</Label>
+              <div className="text-lg font-bold text-gray-800">{feedbackTodo?.title}</div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="feedback-text" className="font-bold text-gray-700">Vaše hodnocení / vzkaz</Label>
+              <Textarea
+                id="feedback-text"
+                placeholder="Napište stručnou zpětnou vazbu k tomuto úkolu..."
+                value={feedbackText}
+                onChange={(e) => setFeedbackText(e.target.value)}
+                className="min-h-[120px] rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all font-medium"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button 
+              onClick={handleSaveFeedback} 
+              disabled={isSavingFeedback}
+              className="w-full btn-blue rounded-xl h-12 font-bold text-lg shadow-lg shadow-blue-100"
+            >
+              {isSavingFeedback ? <Loader2 className="animate-spin" /> : 'Uložit zpětnou vazbu'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

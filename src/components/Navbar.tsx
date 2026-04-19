@@ -47,7 +47,12 @@ export default function Navbar() {
           
           <div className="hidden lg:flex items-center gap-8">
             <Link to="/" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">O nás</Link>
-            {user && <Link to="/learning" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Materiály</Link>}
+            {user && (
+              <>
+                <Link to="/courses" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Kurzy</Link>
+                <Link to="/learning" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Materiály</Link>
+              </>
+            )}
             <Link to="/practice" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Procvičování</Link>
             <Link to="/contact" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Kontakt</Link>
             {profile?.role === 'teacher' && (
@@ -91,6 +96,15 @@ export default function Navbar() {
                         <LayoutDashboard size={20} />
                       </div>
                       Moje nástěnka
+                    </Link>
+                  </DropdownMenuItem>
+
+                  <DropdownMenuItem className="rounded-2xl cursor-pointer focus:bg-indigo-50 focus:text-indigo-500 p-3 transition-colors">
+                    <Link to="/courses" className="flex items-center gap-3 font-bold w-full">
+                      <div className="w-10 h-10 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-500">
+                        <BookOpen size={20} />
+                      </div>
+                      Kurzy
                     </Link>
                   </DropdownMenuItem>
 
