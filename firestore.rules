@@ -2,10 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -16,91 +12,70 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
-         request.auth.token.email == "davidfaltus03@gmail.com");
+        (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
+          request.auth.token.email == "davidfaltus03@gmail.com"
+        );
     }
 
-    // Helper to check if fields are unchanged
     function unchanged(field) {
       return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
     }
 
-    function isImmutable() {
-      return unchanged('uid') && unchanged('createdAt') && unchanged('createdBy') && unchanged('studentId');
+    function keepsImmutableFields() {
+      return unchanged('uid') &&
+        unchanged('createdAt') &&
+        unchanged('createdBy') &&
+        unchanged('studentId') &&
+        unchanged('testId');
     }
 
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
     match /users/{uid} {
-      // Rule 9: No broad reads. Only owner or teacher can read profile.
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
-      // Rule 3: Document-level ownership.
-      allow create: if isAuthenticated() && isOwner(uid) && 
-                    request.resource.data.role == 'student'; // Force student role on sign-up
-      allow update: if isAuthenticated() && (isOwner(uid) || isAdmin()) && 
-                    isImmutable() &&
-                    (isAdmin() || request.resource.data.role == resource.data.role); // Only admin can change role
+      allow create: if isAuthenticated() &&
+        isOwner(uid) &&
+        request.resource.data.role == 'student';
+      allow update: if isAuthenticated() &&
+        (isOwner(uid) || isAdmin()) &&
+        keepsImmutableFields() &&
+        (isAdmin() || request.resource.data.role == resource.data.role);
+      allow delete: if false;
     }
 
     match /tests/{testId} {
-      allow read: if isAuthenticated();
-      allow create: if isAdmin() && 
-                    request.resource.data.createdBy == request.auth.uid &&
-                    request.resource.data.createdAt == request.time;
-      allow update: if isAdmin() && 
-                    isImmutable() &&
-                    resource.data.createdBy == request.auth.uid;
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() &&
+        keepsImmutableFields() &&
+        resource.data.createdBy == request.auth.uid;
       allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
     match /questions/{questionId} {
-      // Rule 9: Veřejná banka otázek přístupná pro náhledy
-      allow read: if true;
-      allow create: if isAdmin() && 
-                    request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAdmin() && isImmutable();
+      allow read: if isAdmin();
+      allow create: if isAdmin() &&
+        request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && keepsImmutableFields();
       allow delete: if isAdmin();
     }
 
     match /assignedTests/{assignedTestId} {
-      // Rule 9: Only owner or teacher can read
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
-      
-      // Rule 11: Creation by teacher ONLY
-      allow create: if isAdmin() && 
-                    request.resource.data.status == 'pending';
-      
-      allow update: if isAuthenticated() && (
-        // Student path: Submission only
-        (isOwner(resource.data.studentId) && 
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['answers', 'status', 'submittedAt', 'topicPerformance']) &&
-         request.resource.data.status == 'submitted' &&
-         resource.data.status == 'pending') ||
-        
-        // Teacher path: Grading only (Rule 5)
-        (isAdmin() && 
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['grade', 'feedback', 'status', 'gradedAt']) &&
-         request.resource.data.status == 'graded' &&
-         isImmutable())
-      );
-      
-      allow delete: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
 
     match /learningSheets/{sheetId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAdmin() && isImmutable() && resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && keepsImmutableFields() && resource.data.createdBy == request.auth.uid;
       allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
     match /practiceCourses/{courseId} {
-      // Rule 9: Veřejná banka procvičování přístupná i pro hosty
       allow read: if true;
       allow create: if isAdmin();
-      allow update: if isAdmin() && isImmutable();
+      allow update: if isAdmin() && keepsImmutableFields();
       allow delete: if isAdmin();
     }
 
@@ -108,17 +83,16 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
       allow create: if isAuthenticated() && (isOwner(request.resource.data.studentId) || isAdmin());
       allow update: if isAuthenticated() && (
-        (isOwner(resource.data.studentId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completed', 'completedAt'])) || 
-        (isAdmin() && isImmutable())
+        (isOwner(resource.data.studentId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'dueDate', 'completed', 'completedAt'])) ||
+        (isAdmin() && keepsImmutableFields())
       );
       allow delete: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
     }
 
     match /customTopics/{topicId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin();
-      allow update: if isAdmin();
-      allow delete: if isAdmin();
+      allow create, update, delete: if isAdmin();
     }
   }
 }

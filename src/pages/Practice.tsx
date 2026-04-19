@@ -1,45 +1,38 @@
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { BookOpen, Star, Clock, Users, GraduationCap, ArrowRight, Loader2, Sparkles, Target, Percent, Shapes, Search, Trophy, Timer, CheckCircle, ChevronRight, Filter, Plus, FileText, X, Lock } from 'lucide-react';
-import { Button } from '../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useAuth } from '../context/AuthContext';
-import React, { useState, useEffect, useMemo } from 'react';
+import { addDoc, collection, getDocs, Timestamp } from 'firebase/firestore';
+import { ArrowRight, BookOpen, FileText, GraduationCap, Loader2, Lock, Sparkles, Star, Users } from 'lucide-react';
 import { toast } from 'sonner';
-import { Question, PracticeCourse } from '../types/index';
-import { collection, getDocs, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Timestamp, query, where, limit } from 'firebase/firestore';
-import { startPracticeCourse } from '../services/courseService';
-import { Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { GEOMETRY_QUESTIONS, startPracticeCourse } from '../services/courseService';
+import { PracticeCourse, PublicQuestion, TodoItem } from '../types';
+import { Button } from '../components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
+import { Dialog, DialogContent, DialogFooter, DialogTitle } from '../components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Separator } from '../components/ui/separator';
-import { Dialog, DialogContent, DialogTitle, DialogFooter } from '../components/ui/dialog';
 
-const MATH_TOPICS = [
-  'Aritmetika',
-  'Geometrie',
-  'Zlomky a procenta',
-  'Rovnice',
-  'Slovní úlohy',
-  'Jednotky a měření'
-];
+const TOPICS = ['Aritmetika', 'Geometrie', 'Zlomky a procenta', 'Rovnice', 'Slovní úlohy', 'Jednotky a měření'];
+const DIFFICULTIES = ['Začátečník', 'Středně pokročilý', 'Pokročilý', 'Lehká', 'Střední', 'Těžká'];
 
-const MOCK_COURSES: PracticeCourse[] = [
+const FALLBACK_COURSES: PracticeCourse[] = [
   {
-    id: 'mock-1',
+    id: 'mock-math',
     title: 'Příprava na přijímačky - Matematika',
     description: 'Komplexní procvičování aritmetiky, geometrie a slovních úloh pro 9. třídy.',
     topic: 'Matematika',
+    topics: ['Aritmetika', 'Geometrie', 'Slovní úlohy'],
     difficulty: 'Střední',
-    questionCount: 25,
+    questionCount: 20,
     students: 1240,
     color: '#3b82f6',
-    icon: <BookOpen size={32} />
+    rating: 4.9,
   },
   {
-    id: 'mock-2',
+    id: 'mock-czech',
     title: 'Český jazyk - Pravopis a skladba',
     description: 'Procvičujte shodu přísudku s podmětem, psaní i/y a větnou skladbu.',
     topic: 'Čeština',
@@ -47,155 +40,123 @@ const MOCK_COURSES: PracticeCourse[] = [
     questionCount: 15,
     students: 850,
     color: '#8b5cf6',
-    icon: <FileText size={32} />
+    rating: 4.7,
   },
   {
-    id: 'mock-3',
+    id: 'mock-english',
     title: 'Angličtina - Gramatika B1/B2',
-    description: 'Ideální příprava na maturitu nebo certifikáty. Časy, modální slovesa a kondicionály.',
+    description: 'Časy, modální slovesa a kondicionály v jednom procvičování.',
     topic: 'Angličtina',
     difficulty: 'Těžká',
     questionCount: 30,
     students: 2100,
     color: '#f97316',
-    icon: <GraduationCap size={32} />
-  }
+    rating: 4.8,
+  },
 ];
 
-const getTopicColor = (color: string) => {
-  if (!color) return 'bg-brand-blue';
-  if (color.startsWith('bg-')) return color;
-  if (color.startsWith('#')) return ''; // Use style={{backgroundColor}} for hex
-  return `bg-${color}`;
+const DEFAULT_PREVIEW = (course: PracticeCourse): PublicQuestion | null => {
+  if (course.previewQuestion) {
+    return course.previewQuestion;
+  }
+
+  if (course.topic === 'Geometrie' || course.topics?.includes('Geometrie')) {
+    return GEOMETRY_QUESTIONS[0];
+  }
+
+  return null;
 };
 
 export default function Practice() {
   const { user, profile } = useAuth();
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const [startingCourse, setStartingCourse] = useState<string | null>(null);
-  const [dbCourses, setDbCourses] = useState<PracticeCourse[]>([]);
-  const [selectedTopic, setSelectedTopic] = useState<string>('all');
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>('all');
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const [selectedCourse, setSelectedCourse] = useState<any | null>(null);
-  const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
-  const [isLoadingPreview, setIsLoadingPreview] = useState(false);
-  const [isAddingToTodo, setIsAddingToTodo] = useState(false);
-
-  const displayCourses = React.useMemo(() => {
-    if (dbCourses.length > 0) {
-      return dbCourses.map(c => ({
-        ...c,
-        icon: c.icon || <BookOpen size={32} />,
-        students: c.students || '500+'
-      }));
-    }
-    return MOCK_COURSES;
-  }, [dbCourses]);
+  const [courses, setCourses] = useState<PracticeCourse[]>([]);
+  const [selectedTopic, setSelectedTopic] = useState('all');
+  const [selectedDifficulty, setSelectedDifficulty] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedCourse, setSelectedCourse] = useState<PracticeCourse | null>(null);
+  const [previewQuestion, setPreviewQuestion] = useState<PublicQuestion | null>(null);
+  const [startingCourseId, setStartingCourseId] = useState<string | null>(null);
+  const [addingTodoCourseId, setAddingTodoCourseId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const snap = await getDocs(collection(db, 'practiceCourses'));
-        const allDbCourses = snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse));
-        setDbCourses(allDbCourses.filter(c => c.isVisible !== false));
+        const snapshot = await getDocs(collection(db, 'practiceCourses'));
+        const loadedCourses = snapshot.docs
+          .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as PracticeCourse))
+          .filter((course) => course.isVisible !== false);
+
+        setCourses(loadedCourses.length > 0 ? loadedCourses : FALLBACK_COURSES);
       } catch (error) {
-        console.error("Chyba při načítání kurzů (pravděpodobně překročena kvóta):", error);
+        console.error(error);
+        setCourses(FALLBACK_COURSES);
       }
     };
+
     fetchCourses();
   }, []);
 
-  const filteredCourses = React.useMemo(() => {
-    const filterTopic = selectedTopic;
-    const filterDifficulty = selectedDifficulty;
-    
-    return displayCourses.filter(course => {
-      const topicMatch = filterTopic === 'all' || course.topic === filterTopic;
-      const difficultyMatch = filterDifficulty === 'all' || course.difficulty === filterDifficulty;
-      const searchMatch = searchQuery === '' || 
-        course.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        course.description.toLowerCase().includes(searchQuery.toLowerCase());
-      
-      return topicMatch && difficultyMatch && searchMatch;
-    });
-  }, [displayCourses, selectedTopic, selectedDifficulty, searchQuery]);
+  const filteredCourses = useMemo(() => {
+    return courses.filter((course) => {
+      const matchesTopic = selectedTopic === 'all' || course.topic === selectedTopic || course.topics?.includes(selectedTopic);
+      const matchesDifficulty = selectedDifficulty === 'all' || course.difficulty === selectedDifficulty;
+      const normalizedSearch = searchQuery.trim().toLowerCase();
+      const matchesSearch =
+        normalizedSearch === '' ||
+        course.title.toLowerCase().includes(normalizedSearch) ||
+        course.description.toLowerCase().includes(normalizedSearch);
 
-  const handleStartCourse = async (course: any) => {
-    if (!user || !course) {
+      return matchesTopic && matchesDifficulty && matchesSearch;
+    });
+  }, [courses, searchQuery, selectedDifficulty, selectedTopic]);
+
+  const openCourseDetail = (course: PracticeCourse) => {
+    setSelectedCourse(course);
+    setPreviewQuestion(DEFAULT_PREVIEW(course));
+  };
+
+  const handleStartCourse = async (course: PracticeCourse) => {
+    if (!user) {
       toast.error('Pro spuštění procvičování se musíš přihlásit.');
-      if (!user) navigate('/login');
+      navigate('/login');
       return;
     }
 
-    setStartingCourse(course.id);
+    setStartingCourseId(course.id);
+
     try {
       const assignedId = await startPracticeCourse(
-        user.uid, 
-        profile?.name || 'Student', 
-        course.topic, 
-        course.title, 
+        user.uid,
+        profile?.name || 'Student',
+        course.topic,
+        course.title,
         course.description,
         course.id,
         course.topics,
-        course.questionCount
+        course.questionCount,
       );
-      toast.success('Procvičování bylo úspěšně spuštěno!');
+
+      toast.success('Procvičování bylo úspěšně spuštěno.');
       navigate(`/test/${assignedId}`);
-    } catch (error: any) {
-      toast.error(error.message || 'Chyba při spouštění procvičování.');
-    } finally {
-      setStartingCourse(null);
-    }
-  };
-
-  const handleOpenProfile = async (course: any) => {
-    setSelectedCourse(course);
-    setIsLoadingPreview(true);
-    setPreviewQuestion(null);
-    
-    try {
-      // Prioritně hledat podle courseId
-      let q = query(
-        collection(db, 'questions'),
-        where('courseId', '==', course.id),
-        limit(1)
-      );
-      let snap = await getDocs(q);
-      
-      // Fallback na téma pokud podle ID nic není
-      if (snap.empty) {
-        q = query(
-          collection(db, 'questions'),
-          where('topic', '==', course.topic),
-          limit(1)
-        );
-        snap = await getDocs(q);
-      }
-
-      if (!snap.empty) {
-        setPreviewQuestion({ id: snap.docs[0].id, ...snap.docs[0].data() } as Question);
-      } else if (course.topic === 'Geometrie' || (course.topics && course.topics.includes('Geometrie'))) {
-        const { GEOMETRY_QUESTIONS } = await import('../services/courseService');
-        setPreviewQuestion(GEOMETRY_QUESTIONS[0]);
-      }
     } catch (error) {
-      console.error("Failed to fetch preview question", error);
+      console.error(error);
+      toast.error(error instanceof Error ? error.message : 'Chyba při spouštění procvičování.');
     } finally {
-      setIsLoadingPreview(false);
+      setStartingCourseId(null);
     }
   };
 
-  const handleAddToTodo = async (course: any) => {
-    if (!user || !course) {
+  const handleAddToTodo = async (course: PracticeCourse) => {
+    if (!user) {
       toast.error('Pro přidání do TODO se musíš přihlásit.');
       return;
     }
 
-    setIsAddingToTodo(true);
+    setAddingTodoCourseId(course.id);
+
     try {
-      const todoData: any = {
+      const todoData: Omit<TodoItem, 'id'> = {
         studentId: user.uid,
         title: course.title,
         type: 'practice',
@@ -206,37 +167,27 @@ export default function Practice() {
       };
 
       await addDoc(collection(db, 'todos'), todoData);
-      toast.success('Úkol byl přidán do tvého TODO listu!');
+      toast.success('Úkol byl přidán do tvého TODO listu.');
       setSelectedCourse(null);
     } catch (error) {
-      console.error("Todo error:", error);
+      console.error(error);
       toast.error('Chyba při přidávání do TODO.');
     } finally {
-      setIsAddingToTodo(false);
+      setAddingTodoCourseId(null);
     }
   };
 
   return (
     <div className="page-container">
       <section className="text-center space-y-6 max-w-3xl mx-auto">
-        <motion.h1 
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="text-5xl md:text-6xl font-display font-bold text-gray-900"
-        >
+        <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-5xl md:text-6xl font-display font-bold text-gray-900">
           Naše <span className="text-brand-blue">procvičování</span>
         </motion.h1>
-        <motion.p 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="text-xl text-gray-500 leading-relaxed"
-        >
-          Vyber si téma, které chceš procvičit. 
-          Všechny úlohy jsou navrženy tak, aby ti pomohly k lepším výsledkům.
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="text-xl text-gray-500 leading-relaxed">
+          Vyber si téma, které chceš procvičit. Každý pokus je vytvořen bezpečně na serveru a tahá jen otázky, které opravdu potřebuješ.
         </motion.p>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
@@ -245,16 +196,19 @@ export default function Practice() {
           <div className="w-full sm:w-64">
             <Select value={selectedTopic} onValueChange={setSelectedTopic}>
               <SelectTrigger className="rounded-xl h-12 border-gray-100 bg-gray-50/50">
-                <SelectValue placeholder="Všechny předměty" />
+                <SelectValue placeholder="Všechna témata" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Všechny předměty</SelectItem>
-                {MATH_TOPICS.map(topic => (
-                  <SelectItem key={topic} value={topic}>{topic}</SelectItem>
+                <SelectItem value="all">Všechna témata</SelectItem>
+                {TOPICS.map((topic) => (
+                  <SelectItem key={topic} value={topic}>
+                    {topic}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
+
           <div className="w-full sm:w-64">
             <Select value={selectedDifficulty} onValueChange={setSelectedDifficulty}>
               <SelectTrigger className="rounded-xl h-12 border-gray-100 bg-gray-50/50">
@@ -262,81 +216,82 @@ export default function Practice() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Všechny obtížnosti</SelectItem>
-                <SelectItem value="Začátečník">Začátečník</SelectItem>
-                <SelectItem value="Středně pokročilý">Středně pokročilý</SelectItem>
-                <SelectItem value="Pokročilý">Pokročilý</SelectItem>
+                {DIFFICULTIES.map((difficulty) => (
+                  <SelectItem key={difficulty} value={difficulty}>
+                    {difficulty}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="w-full sm:w-72">
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Hledat kurz..."
+              className="w-full h-12 rounded-xl border border-gray-100 bg-gray-50/50 px-4 outline-none focus:border-brand-blue"
+            />
           </div>
         </motion.div>
       </section>
 
       <div className="grid md:grid-cols-3 gap-8">
-        {filteredCourses.map((course, i) => {
-          const colorClass = getTopicColor(course.color);
-          const isLocked = !user && i > 0;
-          
+        {filteredCourses.map((course, index) => {
+          const isLocked = !user && index > 0;
+          const topStripeStyle = course.color?.startsWith('#') ? { backgroundColor: course.color } : undefined;
+
           return (
-            <motion.div
-              key={course.id}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 + 0.3 }}
-              className="relative"
-            >
-              <Card 
-                className={`h-full flex flex-col group transition-all border-none overflow-hidden rounded-[2.5rem] bg-white relative
-                  ${isLocked ? 'grayscale opacity-70 cursor-not-allowed' : 'hover:shadow-2xl hover:shadow-blue-100'}`}
-              >
-                <div className={`h-2 w-full ${colorClass}`} style={course.color?.startsWith('#') ? { backgroundColor: course.color } : {}} />
-                
+            <motion.div key={course.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 * index + 0.3 }} className="relative">
+              <Card className={`h-full flex flex-col group transition-all border-none overflow-hidden rounded-[2.5rem] bg-white relative ${isLocked ? 'grayscale opacity-70 cursor-not-allowed' : 'hover:shadow-2xl hover:shadow-blue-100'}`}>
+                <div className="h-2 w-full bg-brand-blue" style={topStripeStyle} />
+
                 {isLocked && (
-                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/40 backdrop-blur-[2px] p-6 text-center">
+                  <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/50 backdrop-blur-[2px] p-6 text-center">
                     <div className="w-16 h-16 bg-white rounded-2xl shadow-xl flex items-center justify-center text-gray-400 mb-4">
                       <Lock size={32} />
                     </div>
-                    <p className="font-display font-black text-gray-900 text-lg leading-tight mb-2">Tento kurz je <br/>uzamčen</p>
-                    <Button 
-                      variant="link" 
-                      onClick={() => navigate('/login')}
-                      className="text-brand-orange font-bold p-0 h-auto underline decoration-2 underline-offset-4"
-                    >
-                      Přihlas se pro odemčení
+                    <p className="font-display font-black text-gray-900 text-lg leading-tight mb-2">Další kurzy jsou po přihlášení</p>
+                    <Button variant="link" onClick={() => navigate('/login')} className="text-brand-orange font-bold p-0 h-auto underline decoration-2 underline-offset-4">
+                      Přihlásit se
                     </Button>
                   </div>
                 )}
 
                 <CardHeader className="space-y-4">
                   <div className="flex justify-between items-start">
-                    <div 
-                      className={`w-16 h-16 ${colorClass} rounded-2xl flex items-center justify-center ${!isLocked && 'group-hover:scale-110'} transition-transform`}
-                      style={course.color?.startsWith('#') ? { backgroundColor: course.color } : {}}
-                    >
-                      {course.icon}
+                    <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white bg-brand-blue" style={topStripeStyle}>
+                      {course.topic === 'Čeština' ? <FileText size={28} /> : course.topic === 'Angličtina' ? <GraduationCap size={28} /> : <BookOpen size={28} />}
                     </div>
-                    <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase">
-                      {course.difficulty}
-                    </span>
+                    <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase">{course.difficulty}</span>
                   </div>
                   <CardTitle className="text-2xl font-display font-bold">{course.title}</CardTitle>
                   <CardDescription className="text-gray-500 text-base">{course.description}</CardDescription>
                 </CardHeader>
+
                 <CardContent className="space-y-6 flex-grow">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex items-center gap-2 text-sm text-gray-400 font-bold">
                       <BookOpen size={16} /> {course.questionCount} otázek
                     </div>
                     <div className="flex items-center gap-2 text-sm text-gray-400 font-bold">
-                      <Users size={16} /> {course.students}
+                      <Users size={16} /> {course.students || '500+'}
                     </div>
                   </div>
+
+                  <div className="flex items-center justify-between">
+                    <Badge variant="outline" className="rounded-full px-3 py-1">
+                      {course.rating || 5} / 5
+                    </Badge>
+                    <div className="flex items-center gap-1 text-brand-orange">
+                      <Star size={16} fill="currentColor" />
+                      <span className="text-sm font-bold">Oblíbené</span>
+                    </div>
+                  </div>
+
                   <div className="pt-6 mt-auto">
-                    <Button 
-                      onClick={() => !isLocked && handleOpenProfile(course)}
-                      disabled={isLocked}
-                      className={`w-full rounded-xl h-12 gap-2 text-lg font-bold ${isLocked ? 'bg-gray-100 text-gray-400' : 'btn-blue'}`}
-                    >
-                      {isLocked ? 'Zamčeno' : <>Detail procvičování <ArrowRight size={20} /></>}
+                    <Button onClick={() => !isLocked && openCourseDetail(course)} disabled={isLocked} className={`w-full rounded-xl h-12 gap-2 text-lg font-bold ${isLocked ? 'bg-gray-100 text-gray-400' : 'btn-blue'}`}>
+                      {isLocked ? 'Uzamčeno' : <>Detail procvičování <ArrowRight size={20} /></>}
                     </Button>
                   </div>
                 </CardContent>
@@ -344,6 +299,7 @@ export default function Practice() {
             </motion.div>
           );
         })}
+
         {filteredCourses.length === 0 && (
           <div className="col-span-full text-center py-20 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
             <BookOpen size={48} className="mx-auto text-gray-200 mb-4" />
@@ -356,7 +312,7 @@ export default function Practice() {
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl" />
         <div className="relative z-10 space-y-4">
           <h2 className="text-4xl font-display font-bold">Nevíš si rady s výběrem?</h2>
-          <p className="text-blue-100 text-xl max-w-xl mx-auto">Napiš nám a mi ti rádi poradíme, které téma je pro tebe to pravé.</p>
+          <p className="text-blue-100 text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, které téma je pro tebe to pravé.</p>
           <div className="pt-4">
             <Link to="/contact" className="inline-flex items-center justify-center bg-white text-brand-blue px-10 h-14 rounded-2xl text-xl font-bold hover:scale-105 transition-transform shadow-xl">
               Kontaktuj nás
@@ -365,18 +321,14 @@ export default function Practice() {
         </div>
       </section>
 
-      {/* Course Profile Dialog */}
       <Dialog open={!!selectedCourse} onOpenChange={(open) => !open && setSelectedCourse(null)}>
         <DialogContent className="max-w-2xl rounded-[3rem] p-0 overflow-hidden border-none shadow-3xl bg-white">
           {selectedCourse && (
             <>
               <div className="relative h-48 bg-brand-blue flex items-center justify-center overflow-hidden">
                 <div className="absolute inset-0 bg-gradient-to-br from-brand-blue to-blue-700 opacity-90" />
-                <div className="absolute top-0 right-0 p-10 opacity-10">
-                  <BookOpen size={160} />
-                </div>
                 <div className="relative z-10 text-center text-white space-y-2">
-                  <Badge className="bg-white/20 hover:bg-white/30 border-none text-white px-4 py-1 rounded-full text-xs font-black uppercase tracking-widest">
+                  <Badge className="bg-white/20 hover:bg-white/20 border-none text-white px-4 py-1 rounded-full text-xs font-black uppercase tracking-widest">
                     {selectedCourse.difficulty}
                   </Badge>
                   <DialogTitle className="text-4xl font-display font-black">{selectedCourse.title}</DialogTitle>
@@ -391,14 +343,14 @@ export default function Practice() {
                     <div className="font-black text-gray-900">{selectedCourse.questionCount} ks</div>
                   </div>
                   <div className="text-center p-4 bg-gray-50 rounded-2xl">
-                    <Users className="mx-auto mb-2 text-brand-purple" size={20} />
+                    <Users className="mx-auto mb-2 text-brand-blue" size={20} />
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-tighter">Studenti</div>
-                    <div className="font-black text-gray-900">{selectedCourse.students}</div>
+                    <div className="font-black text-gray-900">{selectedCourse.students || '500+'}</div>
                   </div>
                   <div className="text-center p-4 bg-gray-50 rounded-2xl">
                     <Star className="mx-auto mb-2 text-brand-orange" size={20} />
                     <div className="text-xs font-bold text-gray-400 uppercase tracking-tighter">Hodnocení</div>
-                    <div className="font-black text-gray-900">{selectedCourse.rating || 5.0} / 5</div>
+                    <div className="font-black text-gray-900">{selectedCourse.rating || 5} / 5</div>
                   </div>
                 </div>
 
@@ -412,34 +364,29 @@ export default function Practice() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-display font-black text-2xl text-gray-900">Náhled první otázky</h3>
-                    <Sparkles size={20} className="text-brand-orange animate-pulse" />
+                    <Sparkles size={20} className="text-brand-orange" />
                   </div>
 
-                  {isLoadingPreview ? (
-                    <div className="h-40 bg-gray-50 rounded-3xl flex items-center justify-center border-2 border-dashed border-gray-200">
-                      <Loader2 className="animate-spin text-brand-blue" size={32} />
-                    </div>
-                  ) : previewQuestion ? (
-                    <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100 relative group overflow-hidden">
-                      <div className="absolute top-0 right-0 p-6 opacity-0 group-hover:opacity-10 transition-opacity">
-                        <Target size={60} />
-                      </div>
+                  {previewQuestion ? (
+                    <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100">
                       <div className="text-xs font-black text-brand-blue mb-2 uppercase tracking-widest bg-blue-50 w-fit px-3 py-1 rounded-lg">Otázka 1</div>
                       <p className="text-lg font-bold text-gray-800 leading-snug">{previewQuestion.question}</p>
                       <div className="grid grid-cols-2 gap-2 mt-4">
-                        {previewQuestion.options.slice(0, 2).map((opt: string, i: number) => (
-                          <div key={i} className="bg-white/80 p-3 rounded-xl text-sm font-bold text-gray-400 border border-white">
-                            {opt}
+                        {previewQuestion.options.slice(0, 2).map((option) => (
+                          <div key={option} className="bg-white/80 p-3 rounded-xl text-sm font-bold text-gray-500 border border-white">
+                            {option}
                           </div>
                         ))}
-                        <div className="col-span-2 text-center text-[10px] text-gray-300 font-bold uppercase tracking-widest pt-2">
-                          + další {previewQuestion.options.length - 2} možnosti
-                        </div>
+                        {previewQuestion.options.length > 2 && (
+                          <div className="col-span-2 text-center text-[10px] text-gray-300 font-bold uppercase tracking-widest pt-2">
+                            + další {previewQuestion.options.length - 2} možnosti
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (
                     <div className="p-8 bg-orange-50 rounded-3xl text-orange-600 text-center font-bold">
-                      Pro tento kurz zatím nemáme náhledovou otázku.
+                      Pro tento kurz zatím nemáme veřejný náhled otázky.
                     </div>
                   )}
                 </div>
@@ -448,34 +395,27 @@ export default function Practice() {
               <DialogFooter className="p-10 pt-0 gap-4 sm:justify-center flex-col sm:flex-row">
                 {!user ? (
                   <div className="w-full space-y-4 text-center">
-                    <p className="text-gray-500 font-bold">Líbí se vám tato úloha? Přihlaste se a začněte procvičovat!</p>
-                    <Button 
-                      onClick={() => navigate('/login')}
-                      className="h-16 w-full px-10 rounded-2xl bg-brand-orange hover:bg-brand-orange/90 text-white font-black shadow-xl shadow-orange-100 gap-2 text-lg active:scale-95 transition-all"
-                    >
-                      <Users size={20} /> Přihlásit se a začít
+                    <p className="text-gray-500 font-bold">Líbí se ti tento kurz? Přihlas se a začni procvičovat.</p>
+                    <Button onClick={() => navigate('/login')} className="h-16 w-full px-10 rounded-2xl bg-brand-orange hover:bg-brand-orange/90 text-white font-black shadow-xl shadow-orange-100 gap-2 text-lg">
+                      Přihlásit se a začít
                     </Button>
                   </div>
                 ) : (
                   <>
-                    <Button 
+                    <Button
                       variant="outline"
-                      disabled={isAddingToTodo}
+                      disabled={addingTodoCourseId === selectedCourse.id}
                       onClick={() => handleAddToTodo(selectedCourse)}
-                      className="h-16 px-10 rounded-2xl border-2 border-gray-100 hover:border-brand-blue hover:text-brand-blue font-black flex-1 gap-2 text-lg transition-all"
+                      className="h-16 px-10 rounded-2xl border-2 border-gray-100 hover:border-brand-blue hover:text-brand-blue font-black flex-1 gap-2 text-lg"
                     >
-                      {isAddingToTodo ? <Loader2 className="animate-spin" size={20} /> : <><Clock size={20} /> Dát do TODO</>}
+                      {addingTodoCourseId === selectedCourse.id ? <Loader2 className="animate-spin" size={20} /> : 'Dát do TODO'}
                     </Button>
-                    <Button 
+                    <Button
                       onClick={() => handleStartCourse(selectedCourse)}
-                      disabled={startingCourse === selectedCourse.id}
-                      className="h-16 px-10 rounded-2xl bg-brand-blue hover:bg-brand-blue/90 text-white font-black flex-1 shadow-xl shadow-blue-100 gap-2 text-lg active:scale-95 transition-all"
+                      disabled={startingCourseId === selectedCourse.id}
+                      className="h-16 px-10 rounded-2xl bg-brand-blue hover:bg-brand-blue/90 text-white font-black flex-1 shadow-xl shadow-blue-100 gap-2 text-lg"
                     >
-                      {startingCourse === selectedCourse.id ? (
-                        <Loader2 className="animate-spin" size={20} />
-                      ) : (
-                        <>Spustit hned <ArrowRight size={20} /></>
-                      )}
+                      {startingCourseId === selectedCourse.id ? <Loader2 className="animate-spin" size={20} /> : <>Spustit hned <ArrowRight size={20} /></>}
                     </Button>
                   </>
                 )}

@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { format, startOfMonth, endOfMonth, EachDay, eachDayOfInterval, isSameDay, addMonths, subMonths, isToday, startOfWeek, endOfWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths, isToday, startOfWeek, endOfWeek } from 'date-fns';
 import { cs } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, Circle } from 'lucide-react';
 import { TodoItem } from '../types';
+import { safeToDate } from '../lib/utils';
 import { Button } from './ui/button';
 
 interface QuickCalendarProps {
@@ -26,8 +27,8 @@ export default function QuickCalendar({ todos }: QuickCalendarProps) {
   const prevMonth = () => setCurrentDate(subMonths(currentDate, 1));
 
   const getTodosForDay = (day: Date) => {
-    return todos.filter(todo => 
-      todo.dueDate && isSameDay(todo.dueDate.toDate(), day)
+    return todos.filter(todo =>
+      todo.dueDate && isSameDay(safeToDate(todo.dueDate)!, day)
     );
   };
 
@@ -61,10 +62,10 @@ export default function QuickCalendar({ todos }: QuickCalendarProps) {
         {calendarDays.map((day, idx) => {
           const dayTodos = getTodosForDay(day);
           const isCurrentMonth = isSameDay(startOfMonth(day), startOfMonth(currentDate));
-          
+
           return (
-            <div 
-              key={idx} 
+            <div
+              key={idx}
               className={`relative aspect-square flex flex-col items-center justify-center rounded-2xl transition-all cursor-pointer hover:bg-blue-50 group
                 ${!isCurrentMonth ? 'opacity-20' : ''}
                 ${isToday(day) ? 'bg-brand-blue/5 border-2 border-brand-blue/20' : ''}
@@ -73,15 +74,15 @@ export default function QuickCalendar({ todos }: QuickCalendarProps) {
               <span className={`text-sm font-bold ${isToday(day) ? 'text-brand-blue' : 'text-gray-600'}`}>
                 {format(day, 'd')}
               </span>
-              
+
               {dayTodos.length > 0 && (
                 <div className="flex gap-0.5 mt-1">
                   {dayTodos.slice(0, 3).map((t, i) => (
-                    <Circle 
-                      key={i} 
-                      size={6} 
-                      fill={t.completed ? '#10b981' : '#3b82f6'} 
-                      className={t.completed ? 'text-green-500' : 'text-blue-500'} 
+                    <Circle
+                      key={i}
+                      size={6}
+                      fill={t.completed ? '#10b981' : '#3b82f6'}
+                      className={t.completed ? 'text-green-500' : 'text-blue-500'}
                     />
                   ))}
                 </div>

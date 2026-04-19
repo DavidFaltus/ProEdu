@@ -1,31 +1,25 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, doc, getDoc, updateDoc, getDocs, orderBy, addDoc, Timestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, getDocs, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
+import { safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
-import { AssignedTest, LearningSheet, MathTopic, TodoItem } from '../types/index';
+import { AssignedTest, LearningSheet, TodoItem } from '../types/index';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, BarChart3, Settings, User as UserIcon, Loader2 } from 'lucide-react';
+import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, Settings, User as UserIcon, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getRecommendations } from '../services/geminiService';
 import TodoManager from '../components/TodoManager';
 import QuickCalendar from '../components/QuickCalendar';
 
-interface TopicStats {
-  correct: number;
-  total: number;
-}
-
 export default function StudentDashboard() {
-  const { user, profile, loading, setIsProfileSettingsOpen } = useAuth();
+  const { user, profile, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
-  const [isUpdatingRecommendations, setIsUpdatingRecommendations] = useState(false);
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isAddingTodo, setIsAddingTodo] = useState<string | null>(null);
@@ -70,8 +64,8 @@ export default function StudentDashboard() {
       (snap) => {
         const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as TodoItem));
         const sorted = items.sort((a, b) => {
-          const tA = (a.createdAt as any)?.toMillis?.() || 0;
-          const tB = (b.createdAt as any)?.toMillis?.() || 0;
+          const tA = safeToDate(a.createdAt)?.getTime() || 0;
+          const tB = safeToDate(b.createdAt)?.getTime() || 0;
           return tB - tA;
         });
         setTodos(sorted);
@@ -83,48 +77,6 @@ export default function StudentDashboard() {
       unsubTodos();
     };
   }, [profile]);
-
-  // Logic to update recommendations based on graded tests
-  useEffect(() => {
-    const updateRecommendations = async () => {
-      if (!profile || isUpdatingRecommendations) return;
-      
-      const gradedTests = assignedTests.filter(t => t.status === 'graded' && t.topicPerformance);
-      if (gradedTests.length === 0) return;
-
-      const performance: Record<string, { correct: number, total: number }> = {};
-      gradedTests.forEach(test => {
-        if (test.topicPerformance) {
-          Object.entries(test.topicPerformance).forEach(([topic, stats]) => {
-            const s = stats as TopicStats;
-            if (!performance[topic]) {
-              performance[topic] = { correct: 0, total: 0 };
-            }
-            performance[topic].correct += s.correct;
-            performance[topic].total += s.total;
-          });
-        }
-      });
-
-      // Simple heuristic: if we have new graded tests, refresh recommendations
-      // For now, let's just do it once if focusAreas is empty or after a new test is graded
-      if (!profile.focusAreas || profile.focusAreas.length === 0) {
-        setIsUpdatingRecommendations(true);
-        try {
-          const recommendations = await getRecommendations(performance);
-          await updateDoc(doc(db, 'users', profile.uid), {
-            focusAreas: recommendations
-          });
-        } catch (error) {
-          console.error("Failed to get AI recommendations", error);
-        } finally {
-          setIsUpdatingRecommendations(false);
-        }
-      }
-    };
-
-    updateRecommendations();
-  }, [assignedTests, profile, isUpdatingRecommendations]);
 
   const pendingTests = assignedTests.filter(t => t.status === 'pending');
   const completedTests = assignedTests.filter(t => t.status !== 'pending');
@@ -159,7 +111,7 @@ export default function StudentDashboard() {
               <div className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Hotovo</div>
             </div>
           </div>
-          <Button 
+          <Button
             onClick={() => setIsProfileSettingsOpen(true)}
             className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
           >
@@ -172,7 +124,7 @@ export default function StudentDashboard() {
       {/* AI Recommendations Section */}
       <AnimatePresence>
         {profile?.focusAreas && profile.focusAreas.length > 0 && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="relative"
@@ -199,8 +151,8 @@ export default function StudentDashboard() {
                       </div>
                       <span className="font-bold text-lg">{area}</span>
                     </div>
-                    <Button 
-                      variant="ghost" 
+                    <Button
+                      variant="ghost"
                       size="sm"
                       disabled={!!isAddingTodo}
                       onClick={() => handleAddToTodo(area)}
@@ -211,7 +163,7 @@ export default function StudentDashboard() {
                   </div>
                 ))}
               </CardContent>
-              
+
               {/* Suggested Practice based on focus areas */}
               <div className="px-10 pb-10 relative z-10">
                 <div className="bg-white/10 backdrop-blur-sm rounded-[2rem] p-6 border border-white/10">
@@ -242,7 +194,7 @@ export default function StudentDashboard() {
           <h3 className="font-bold text-gray-900">Čekající testy</h3>
           <p className="text-gray-400 text-sm">Dokonči je co nejdříve!</p>
         </Card>
-        
+
         <Card className="rounded-[2rem] border-none shadow-xl bg-white p-8 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
           <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-brand-orange mb-4 group-hover:scale-110 transition-transform">
             <CheckCircle size={32} />
@@ -301,7 +253,7 @@ export default function StudentDashboard() {
             </div>
             <div className="space-y-8">
               <QuickCalendar todos={todos} />
-              
+
               <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
                 <div className="absolute top-0 right-0 p-8 opacity-10">
                   <Lightbulb size={120} />
@@ -331,11 +283,11 @@ export default function StudentDashboard() {
                       </span>
                     </div>
                     <CardDescription className="flex items-center gap-2 text-gray-400 font-bold">
-                      <Clock size={16} /> Přiřazeno: {test.assignedAt.toDate().toLocaleDateString('cs-CZ')}
+                      <Clock size={16} /> Přiřazeno: {safeToDate(test.assignedAt)?.toLocaleDateString('cs-CZ')}
                     </CardDescription>
                   </CardHeader>
                   <CardContent className="pt-0">
-                    <Button 
+                    <Button
                       onClick={() => navigate(`/test/${test.id}`)}
                       className="btn-blue w-full h-14 rounded-2xl text-lg font-bold shadow-xl shadow-blue-100 group-hover:scale-[1.02] transition-transform"
                     >
@@ -369,13 +321,13 @@ export default function StudentDashboard() {
                     <div>
                       <h3 className="font-display font-bold text-2xl text-gray-900">{test.testTitle}</h3>
                       <p className="text-gray-400 font-bold">
-                        {test.status === 'graded' 
-                          ? `Oznámkováno: ${test.gradedAt?.toDate().toLocaleDateString('cs-CZ')}` 
-                          : `Odevzdáno: ${test.submittedAt?.toDate().toLocaleDateString('cs-CZ')}`}
+                        {test.status === 'graded'
+                          ? `Oznámkováno: ${safeToDate(test.gradedAt)?.toLocaleDateString('cs-CZ')}`
+                          : `Odevzdáno: ${safeToDate(test.submittedAt)?.toLocaleDateString('cs-CZ')}`}
                       </p>
                     </div>
                   </div>
-                  
+
                   <div className="flex items-center gap-6">
                     {test.status === 'graded' && (
                       <div className="text-center md:text-right">
@@ -390,8 +342,8 @@ export default function StudentDashboard() {
                         Čeká na opravu
                       </span>
                     )}
-                    <Button 
-                      variant="ghost" 
+                    <Button
+                      variant="ghost"
                       className="rounded-xl hover:bg-gray-50"
                       onClick={() => navigate(`/review/${test.id}`)}
                     >
@@ -415,8 +367,8 @@ export default function StudentDashboard() {
         <TabsContent value="sheets">
           <div className="grid md:grid-cols-3 gap-8">
             {learningSheets.map(sheet => (
-              <Card 
-                key={sheet.id} 
+              <Card
+                key={sheet.id}
                 className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all cursor-pointer group bg-white overflow-hidden"
                 onClick={() => setSelectedSheet(sheet)}
               >
@@ -457,18 +409,18 @@ export default function StudentDashboard() {
                     </DialogTitle>
                   </DialogHeader>
                 </div>
-                
+
                 <div className="flex items-center gap-3">
                   <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
-                      const a = document.createElement('a');
-                      a.href = selectedSheet.fileUrl || '';
-                      a.download = `${selectedSheet.title || 'material'}.pdf`;
-                      a.click();
-                    }}>
-                      <FileText size={18} className="mr-2" />
-                      Stáhnout (PDF)
+                    const a = document.createElement('a');
+                    a.href = selectedSheet.fileUrl || '';
+                    a.download = `${selectedSheet.title || 'material'}.pdf`;
+                    a.click();
+                  }}>
+                    <FileText size={18} className="mr-2" />
+                    Stáhnout (PDF)
                   </Button>
-                  <Button 
+                  <Button
                     variant="ghost"
                     onClick={() => setSelectedSheet(null)}
                     className="h-10 w-10 p-0 rounded-full bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500"
@@ -477,12 +429,12 @@ export default function StudentDashboard() {
                   </Button>
                 </div>
               </div>
-              
+
               <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
                 {selectedSheet.fileUrl ? (
                   <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-                    <iframe 
-                      src={selectedSheet.fileUrl} 
+                    <iframe
+                      src={selectedSheet.fileUrl}
                       className="w-full h-full border-none"
                       title={selectedSheet.title}
                     />

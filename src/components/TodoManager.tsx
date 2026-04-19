@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp, orderBy } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { TodoItem, UserProfile, PracticeCourse, Test, LearningSheet } from '../types';
+import { safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
@@ -14,7 +15,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { useNavigate } from 'react-router-dom';
-import { startPracticeCourse } from '../services/courseService';
 
 interface TodoManagerProps {
   targetStudentId: string;
@@ -33,7 +33,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
   const [currentEditId, setCurrentEditId] = useState<string | null>(null);
   const [viewingDetails, setViewingDetails] = useState<TodoItem | null>(null);
   const [isLaunching, setIsLaunching] = useState<string | null>(null);
-  
+
   // Form state
   const [newTodo, setNewTodo] = useState({
     title: '',
@@ -59,8 +59,8 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as TodoItem));
       // Sort client-side to avoid index requirement
       const sorted = items.sort((a, b) => {
-        const timeA = a.createdAt?.toMillis?.() || 0;
-        const timeB = b.createdAt?.toMillis?.() || 0;
+        const timeA = safeToDate(a.createdAt)?.getTime() || 0;
+        const timeB = safeToDate(b.createdAt)?.getTime() || 0;
         return timeB - timeA;
       });
       setTodos(sorted);
@@ -72,12 +72,18 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
     const unsubCourses = onSnapshot(collection(db, 'practiceCourses'), (snap) => {
       setCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
     });
-    const unsubTests = onSnapshot(collection(db, 'tests'), (snap) => {
-      setTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
-    });
     const unsubSheets = onSnapshot(collection(db, 'learningSheets'), (snap) => {
       setSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
     });
+
+    let unsubTests = () => { };
+    if (isTeacherView) {
+      unsubTests = onSnapshot(collection(db, 'tests'), (snap) => {
+        setTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
+      });
+    } else {
+      setTests([]);
+    }
 
     return () => {
       unsubscribe();
@@ -85,7 +91,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
       unsubTests();
       unsubSheets();
     };
-  }, [targetStudentId]);
+  }, [isTeacherView, targetStudentId]);
 
   const handleAddTodo = async () => {
     if (!newTodo.title && !newTodo.referenceId) {
@@ -124,8 +130,8 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
   const handleUpdateTodo = async () => {
     if (!currentEditId) return;
     if (!editTodo.title) {
-        toast.error('Název úkolu nesmí být prázdný');
-        return;
+      toast.error('Název úkolu nesmí být prázdný');
+      return;
     }
 
     try {
@@ -143,23 +149,23 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
 
   const handleLaunchTask = async (todo: TodoItem) => {
     if (!todo.referenceId) return;
-    
+
     // For teachers, we just navigate to the list pages or provide previews
     if (isTeacherView) {
-        if (todo.type === 'practice') navigate('/practice');
-        if (todo.type === 'test') navigate('/teacher'); // Teacher dashboard to manage tests
-        if (todo.type === 'material') navigate('/learning');
-        return;
+      if (todo.type === 'practice') navigate('/practice');
+      if (todo.type === 'test') navigate('/teacher'); // Teacher dashboard to manage tests
+      if (todo.type === 'material') navigate('/learning');
+      return;
     }
 
     // For students, launch the actual thing
     if (todo.type === 'test') {
-        navigate(`/test/${todo.referenceId}`);
+      navigate(`/test/${todo.referenceId}`);
     } else if (todo.type === 'material') {
-        navigate('/learning');
+      navigate('/learning');
     } else if (todo.type === 'practice') {
-        // Instead of starting immediately, navigate to practice page and open details
-        navigate(`/practice?course=${todo.referenceId}`);
+      // Instead of starting immediately, navigate to practice page and open details
+      navigate(`/practice?course=${todo.referenceId}`);
     }
   };
 
@@ -193,7 +199,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
   };
 
   const getIcon = (type: TodoItem['type']) => {
-    switch(type) {
+    switch (type) {
       case 'practice': return <GraduationCap size={18} className="text-brand-blue" />;
       case 'test': return <FileText size={18} className="text-brand-orange" />;
       case 'material': return <BookOpen size={18} className="text-purple-500" />;
@@ -238,6 +244,8 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
             </p>
           </div>
         );
+      } else {
+        content = <p className="text-gray-500 italic">Detail testu je dostupný jen učiteli nebo po otevření samotného testu.</p>;
       }
     } else if (type === 'material') {
       const sheet = sheets.find(s => s.id === referenceId);
@@ -251,7 +259,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
         );
       }
     } else {
-        content = <p className="text-gray-500 italic">Tento úkol nemá k dispozici žádné podrobnosti.</p>;
+      content = <p className="text-gray-500 italic">Tento úkol nemá k dispozici žádné podrobnosti.</p>;
     }
 
     return (
@@ -259,12 +267,12 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
         <DialogContent className="rounded-[2.5rem] p-8 border-none shadow-2xl max-w-md">
           <DialogHeader>
             <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 bg-gray-50 rounded-xl">
-                    {getIcon(viewingDetails.type)}
-                </div>
-                <DialogTitle className="text-2xl font-display font-bold text-brand-blue underline decoration-brand-orange-light decoration-4 underline-offset-4">
-                    Podrobnosti úkolu
-                </DialogTitle>
+              <div className="p-2 bg-gray-50 rounded-xl">
+                {getIcon(viewingDetails.type)}
+              </div>
+              <DialogTitle className="text-2xl font-display font-bold text-brand-blue underline decoration-brand-orange-light decoration-4 underline-offset-4">
+                Podrobnosti úkolu
+              </DialogTitle>
             </div>
           </DialogHeader>
           <div className="py-2">
@@ -273,16 +281,16 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
           </div>
           <DialogFooter className="mt-6 gap-2 sm:flex-row flex-col">
             {viewingDetails.referenceId && (
-                <Button 
-                    onClick={() => {
-                        handleLaunchTask(viewingDetails);
-                        setViewingDetails(null);
-                    }}
-                    disabled={isLaunching === viewingDetails.id}
-                    className="flex-1 btn-blue rounded-xl h-12 font-bold gap-2"
-                >
-                    {isLaunching === viewingDetails.id ? <Loader2 className="animate-spin" size={20} /> : <><ExternalLink size={18} /> Spustit úkol</>}
-                </Button>
+              <Button
+                onClick={() => {
+                  handleLaunchTask(viewingDetails);
+                  setViewingDetails(null);
+                }}
+                disabled={isLaunching === viewingDetails.id}
+                className="flex-1 btn-blue rounded-xl h-12 font-bold gap-2"
+              >
+                {isLaunching === viewingDetails.id ? <Loader2 className="animate-spin" size={20} /> : <><ExternalLink size={18} /> Spustit úkol</>}
+              </Button>
             )}
             <Button variant="outline" onClick={() => setViewingDetails(null)} className="flex-1 rounded-xl h-12 font-bold border-gray-100">
               Zavřít
@@ -307,8 +315,8 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
           <div className="space-y-6 py-4">
             <div className="space-y-2">
               <Label className="font-bold text-gray-700">Název úkolu</Label>
-              <Input 
-                value={editTodo.title} 
+              <Input
+                value={editTodo.title}
                 onChange={e => setEditTodo({ ...editTodo, title: e.target.value })}
                 className="rounded-xl h-12 border-gray-100 bg-gray-50/50 grayscale-input"
               />
@@ -317,9 +325,9 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
             <div className="space-y-2">
               <Label className="font-bold text-gray-700">Termín (volitelné)</Label>
               <div className="relative">
-                <Input 
-                  type="date" 
-                  value={editTodo.dueDate} 
+                <Input
+                  type="date"
+                  value={editTodo.dueDate}
                   onChange={e => setEditTodo({ ...editTodo, dueDate: e.target.value })}
                   className="rounded-xl h-12 border-gray-100 bg-gray-50/50 pl-10"
                 />
@@ -340,7 +348,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
           <Clock className="text-brand-orange" />
           {isTeacherView ? 'TODO list studenta' : 'Můj TODO list'}
         </h3>
-        
+
         <Dialog open={isAdding} onOpenChange={setIsAdding}>
           <DialogTrigger asChild>
             <Button className="rounded-2xl bg-brand-blue hover:bg-brand-blue/90 text-white font-bold h-12 px-6 flex items-center gap-2 shadow-lg active:scale-95 transition-all">
@@ -386,8 +394,8 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
 
               <div className="space-y-2">
                 <Label className="font-bold text-gray-700">Název úkolu {newTodo.type !== 'custom' && '(automaticky se vyplní)'}</Label>
-                <Input 
-                  value={newTodo.title} 
+                <Input
+                  value={newTodo.title}
                   onChange={e => setNewTodo({ ...newTodo, title: e.target.value })}
                   placeholder={newTodo.type === 'custom' ? "Např. Procvičit zlomky" : "Ponechte prázdné pro automatický název"}
                   className="rounded-xl h-12 border-gray-100 bg-gray-50/50 grayscale-input"
@@ -397,9 +405,9 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
               <div className="space-y-2">
                 <Label className="font-bold text-gray-700">Termín (volitelné)</Label>
                 <div className="relative">
-                  <Input 
-                    type="date" 
-                    value={newTodo.dueDate} 
+                  <Input
+                    type="date"
+                    value={newTodo.dueDate}
                     onChange={e => setNewTodo({ ...newTodo, dueDate: e.target.value })}
                     className="rounded-xl h-12 border-gray-100 bg-gray-50/50 pl-10"
                   />
@@ -426,13 +434,13 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
             <Card key={todo.id} className={`rounded-[1.5rem] border-none shadow-sm transition-all hover:shadow-md ${todo.completed ? 'opacity-60 bg-gray-50' : 'bg-white'}`}>
               <CardContent className="p-4 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-4 flex-1">
-                  <button 
+                  <button
                     onClick={() => toggleTodo(todo)}
                     className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all ${todo.completed ? 'bg-green-500 text-white' : 'border-2 border-gray-200 text-gray-300 hover:border-brand-blue hover:text-brand-blue'}`}
                   >
                     {todo.completed ? <CheckCircle2 size={24} /> : <Circle size={24} />}
                   </button>
-                  
+
                   <div className="flex flex-col">
                     <div className="flex items-center gap-2">
                       <span className={`font-bold text-lg ${todo.completed ? 'line-through text-gray-400' : 'text-brand-blue'}`}>
@@ -442,16 +450,16 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
                         {getIcon(todo.type)}
                       </div>
                       {todo.referenceId && (
-                         <button 
-                            onClick={() => setViewingDetails(todo)}
-                            className="p-1 text-brand-orange hover:bg-brand-orange/10 rounded-lg transition-colors"
-                            title="Zobrazit podrobnosti"
-                         >
-                            <Info size={16} />
-                         </button>
+                        <button
+                          onClick={() => setViewingDetails(todo)}
+                          className="p-1 text-brand-orange hover:bg-brand-orange/10 rounded-lg transition-colors"
+                          title="Zobrazit podrobnosti"
+                        >
+                          <Info size={16} />
+                        </button>
                       )}
                     </div>
-                    
+
                     <div className="flex items-center gap-4 mt-1">
                       {todo.dueDate && (
                         <span className={`text-sm flex items-center gap-1.5 font-medium ${new Date(todo.dueDate.toDate()) < new Date() && !todo.completed ? 'text-red-500' : 'text-gray-500'}`}>
@@ -467,34 +475,34 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
                 </div>
 
                 <div className="flex items-center gap-1">
-                    {todo.referenceId && (
-                        <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="rounded-xl text-brand-orange hover:text-brand-orange hover:bg-brand-orange/10"
-                        title="Spustit úkol"
-                        onClick={() => handleLaunchTask(todo)}
-                        disabled={isLaunching === todo.id}
-                        >
-                        {isLaunching === todo.id ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
-                        </Button>
-                    )}
-                    <Button 
-                    variant="ghost" 
-                    size="icon" 
+                  {todo.referenceId && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="rounded-xl text-brand-orange hover:text-brand-orange hover:bg-brand-orange/10"
+                      title="Spustit úkol"
+                      onClick={() => handleLaunchTask(todo)}
+                      disabled={isLaunching === todo.id}
+                    >
+                      {isLaunching === todo.id ? <Loader2 size={18} className="animate-spin" /> : <ExternalLink size={18} />}
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     className="rounded-xl text-gray-300 hover:text-brand-blue hover:bg-brand-blue/10"
                     onClick={() => startEdit(todo)}
-                    >
+                  >
                     <Pencil size={18} />
-                    </Button>
-                    <Button 
-                    variant="ghost" 
-                    size="icon" 
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
                     className="rounded-xl text-red-300 hover:text-red-500 hover:bg-red-50"
                     onClick={() => deleteTodo(todo.id)}
-                    >
+                  >
                     <Trash2 size={18} />
-                    </Button>
+                  </Button>
                 </div>
               </CardContent>
             </Card>

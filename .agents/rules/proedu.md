@@ -138,3 +138,7 @@ Technické zásady pro Firebase v tomto projektu:
 - Všechny uploady do Storage ukládej do namespacovaných cest, např. `learningSheets/{teacherUid}/{fileId}`.
 - Každý soubor musí mít owner metadata a rules musí kontrolovat vlastnictví.
 - U veřejných studijních materiálů odděl veřejná data od soukromých dat do samostatných kolekcí.
+
+Aplikaci spouští vždy na portu 3005  toto použij při debugování
+
+Pro debug učitele využívej účet ucitel@ucitel.cz s heslem ucitel123 a pro debug žáka využívej účet student@student.cz s heslem student123

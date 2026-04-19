@@ -1,8 +1,9 @@
+import { ReactNode } from 'react';
 import { Timestamp } from 'firebase/firestore';
 
 export type UserRole = 'student' | 'teacher';
 
-export type Difficulty = 'Začátečník' | 'Středně pokročilý' | 'Pokročilý';
+export type Difficulty = 'Začátečník' | 'Středně pokročilý' | 'Pokročilý' | 'Lehká' | 'Střední' | 'Těžká';
 
 export interface UserProfile {
   uid: string;
@@ -10,23 +11,34 @@ export interface UserProfile {
   name: string;
   role: UserRole;
   createdAt: Timestamp;
-  focusAreas?: string[]; // Recommended areas to focus on
-  photoURL?: string; // profile picture URL
+  focusAreas?: string[];
+  photoURL?: string;
 }
 
 export type MathTopic = string;
 
-export interface Question {
+export interface PublicQuestion {
   id: string;
   question: string;
   options: string[];
-  correctAnswer: string;
-  explanation?: string;
   topic: string;
   topics?: string[];
+  explanation?: string;
   diagram?: 'square' | 'triangle' | 'circle' | 'coordinate';
   courseId?: string;
   imageUrl?: string;
+}
+
+export interface Question extends PublicQuestion {
+  correctAnswer: string;
+  createdBy?: string;
+  createdAt?: Timestamp;
+}
+
+export interface ReviewQuestion extends PublicQuestion {
+  correctAnswer: string;
+  userAnswer?: string;
+  isCorrect: boolean;
 }
 
 export interface Test {
@@ -38,11 +50,14 @@ export interface Test {
   createdAt: Timestamp;
   topic?: MathTopic;
   autoGrade?: boolean;
+  courseId?: string;
+  studentId?: string;
 }
 
 export interface AssignedTest {
   id: string;
-  testId: string;
+  testId?: string;
+  courseId?: string;
   studentId: string;
   status: 'pending' | 'submitted' | 'graded';
   answers?: Record<string, string>;
@@ -52,8 +67,14 @@ export interface AssignedTest {
   dueDate?: Timestamp;
   submittedAt?: Timestamp;
   gradedAt?: Timestamp;
-  testTitle?: string; // Denormalized for convenience
-  topicPerformance?: Record<string, { correct: number, total: number }>;
+  testTitle?: string;
+  testDescription?: string;
+  topic?: MathTopic;
+  autoGrade?: boolean;
+  questions?: PublicQuestion[];
+  reviewQuestions?: ReviewQuestion[];
+  topicPerformance?: Record<string, { correct: number; total: number }>;
+  createdBy?: string;
 }
 
 export interface LearningSheet {
@@ -66,6 +87,7 @@ export interface LearningSheet {
   createdAt: Timestamp;
   fileUrl?: string;
   fileType?: string;
+  content?: string;
 }
 
 export interface PracticeCourse {
@@ -74,13 +96,17 @@ export interface PracticeCourse {
   description: string;
   topic: MathTopic | string;
   topics?: string[];
-  customTopics?: string[]; // deprecated/alternative, let's just use `topics`
-  difficulty: Difficulty;
+  customTopics?: string[];
+  difficulty: Difficulty | string;
   questionCount: number;
   color: string;
-  createdBy: string;
-  createdAt: Timestamp;
+  createdBy?: string;
+  createdAt?: Timestamp;
   isVisible?: boolean;
+  students?: number | string;
+  rating?: number;
+  icon?: ReactNode;
+  previewQuestion?: PublicQuestion;
 }
 
 export interface TodoItem {
@@ -88,10 +114,10 @@ export interface TodoItem {
   studentId: string;
   title: string;
   type: 'practice' | 'custom' | 'test' | 'material';
-  referenceId?: string; // ID of the test, course or sheet
+  referenceId?: string;
   completed: boolean;
   dueDate?: Timestamp;
   createdAt: Timestamp;
-  addedBy: string; // UID of the student or teacher
-  completedAt?: Timestamp;
+  addedBy: string;
+  completedAt?: Timestamp | null;
 }

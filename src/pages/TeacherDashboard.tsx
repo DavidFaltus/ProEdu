@@ -3,20 +3,22 @@ import { collection, query, getDocs, addDoc, Timestamp, where, onSnapshot, doc, 
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
-import { Test, UserProfile, AssignedTest, LearningSheet, MathTopic, Question, PracticeCourse } from '../types';
+import { Test, UserProfile, AssignedTest, LearningSheet, MathTopic, Question, PracticeCourse, PublicQuestion } from '../types';
+import { safeToDate } from '../lib/utils';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
-import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes } from 'lucide-react';
+import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes, Target } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '../components/ui/dialog';
 import { extractQuestionsFromTwoPDFs } from '../services/geminiService';
+import { assignPracticeCourseToStudent } from '../services/courseService';
 import TestImporter from '../components/TestImporter';
 import TodoManager from '../components/TodoManager';
 import { Clock } from 'lucide-react';
@@ -121,6 +123,91 @@ export default function TeacherDashboard() {
   const [customCourseTopic, setCustomCourseTopic] = useState('');
   const allTopics = Array.from(new Set([...MATH_TOPICS, ...dbCustomTopics]));
 
+  const buildPreviewQuestion = (question: Partial<Question> & { id?: string }): PublicQuestion | null => {
+    if (!question.id || !question.question || !question.options || !question.topic) {
+      return null;
+    }
+
+    return {
+      id: question.id,
+      question: question.question,
+      options: question.options,
+      topic: question.topic,
+      topics: question.topics,
+      explanation: question.explanation,
+      diagram: question.diagram,
+      courseId: question.courseId,
+      imageUrl: question.imageUrl,
+    };
+  };
+
+  const syncCoursePreview = async (courseId: string | undefined, question: Partial<Question> & { id?: string }) => {
+    if (!courseId || courseId === 'none') {
+      return;
+    }
+
+    const previewQuestion = buildPreviewQuestion(question);
+    if (!previewQuestion) {
+      return;
+    }
+
+    const course = practiceCourses.find((item) => item.id === courseId);
+    if (!course || (course.previewQuestion && course.previewQuestion.id !== previewQuestion.id)) {
+      return;
+    }
+
+    await updateDoc(doc(db, 'practiceCourses', courseId), {
+      previewQuestion,
+    });
+
+    setPracticeCourses((currentCourses) =>
+      currentCourses.map((item) => (item.id === courseId ? { ...item, previewQuestion } : item)),
+    );
+  };
+
+  const clearDeletedQuestionPreview = async (questionIds: string[]) => {
+    const affectedCourses = practiceCourses.filter((course) => course.previewQuestion && questionIds.includes(course.previewQuestion.id));
+
+    await Promise.all(
+      affectedCourses.map((course) =>
+        updateDoc(doc(db, 'practiceCourses', course.id), {
+          previewQuestion: null,
+        }),
+      ),
+    );
+
+    if (affectedCourses.length > 0) {
+      setPracticeCourses((currentCourses) =>
+        currentCourses.map((course) =>
+          course.previewQuestion && questionIds.includes(course.previewQuestion.id)
+            ? { ...course, previewQuestion: undefined }
+            : course,
+        ),
+      );
+    }
+  };
+
+  const uploadQuestionImage = async (imageFile?: File | null) => {
+    if (!imageFile) {
+      return '';
+    }
+
+    if (imageFile.size > 800 * 1024) {
+      throw new Error('Obrázek je příliš velký. Maximální velikost je 800KB.');
+    }
+
+    if (!profile?.uid) {
+      throw new Error('Chybí přihlášený učitel pro upload obrázku.');
+    }
+
+    const fileRef = ref(storage, `users/${profile.uid}/questions/${Date.now()}_${imageFile.name}`);
+    const snapshot = await uploadBytes(fileRef, imageFile, {
+      contentType: imageFile.type,
+    });
+
+    return getDownloadURL(snapshot.ref);
+  };
+
   const handleToggleTopic = (topic: string, mode: 'new' | 'edit' | 'pdf' = 'new') => {
     if (mode === 'edit') {
       const q = editingQuestion;
@@ -193,9 +280,10 @@ export default function TeacherDashboard() {
   }, [profile]);
 
   const handleBulkDeleteQuestions = async () => {
-    const idsToDelete = Array.from(selectedQuestionIds);
+    const idsToDelete = Array.from(selectedQuestionIds) as string[];
     try {
       await Promise.all(idsToDelete.map((id: string) => deleteDoc(doc(db, 'questions', id))));
+      await clearDeletedQuestionPreview(idsToDelete);
       // Optmistická aktualizace lokálního stavu — bez re-fetch
       setQuestions(prev => prev.filter(q => !selectedQuestionIds.has(q.id)));
       toast.success(`Smazáno ${idsToDelete.length} otázek`);
@@ -258,13 +346,15 @@ export default function TeacherDashboard() {
     if (!course) return;
 
     try {
-      await addDoc(collection(db, 'assignedTests'), {
-        testId: course.id,
+      await assignPracticeCourseToStudent({
         studentId: selectedStudent.uid,
-        testTitle: course.title,
-        status: 'pending',
-        assignedAt: Timestamp.now(),
-        dueDate: Timestamp.fromDate(new Date(newAssignment.dueDate))
+        courseId: course.id,
+        topic: course.topic,
+        title: course.title,
+        description: course.description,
+        topics: course.topics,
+        questionCount: course.questionCount,
+        dueDate: newAssignment.dueDate,
       });
       toast.success('Test byl úspěšně přiřazen studentovi');
       setIsAssigningTest(false);
@@ -283,16 +373,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      let imageUrl = newQuestion.imageUrl || '';
-      if (newQuestion.imageFile) {
-        if (newQuestion.imageFile.size > 800 * 1024) {
-          toast.error('Obrázek je příliš velký. Maximální velikost je 800KB.');
-          return;
-        }
-        const buffer = await newQuestion.imageFile.arrayBuffer();
-        const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-        imageUrl = `data:${newQuestion.imageFile.type};base64,${base64}`;
-      }
+      const imageUrl = newQuestion.imageFile ? await uploadQuestionImage(newQuestion.imageFile) : newQuestion.imageUrl || '';
 
       const questionData: any = {
         question: newQuestion.question,
@@ -308,8 +389,10 @@ export default function TeacherDashboard() {
       if (imageUrl) questionData.imageUrl = imageUrl;
 
       const docRef = await addDoc(collection(db, 'questions'), questionData);
+      const savedQuestion = { id: docRef.id, ...questionData } as Question;
       // Optmistická aktualizace lokálního stavu — bez re-fetch
-      setQuestions(prev => [...prev, { id: docRef.id, ...questionData }]);
+      setQuestions(prev => [...prev, savedQuestion]);
+      await syncCoursePreview(savedQuestion.courseId, savedQuestion);
       toast.success('Otázka byla úspěšně přidána');
       setIsAddingQuestion(false);
       setNewQuestion({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
@@ -326,16 +409,7 @@ export default function TeacherDashboard() {
     }
 
     try {
-      let imageUrl = editingQuestion.imageUrl || '';
-      if (editingQuestion.imageFile) {
-        if (editingQuestion.imageFile.size > 800 * 1024) {
-          toast.error('Obrázek je příliš velký. Maximální velikost je 800KB.');
-          return;
-        }
-        const buffer = await editingQuestion.imageFile.arrayBuffer();
-        const base64 = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-        imageUrl = `data:${editingQuestion.imageFile.type};base64,${base64}`;
-      }
+      const imageUrl = editingQuestion.imageFile ? await uploadQuestionImage(editingQuestion.imageFile) : editingQuestion.imageUrl || '';
 
       const questionData: any = {
         question: editingQuestion.question,
@@ -349,8 +423,10 @@ export default function TeacherDashboard() {
       if (imageUrl) questionData.imageUrl = imageUrl;
 
       await updateDoc(doc(db, 'questions', editingQuestion.id), questionData);
+      const updatedQuestion = { id: editingQuestion.id, ...questionData } as Question;
       // Optmistická aktualizace lokálního stavu — bez re-fetch
       setQuestions(prev => prev.map(q => q.id === editingQuestion.id ? { ...q, ...questionData } : q));
+      await syncCoursePreview(updatedQuestion.courseId, updatedQuestion);
       toast.success('Otázka byla úspěšně upravena');
       setIsEditingQuestion(false);
       setEditingQuestion({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
@@ -387,6 +463,7 @@ export default function TeacherDashboard() {
   const handleDeleteQuestion = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'questions', id));
+      await clearDeletedQuestionPreview([id]);
       // Optmistická aktualizace lokálního stavu — bez re-fetch
       setQuestions(prev => prev.filter(q => q.id !== id));
       toast.success('Otázka byla smazána');
@@ -528,6 +605,9 @@ export default function TeacherDashboard() {
       const savedQuestions = await Promise.all(savePromises);
       // Optmistická aktualizace lokálního stavu — bez re-fetch
       setQuestions(prev => [...prev, ...savedQuestions]);
+      if (savedQuestions.length > 0) {
+        await syncCoursePreview(savedQuestions[0].courseId, savedQuestions[0]);
+      }
 
       toast.success(`Úspěšně importováno ${extractedQuestions.length} otázek.`);
       setIsImportingPDF(false);
@@ -583,7 +663,7 @@ export default function TeacherDashboard() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <Button 
+          <Button
             onClick={() => setIsProfileSettingsOpen(true)}
             className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
           >
@@ -666,38 +746,38 @@ export default function TeacherDashboard() {
                         </span>
                       ))}
                     </div>
-                      <div className="flex gap-2 shrink-0 bg-white/60 backdrop-blur-md p-1 rounded-xl">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className={`h-8 w-8 rounded-lg ${course.isVisible === false ? 'text-gray-400 hover:text-gray-600' : 'text-brand-blue hover:text-blue-600'}`}
-                          onClick={(e) => { e.stopPropagation(); toggleCourseVisibility(course); }}
-                          title={course.isVisible === false ? 'Kurz je skrytý. Kliknutím zobrazíte.' : 'Kurz je viditelný. Kliknutím skryjete.'}
-                        >
-                          {course.isVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-lg text-brand-orange hover:text-orange-600"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setEditingCourse(course);
-                          }}
-                          title="Upravit kurz"
-                        >
-                          <Edit size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 rounded-lg text-red-500 hover:text-red-700"
-                          onClick={(e) => { e.stopPropagation(); handleDeleteCourse(course.id); }}
-                          title="Smazat kurz"
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
+                    <div className="flex gap-2 shrink-0 bg-white/60 backdrop-blur-md p-1 rounded-xl">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-8 w-8 rounded-lg ${course.isVisible === false ? 'text-gray-400 hover:text-gray-600' : 'text-brand-blue hover:text-blue-600'}`}
+                        onClick={(e) => { e.stopPropagation(); toggleCourseVisibility(course); }}
+                        title={course.isVisible === false ? 'Kurz je skrytý. Kliknutím zobrazíte.' : 'Kurz je viditelný. Kliknutím skryjete.'}
+                      >
+                        {course.isVisible === false ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-brand-orange hover:text-orange-600"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditingCourse(course);
+                        }}
+                        title="Upravit kurz"
+                      >
+                        <Edit size={16} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-red-500 hover:text-red-700"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteCourse(course.id); }}
+                        title="Smazat kurz"
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
                   </div>
                   <div className="mb-2">
                     <span className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
@@ -718,8 +798,8 @@ export default function TeacherDashboard() {
                       <span className="text-sm">Počet otázek:</span>
                     </div>
                     <span className="font-black text-xl text-brand-blue">
-                      {questions.filter(q => 
-                        q.courseId === course.id || 
+                      {questions.filter(q =>
+                        q.courseId === course.id ||
                         (q.topics && course.topics && q.topics.some(t => course.topics?.includes(t))) ||
                         (q.topic === course.topic)
                       ).length}
@@ -1088,8 +1168,8 @@ export default function TeacherDashboard() {
             <div className="max-w-6xl mx-auto space-y-6 w-full">
               {(() => {
                 const currentCourse = practiceCourses.find(c => c.id === viewingCourseId);
-                const filteredQuestions = questions.filter(q => 
-                  q.courseId === viewingCourseId || 
+                const filteredQuestions = questions.filter(q =>
+                  q.courseId === viewingCourseId ||
                   (currentCourse && (
                     (q.topics && currentCourse.topics && q.topics.some(t => currentCourse.topics?.includes(t))) ||
                     (q.topic === currentCourse.topic)
@@ -1504,69 +1584,67 @@ export default function TeacherDashboard() {
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-xl font-bold text-gray-900">Historie aktivit a výsledky</h3>
                 </div>
-                
+
                 <div className="space-y-4">
                   {assignedTests
                     .filter(at => at.studentId === selectedStudent?.uid)
                     .sort((a, b) => {
-                      const tA = a.assignedAt?.toMillis ? a.assignedAt.toMillis() : 0;
-                      const tB = b.assignedAt?.toMillis ? b.assignedAt.toMillis() : 0;
+                      const tA = safeToDate(a.assignedAt)?.getTime() || 0;
+                      const tB = safeToDate(b.assignedAt)?.getTime() || 0;
                       return tB - tA;
                     })
                     .map(at => (
-                    <Card key={at.id} className="rounded-2xl border-none shadow-sm bg-white overflow-hidden group hover:shadow-md transition-all">
-                      <div className="p-6 flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                            at.status === 'graded' ? 'bg-green-50 text-green-600' : 
-                            at.status === 'submitted' ? 'bg-orange-50 text-brand-orange' : 'bg-blue-50 text-brand-blue'
-                          }`}>
-                            <FileText size={24} />
-                          </div>
-                          <div>
-                            <h4 className="font-bold text-lg text-gray-900">{at.testTitle}</h4>
-                            <div className="flex items-center gap-3 text-sm text-gray-500">
-                              <span className="flex items-center gap-1">
-                                <Clock size={14} />
-                                {at.assignedAt.toDate().toLocaleDateString('cs-CZ')}
-                              </span>
-                              {at.dueDate && (
-                                <span className={`flex items-center gap-1 font-medium ${
-                                  at.status === 'pending' && at.dueDate.toDate() < new Date() ? 'text-red-500' : ''
-                                }`}>
-                                  <Target size={14} />
-                                  Termín: {at.dueDate.toDate().toLocaleDateString('cs-CZ')}
+                      <Card key={at.id} className="rounded-2xl border-none shadow-sm bg-white overflow-hidden group hover:shadow-md transition-all">
+                        <div className="p-6 flex items-center justify-between">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${at.status === 'graded' ? 'bg-green-50 text-green-600' :
+                                at.status === 'submitted' ? 'bg-orange-50 text-brand-orange' : 'bg-blue-50 text-brand-blue'
+                              }`}>
+                              <FileText size={24} />
+                            </div>
+                            <div>
+                              <h4 className="font-bold text-lg text-gray-900">{at.testTitle}</h4>
+                              <div className="flex items-center gap-3 text-sm text-gray-500">
+                                <span className="flex items-center gap-1">
+                                  <Clock size={14} />
+                                  {safeToDate(at.assignedAt)?.toLocaleDateString('cs-CZ')}
                                 </span>
-                              )}
+                                {at.dueDate && (
+                                  <span className={`flex items-center gap-1 font-medium ${at.status === 'pending' && safeToDate(at.dueDate) && safeToDate(at.dueDate)! < new Date() ? 'text-red-500' : ''
+                                    }`}>
+                                    <Target size={14} />
+                                    Termín: {safeToDate(at.dueDate)?.toLocaleDateString('cs-CZ') || 'Bez termínu'}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          {at.status === 'pending' && (
-                            <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-black uppercase tracking-wider">
-                              Rozpracováno
-                            </span>
-                          )}
-                          {at.status === 'submitted' && (
-                            <span className="px-3 py-1 bg-orange-50 text-brand-orange rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
-                              K opravě
-                            </span>
-                          )}
-                          {at.status === 'graded' && (
-                            <div className="flex items-center gap-3">
-                              <div className="text-right">
-                                <div className="text-2xl font-black text-brand-blue leading-none">{at.grade}</div>
-                                <div className="text-[10px] uppercase font-bold text-gray-400 tracking-tighter">Známka</div>
+                          <div className="flex items-center gap-4">
+                            {at.status === 'pending' && (
+                              <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-black uppercase tracking-wider">
+                                Rozpracováno
+                              </span>
+                            )}
+                            {at.status === 'submitted' && (
+                              <span className="px-3 py-1 bg-orange-50 text-brand-orange rounded-full text-xs font-black uppercase tracking-wider animate-pulse">
+                                K opravě
+                              </span>
+                            )}
+                            {at.status === 'graded' && (
+                              <div className="flex items-center gap-3">
+                                <div className="text-right">
+                                  <div className="text-2xl font-black text-brand-blue leading-none">{at.grade}</div>
+                                  <div className="text-[10px] uppercase font-bold text-gray-400 tracking-tighter">Známka</div>
+                                </div>
+                                <Button variant="ghost" size="icon" className="rounded-full hover:bg-blue-50 text-brand-blue" onClick={() => navigate(`/test-review/${at.id}`)}>
+                                  <ArrowRight size={18} />
+                                </Button>
                               </div>
-                              <Button variant="ghost" size="icon" className="rounded-full hover:bg-blue-50 text-brand-blue" onClick={() => navigate(`/test-review/${at.id}`)}>
-                                <ArrowRight size={18} />
-                              </Button>
-                            </div>
-                          )}
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    </Card>
-                  ))}
+                      </Card>
+                    ))}
                   {assignedTests.filter(at => at.studentId === selectedStudent?.uid).length === 0 && (
                     <div className="text-center py-16 bg-white/50 rounded-[2rem] border-2 border-dashed border-gray-200">
                       <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center text-gray-400 mx-auto mb-4">
@@ -1614,11 +1692,11 @@ export default function TeacherDashboard() {
                       />
                     </div>
                     <div className="pt-4">
-                      <Button 
+                      <Button
                         onClick={async () => {
                           await handleAssignTest();
                           // Switch to history tab after success
-                        }} 
+                        }}
                         className="btn-orange w-full rounded-2xl h-16 text-lg font-black shadow-xl shadow-orange-100"
                       >
                         Potvrdit a přiřadit žákovi

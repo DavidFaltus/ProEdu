@@ -1,7 +1,7 @@
 import * as React from "react"
 import { cn } from "../../lib/utils"
 
-interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
+type BadgeProps = React.ComponentProps<'div'> & {
   variant?: 'default' | 'secondary' | 'destructive' | 'outline'
 }
 
