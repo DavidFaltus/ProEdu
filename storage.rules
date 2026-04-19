@@ -29,6 +29,14 @@ service firebase.storage {
                    && request.resource.size < 1 * 1024 * 1024
                    && request.resource.contentType.matches('image/.*');
     }
+
+    // Složka pro odevzdání testů
+    match /testSubmissions/{userId}/{allPaths=**} {
+      allow read: if isAuthenticated() && isOwner(userId);
+      allow write: if isAuthenticated() && isOwner(userId)
+                   && request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|application/pdf');
+    }
     
     // Zákaz všeho ostatního (Rule 16: Least Privilege)
     match /{allPaths=**} {

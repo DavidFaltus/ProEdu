@@ -100,6 +100,8 @@ export default function TeacherDashboard() {
   const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [isTodoViewOpen, setIsTodoViewOpen] = useState(false);
   const [viewingStudentForTodo, setViewingStudentForTodo] = useState<UserProfile | null>(null);
+  const [isAddingManualTest, setIsAddingManualTest] = useState(false);
+  const [newManualTest, setNewManualTest] = useState<Partial<Test>>({ title: '', testDescription: '', questions: [], topic: 'Matematika' });
 
   useEffect(() => {
     if (selectedSheetForView?.fileUrl && selectedSheetForView.fileUrl.startsWith('data:')) {
@@ -367,26 +369,66 @@ export default function TeacherDashboard() {
       return;
     }
 
-    const course = practiceCourses.find(c => c.id === newAssignment.courseId);
-    if (!course) return;
+    const [type, id] = newAssignment.courseId.split(':');
+    
+    if (type === 'practice') {
+      const course = practiceCourses.find(c => c.id === id);
+      if (!course) return;
 
-    try {
-      await assignPracticeCourseToStudent({
-        studentId: selectedStudent.uid,
-        courseId: course.id,
-        topic: course.topic,
-        title: course.title,
-        description: course.description,
-        topics: course.topics,
-        questionCount: course.questionCount,
-        dueDate: newAssignment.dueDate,
-      });
-      toast.success('Test byl úspěšně přiřazen studentovi');
-      setIsAssigningTest(false);
-      setNewAssignment({ courseId: '', dueDate: '' });
-    } catch (error) {
-      console.error(error);
-      toast.error('Chyba při přiřazování testu');
+      try {
+        await assignPracticeCourseToStudent({
+          studentId: selectedStudent.uid,
+          courseId: course.id,
+          topic: course.topic,
+          title: course.title,
+          description: course.description,
+          topics: course.topics,
+          questionCount: course.questionCount,
+          dueDate: newAssignment.dueDate,
+        });
+        toast.success('Procvičování bylo úspěšně přiřazeno studentovi');
+        setIsAssigningTest(false);
+        setNewAssignment({ courseId: '', dueDate: '' });
+      } catch (error) {
+        console.error(error);
+        toast.error('Chyba při přiřazování procvičování');
+      }
+    } else if (type === 'test') {
+      const test = tests.find(t => t.id === id);
+      if (!test) return;
+
+      try {
+        await addDoc(collection(db, 'assignedTests'), {
+          testId: test.id,
+          studentId: selectedStudent.uid,
+          status: 'pending',
+          assignedAt: serverTimestamp(),
+          dueDate: Timestamp.fromDate(new Date(newAssignment.dueDate)),
+          testTitle: test.title,
+          testDescription: test.description,
+          topic: test.topic || 'Obecné',
+          isManual: true,
+          createdBy: profile?.uid
+        });
+
+        // Also add to todos
+        await addDoc(collection(db, 'todos'), {
+          studentId: selectedStudent.uid,
+          title: `Test: ${test.title}`,
+          type: 'test',
+          completed: false,
+          dueDate: Timestamp.fromDate(new Date(newAssignment.dueDate)),
+          createdAt: serverTimestamp(),
+          addedBy: profile?.uid
+        });
+
+        toast.success('Manuální test byl úspěšně přiřazen studentovi');
+        setIsAssigningTest(false);
+        setNewAssignment({ courseId: '', dueDate: '' });
+      } catch (error) {
+        console.error(error);
+        toast.error('Chyba při přiřazování testu');
+      }
     }
   };
 
@@ -833,6 +875,12 @@ export default function TeacherDashboard() {
               <Users size={20} />
             </div>
             Správa studentů
+          </TabsTrigger>
+          <TabsTrigger value="tests" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-rose-600 data-[state=active]:shadow-lg font-bold transition-all gap-2 text-base">
+            <div className="w-10 h-10 rounded-xl bg-rose-50 flex items-center justify-center text-rose-600">
+              <Sparkles size={20} />
+            </div>
+            Testy
           </TabsTrigger>
         </TabsList>
 
@@ -1344,6 +1392,215 @@ export default function TeacherDashboard() {
           </Dialog>
         </TabsContent>
 
+        <TabsContent value="tests" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
+            <div>
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500 flex items-center justify-center text-white shadow-lg shadow-rose-100">
+                  <Sparkles size={24} />
+                </div>
+                <h2 className="text-3xl font-display font-bold text-rose-600">Podrobné testy a odevzdávání</h2>
+              </div>
+              <p className="text-gray-500 text-lg">Vytvářejte testy pro ruční odevzdávání s textovými odpověďmi nebo soubory.</p>
+            </div>
+            <div className="flex gap-3">
+              <Button onClick={() => setIsAddingManualTest(true)} className="bg-rose-500 hover:bg-rose-600 text-white rounded-[1.25rem] px-8 h-14 font-bold shadow-xl shadow-rose-100">
+                <Plus size={20} className="mr-2" /> Nový manuální test
+              </Button>
+            </div>
+          </div>
+
+          <Dialog open={isAddingManualTest} onOpenChange={setIsAddingManualTest}>
+            <DialogContent className="sm:max-w-[700px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
+              <div className="p-8 pb-6 border-b border-gray-100 bg-rose-50/30">
+                <DialogTitle className="text-3xl font-display font-black text-rose-600 flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
+                    <Sparkles size={24} className="text-rose-600" />
+                  </div>
+                  Nový manuální test
+                </DialogTitle>
+                <DialogDescription className="text-lg font-bold text-gray-500 mt-2">Vytvořte test, který budou studenti odevzdávat ručně.</DialogDescription>
+              </div>
+
+              <div className="p-8 space-y-6 bg-white max-h-[70vh] overflow-y-auto">
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Název testu</Label>
+                    <Input 
+                      value={newManualTest.title}
+                      onChange={(e) => setNewManualTest({ ...newManualTest, title: e.target.value })}
+                      placeholder="Např. Pololetní práce z ČJ"
+                      className="h-14 rounded-2xl border-gray-100 px-6 font-bold"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Instrukce pro studenty</Label>
+                    <Textarea 
+                      value={newManualTest.testDescription}
+                      onChange={(e) => setNewManualTest({ ...newManualTest, testDescription: e.target.value })}
+                      placeholder="Co mají studenti v testu udělat?"
+                      className="rounded-2xl border-gray-100 p-6 min-h-[100px]"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Předmět</Label>
+                      <Select value={newManualTest.topic} onValueChange={(val) => setNewManualTest({ ...newManualTest, topic: val })}>
+                        <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6 font-bold">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {SUBJECTS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 pt-4">
+                    <div className="flex justify-between items-center">
+                      <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Otázky / Úkoly ({newManualTest.questions?.length})</Label>
+                      <Button 
+                        type="button" 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setNewManualTest({ 
+                          ...newManualTest, 
+                          questions: [...(newManualTest.questions || []), { question: '', options: [], correctAnswer: '', type: 'text' }] 
+                        })}
+                        className="rounded-xl border-2 border-rose-100 text-rose-600 font-bold hover:bg-rose-50"
+                      >
+                        <Plus size={16} className="mr-2" /> Přidat úkol
+                      </Button>
+                    </div>
+
+                    <div className="space-y-3">
+                      {(newManualTest.questions || []).map((q, idx) => (
+                        <div key={idx} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 relative group">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => {
+                              const qs = [...(newManualTest.questions || [])];
+                              qs.splice(idx, 1);
+                              setNewManualTest({ ...newManualTest, questions: qs });
+                            }}
+                            className="absolute -top-2 -right-2 h-8 w-8 bg-white shadow-md rounded-full text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Trash2 size={14} />
+                          </Button>
+                          <Label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Úkol č. {idx + 1}</Label>
+                          <Textarea 
+                            value={q.question}
+                            onChange={(e) => {
+                              const qs = [...(newManualTest.questions || [])];
+                              qs[idx] = { ...qs[idx], question: e.target.value };
+                              setNewManualTest({ ...newManualTest, questions: qs });
+                            }}
+                            placeholder="Zadejte zadání úkolu..."
+                            className="bg-white rounded-xl border-gray-100 min-h-[60px]"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 bg-gray-50 border-t border-gray-100 flex gap-3">
+                <Button variant="ghost" onClick={() => setIsAddingManualTest(false)} className="h-14 rounded-2xl font-bold flex-1">
+                  Zrušit
+                </Button>
+                <Button 
+                  onClick={async () => {
+                    if (!newManualTest.title || !newManualTest.questions?.length) {
+                      toast.error('Vyplňte prosím název a alespoň jeden úkol.');
+                      return;
+                    }
+                    try {
+                      const testData = {
+                        ...newManualTest,
+                        isManual: true,
+                        createdBy: profile?.uid,
+                        createdAt: Timestamp.now()
+                      };
+                      const docRef = await addDoc(collection(db, 'tests'), testData);
+                      setTests(prev => [...prev, { id: docRef.id, ...testData } as Test]);
+                      toast.success('Manuální test byl vytvořen');
+                      setIsAddingManualTest(false);
+                      setNewManualTest({ title: '', testDescription: '', questions: [], topic: 'Matematika' });
+                    } catch (err) {
+                      toast.error('Chyba při ukládání testu');
+                    }
+                  }}
+                  className="bg-rose-500 hover:bg-rose-600 text-white h-14 rounded-2xl font-black shadow-xl shadow-rose-100 flex-[2]"
+                >
+                  Vytvořit test
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <Card className="rounded-[2.5rem] border-none shadow-xl bg-white overflow-hidden p-8">
+              <h3 className="text-xl font-display font-black text-gray-900 mb-6 flex items-center gap-2">
+                <Clock className="text-brand-orange" size={20} /> K opravě
+              </h3>
+              <div className="space-y-4">
+                {assignedTests.filter(at => at.status === 'submitted').length === 0 ? (
+                  <p className="text-gray-400 italic text-sm">Žádné nové odevzdané práce.</p>
+                ) : (
+                  assignedTests.filter(at => at.status === 'submitted').map(at => (
+                    <div key={at.id} className="p-4 bg-orange-50/50 rounded-2xl border border-orange-100 flex items-center justify-between">
+                      <div>
+                        <p className="font-black text-gray-900">{students.find(s => s.uid === at.studentId)?.name || 'Neznámý student'}</p>
+                        <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">{at.title}</p>
+                      </div>
+                      <Button 
+                        size="sm" 
+                        onClick={() => navigate(`/grading/${at.id}`)}
+                        className="bg-brand-orange hover:bg-orange-600 text-white rounded-xl font-bold"
+                      >
+                        Opravit
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </Card>
+
+            <Card className="md:col-span-1 lg:col-span-2 rounded-[2.5rem] border-none shadow-xl bg-white overflow-hidden p-8">
+              <h3 className="text-xl font-display font-black text-gray-900 mb-6">Seznam manuálních testů</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {tests.filter(t => t.isManual).map(test => (
+                  <div key={test.id} className="p-5 bg-gray-50 rounded-2xl border border-gray-100 group">
+                    <div className="flex justify-between items-start mb-2">
+                      <h4 className="font-black text-lg text-gray-900">{test.title}</h4>
+                      <Button 
+                        variant="ghost" 
+                        size="sm" 
+                        onClick={() => handleDeleteTest(test.id)}
+                        className="text-gray-400 hover:text-red-500 rounded-lg"
+                      >
+                        <Trash2 size={18} />
+                      </Button>
+                    </div>
+                    <p className="text-sm text-gray-500 line-clamp-2 mb-4">{test.testDescription}</p>
+                    <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-gray-100">
+                      <span className="text-xs font-black text-gray-400 uppercase tracking-widest">{test.topic || 'Obecné'}</span>
+                      <span className="text-brand-blue font-black">{test.questions?.length || 0} otázek</span>
+                    </div>
+                  </div>
+                ))}
+                {tests.filter(t => t.isManual).length === 0 && (
+                  <div className="col-span-full py-12 text-center border-2 border-dashed border-gray-100 rounded-3xl">
+                    <Sparkles className="mx-auto text-gray-200 mb-4" size={40} />
+                    <p className="text-gray-400 font-bold">Zatím jste nevytvořili žádný manuální test.</p>
+                  </div>
+                )}
+              </div>
+            </Card>
+          </div>
+        </TabsContent>
         <TabsContent value="students" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
             <div>
@@ -2045,12 +2302,26 @@ export default function TeacherDashboard() {
                       <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Výběr procvičování</Label>
                       <Select value={newAssignment.courseId} onValueChange={(val: string) => setNewAssignment({ ...newAssignment, courseId: val })}>
                         <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6 bg-gray-50/50">
-                          <SelectValue placeholder="Vyberte téma procvičování..." />
+                          <SelectValue placeholder="Vyberte procvičování nebo test..." />
                         </SelectTrigger>
                         <SelectContent className="rounded-2xl">
+                          <div className="px-2 py-1.5 text-[10px] font-black uppercase text-gray-400 tracking-widest">Automatická procvičování</div>
                           {practiceCourses.map(course => (
-                            <SelectItem key={course.id} value={course.id || ''} className="rounded-xl">{course.title}</SelectItem>
+                            <SelectItem key={course.id} value={`practice:${course.id}`} className="rounded-xl">
+                              {course.title}
+                            </SelectItem>
                           ))}
+                          <div className="h-px bg-gray-100 my-2" />
+                          <div className="px-2 py-1.5 text-[10px] font-black uppercase text-gray-400 tracking-widest">Manuální testy</div>
+                          {tests.filter(t => t.isManual && t.createdBy === profile?.uid).length === 0 ? (
+                            <div className="px-4 py-2 text-sm text-gray-500 italic">Žádné vlastní testy</div>
+                          ) : (
+                            tests.filter(t => t.isManual && t.createdBy === profile?.uid).map(test => (
+                              <SelectItem key={test.id} value={`test:${test.id}`} className="rounded-xl">
+                                {test.title}
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
                     </div>

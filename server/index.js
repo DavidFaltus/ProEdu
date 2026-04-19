@@ -18,7 +18,7 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('--- FATAL UNHANDLED REJECTION ---', reason);
 });
 
-const PORT = Number(process.env.NODE_ENV === 'production' ? 3000 : (process.env.PORT || 3006));
+const PORT = Number(process.env.NODE_ENV === 'production' ? 3000 : (process.env.PORT || 3005));
 const ADMIN_FALLBACK_EMAIL = 'davidfaltus03@gmail.com';
 
 const GEOMETRY_FALLBACK = [
