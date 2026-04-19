@@ -14,7 +14,8 @@ service cloud.firestore {
       return isAuthenticated() &&
         (
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
-          request.auth.token.email == "davidfaltus03@gmail.com"
+          request.auth.token.email == "davidfaltus03@gmail.com" ||
+          request.auth.token.email == "ucitel@ucitel.cz"
         );
     }
 

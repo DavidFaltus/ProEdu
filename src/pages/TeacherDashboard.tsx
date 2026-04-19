@@ -1058,16 +1058,19 @@ export default function TeacherDashboard() {
                       <Clock size={16} />
                       TODO List
                     </Button>
+                    <Button 
+                      onClick={() => {
+                        setSelectedStudent(student);
+                        setIsAssigningTest(true);
+                      }}
+                      className="h-14 rounded-2xl gap-2 btn-orange shadow-lg shadow-orange-100 font-black"
+                    >
+                      Přiřadit test
+                    </Button>
                     <Dialog open={isAssigningTest && selectedStudent?.uid === student.uid} onOpenChange={(open) => {
                       setIsAssigningTest(open);
-                      if (open) setSelectedStudent(student);
-                      else setSelectedStudent(null);
+                      if (!open) setSelectedStudent(null);
                     }}>
-                      <DialogTrigger asChild>
-                        <Button className="h-14 rounded-2xl gap-2 btn-orange shadow-lg shadow-orange-100 font-black">
-                          Přiřadit test
-                        </Button>
-                      </DialogTrigger>
                       <DialogContent className="rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
                         <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30">
                           <DialogTitle className="text-3xl font-display font-black text-brand-orange">Přiřadit test</DialogTitle>

@@ -172,7 +172,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
   const startEdit = (todo: TodoItem) => {
     setEditTodo({
       title: todo.title,
-      dueDate: todo.dueDate ? format(todo.dueDate.toDate(), 'yyyy-MM-dd') : ''
+      dueDate: todo.dueDate ? format(todo.dueDate.toDate(), "yyyy-MM-dd'T'HH:mm") : ''
     });
     setCurrentEditId(todo.id);
     setIsEditing(true);
@@ -326,7 +326,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
               <Label className="font-bold text-gray-700">Termín (volitelné)</Label>
               <div className="relative">
                 <Input
-                  type="date"
+                  type="datetime-local"
                   value={editTodo.dueDate}
                   onChange={e => setEditTodo({ ...editTodo, dueDate: e.target.value })}
                   className="rounded-xl h-12 border-gray-100 bg-gray-50/50 pl-10"
@@ -349,13 +349,14 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
           {isTeacherView ? 'TODO list studenta' : 'Můj TODO list'}
         </h3>
 
+        <Button 
+          onClick={() => setIsAdding(true)}
+          className="rounded-2xl bg-brand-blue hover:bg-brand-blue/90 text-white font-bold h-12 px-6 flex items-center gap-2 shadow-lg active:scale-95 transition-all"
+        >
+          <Plus size={20} />
+          <span>Přidat úkol</span>
+        </Button>
         <Dialog open={isAdding} onOpenChange={setIsAdding}>
-          <DialogTrigger asChild>
-            <Button className="rounded-2xl bg-brand-blue hover:bg-brand-blue/90 text-white font-bold h-12 px-6 flex items-center gap-2 shadow-lg active:scale-95 transition-all">
-              <Plus size={20} />
-              <span>Přidat úkol</span>
-            </Button>
-          </DialogTrigger>
           <DialogContent className="rounded-[2.5rem] p-8 border-none shadow-2xl max-w-md">
             <DialogHeader>
               <DialogTitle className="text-2xl font-display font-bold text-brand-blue">Přidat novou aktivitu</DialogTitle>
@@ -406,7 +407,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
                 <Label className="font-bold text-gray-700">Termín (volitelné)</Label>
                 <div className="relative">
                   <Input
-                    type="date"
+                    type="datetime-local"
                     value={newTodo.dueDate}
                     onChange={e => setNewTodo({ ...newTodo, dueDate: e.target.value })}
                     className="rounded-xl h-12 border-gray-100 bg-gray-50/50 pl-10"
@@ -464,7 +465,7 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
                       {todo.dueDate && (
                         <span className={`text-sm flex items-center gap-1.5 font-medium ${new Date(todo.dueDate.toDate()) < new Date() && !todo.completed ? 'text-red-500' : 'text-gray-500'}`}>
                           <CalendarIcon size={14} />
-                          {format(todo.dueDate.toDate(), 'd. MMMM', { locale: cs })}
+                          {format(todo.dueDate.toDate(), 'd. MMMM HH:mm', { locale: cs })}
                         </span>
                       )}
                       <span className="text-xs text-gray-300 flex items-center gap-1">

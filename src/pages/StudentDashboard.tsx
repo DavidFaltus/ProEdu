@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import TodoManager from '../components/TodoManager';
 import QuickCalendar from '../components/QuickCalendar';
+import { CountdownTimer } from '../components/CountdownTimer';
 
 export default function StudentDashboard() {
   const { user, profile, setIsProfileSettingsOpen } = useAuth();
@@ -83,8 +84,8 @@ export default function StudentDashboard() {
 
   return (
     <div className="page-container">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="flex items-center gap-6">
+      <header className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
+        <div className="flex items-center gap-6 shrink-0">
           <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-white shadow-xl flex items-center justify-center overflow-hidden border-4 border-white">
             {profile?.photoURL ? (
               <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
@@ -252,6 +253,7 @@ export default function StudentDashboard() {
               </div>
             </div>
             <div className="space-y-8">
+              <CountdownTimer todos={todos} compact />
               <QuickCalendar todos={todos} />
 
               <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
