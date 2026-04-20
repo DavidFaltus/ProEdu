@@ -11,3 +11,5 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 export const auth = getAuth(app);
 // Explicitly pass the bucket to ensure it's correctly targeted
 export const storage = getStorage(app, `gs://${firebaseConfig.storageBucket}`);
+// Nakofigurujeme Firebase tak, aby na Storage limit narážel ihned a spustil Base64 zálohu
+storage.maxUploadRetryTime = 3000;

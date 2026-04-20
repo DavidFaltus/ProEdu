@@ -22,6 +22,7 @@ export default function StudentDashboard() {
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isAddingTodo, setIsAddingTodo] = useState<string | null>(null);
 
@@ -78,6 +79,60 @@ export default function StudentDashboard() {
       unsubTodos();
     };
   }, [profile]);
+
+  useEffect(() => {
+    if (!selectedSheet?.fileUrl) {
+      setPdfBlobUrl(null);
+      return;
+    }
+
+    let currentUrl = selectedSheet.fileUrl;
+    let revokeUrl: string | null = null;
+
+    const loadPdf = async () => {
+      if (currentUrl.startsWith('data:')) {
+        try {
+          const dataURI = currentUrl;
+          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+          const byteString = atob(dataURI.split(',')[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([ab], { type: mimeString });
+          const url = URL.createObjectURL(blob);
+          revokeUrl = url;
+          setPdfBlobUrl(url);
+        } catch (e) {
+          console.error('Failed to create blob from data URI', e);
+          setPdfBlobUrl(null);
+        }
+      } else {
+        // Try fetching to create a blob URL
+        try {
+          const response = await fetch(currentUrl, { mode: 'cors' });
+          if (response.ok) {
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            revokeUrl = url;
+            setPdfBlobUrl(url);
+          } else {
+            setPdfBlobUrl(currentUrl); // Fallback to raw URL
+          }
+        } catch (e) {
+          console.warn('CORS fetch failed, falling back to raw URL', e);
+          setPdfBlobUrl(currentUrl);
+        }
+      }
+    };
+
+    loadPdf();
+
+    return () => {
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [selectedSheet]);
 
   const pendingTests = assignedTests.filter(t => t.status === 'pending');
   const completedTests = assignedTests.filter(t => t.status !== 'pending');
@@ -435,21 +490,47 @@ export default function StudentDashboard() {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
-                {selectedSheet.fileUrl ? (
-                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
+                <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
+                  {pdfBlobUrl ? (
                     <iframe
-                      src={selectedSheet.fileUrl}
+                      key={pdfBlobUrl}
+                      src={pdfBlobUrl}
                       className="w-full h-full border-none"
                       title={selectedSheet.title}
                     />
-                  </div>
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center">
-                    <FileText size={48} className="text-gray-300 mb-4" />
-                    <p className="text-gray-500 font-bold mb-6">K tomuto materiálu nebyl přiložen žádný soubor.</p>
-                  </div>
-                )}
+                  ) : (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
+                      <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
+                        <FileText size={48} />
+                      </div>
+                      <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
+                      <p className="text-gray-500 max-w-sm mb-10 font-medium pb-2">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej otevřít v novém panelu nebo stáhnout.</p>
+                      
+                      <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
+                        <Button 
+                          variant="default"
+                          className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
+                          onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
+                        >
+                          <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
+                        </Button>
+                        <Button 
+                          variant="outline"
+                          className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
+                          onClick={() => {
+                            const a = document.createElement('a');
+                            a.href = selectedSheet.fileUrl || '';
+                            a.download = `${selectedSheet.title || 'material'}.pdf`;
+                            a.click();
+                          }}
+                        >
+                          <Download size={22} /> Stáhnout PDF
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

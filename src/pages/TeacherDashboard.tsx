@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '../components/ui/dialog';
 import { extractQuestionsFromTwoPDFs } from '../services/geminiService';
 import { assignPracticeCourseToStudent } from '../services/courseService';
+import { uploadFileWithProgress } from '../lib/uploadHelper';
 import TestImporter from '../components/TestImporter';
 import TodoManager from '../components/TodoManager';
 import { Clock } from 'lucide-react';
@@ -103,6 +104,7 @@ export default function TeacherDashboard() {
   };
   const [isAddingTest, setIsAddingTest] = useState(false);
   const [isAddingSheet, setIsAddingSheet] = useState(false);
+  const [uploadMaterialProgress, setUploadMaterialProgress] = useState<number>(0);
   const [isAddingQuestion, setIsAddingQuestion] = useState(false);
   const [isImportingPDF, setIsImportingPDF] = useState(false);
   const [isAddingCourse, setIsAddingCourse] = useState(false);
@@ -139,29 +141,57 @@ export default function TeacherDashboard() {
   const [viewingStudentForTodo, setViewingStudentForTodo] = useState<UserProfile | null>(null);
 
   useEffect(() => {
-    if (selectedSheetForView?.fileUrl && selectedSheetForView.fileUrl.startsWith('data:')) {
-      try {
-        const dataURI = selectedSheetForView.fileUrl;
-        const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-        const byteString = atob(dataURI.split(',')[1]);
-        const ab = new ArrayBuffer(byteString.length);
-        const ia = new Uint8Array(ab);
-        for (let i = 0; i < byteString.length; i++) {
-          ia[i] = byteString.charCodeAt(i);
-        }
-        const blob = new Blob([ab], { type: mimeString });
-        const url = URL.createObjectURL(blob);
-        setPdfBlobUrl(url);
-        return () => URL.revokeObjectURL(url);
-      } catch (e) {
-        console.error('Failed to create blob from data URI', e);
-        setPdfBlobUrl(selectedSheetForView.fileUrl);
-      }
-    } else if (selectedSheetForView?.fileUrl) {
-      setPdfBlobUrl(selectedSheetForView.fileUrl);
-    } else {
+    if (!selectedSheetForView?.fileUrl) {
       setPdfBlobUrl(null);
+      return;
     }
+
+    let currentUrl = selectedSheetForView.fileUrl;
+    let revokeUrl: string | null = null;
+
+    const loadPdf = async () => {
+      if (currentUrl.startsWith('data:')) {
+        try {
+          const dataURI = currentUrl;
+          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+          const byteString = atob(dataURI.split(',')[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([ab], { type: mimeString });
+          const url = URL.createObjectURL(blob);
+          revokeUrl = url;
+          setPdfBlobUrl(url);
+        } catch (e) {
+          console.error('Failed to create blob from data URI', e);
+          setPdfBlobUrl(null); // Force failsafe UI
+        }
+      } else {
+        // Try fetching to create a blob URL
+        try {
+          const response = await fetch(currentUrl, { mode: 'cors' });
+          if (response.ok) {
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            revokeUrl = url;
+            setPdfBlobUrl(url);
+          } else {
+            setPdfBlobUrl(currentUrl); // Fallback to raw URL
+          }
+        } catch (e) {
+          console.warn('CORS fetch failed, falling back to raw URL', e);
+          setPdfBlobUrl(currentUrl);
+        }
+      }
+    };
+
+    loadPdf();
+
+    return () => {
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
   }, [selectedSheetForView]);
 
   // Form states
@@ -796,31 +826,21 @@ export default function TeacherDashboard() {
         console.log('--- STARTING CLIENT-SIDE UPLOAD ---');
         
         try {
-          const storageRef = ref(storage, storagePath);
-          const uploadTask = uploadBytesResumable(storageRef, newSheet.file);
-
-          fileUrl = await new Promise<string>((resolve, reject) => {
-            uploadTask.on(
-              'state_changed',
-              (snapshot) => {
-                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                console.log(`Upload progress: ${progress.toFixed(2)}%`);
-              },
-              (error) => {
-                console.error('Upload error detail:', error);
-                reject(error);
-              },
-              async () => {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                resolve(downloadURL);
-              }
-            );
-          });
+          fileUrl = await uploadFileWithProgress(
+            newSheet.file,
+            storagePath,
+            (progress) => {
+              setUploadMaterialProgress(progress);
+            }
+          );
 
           console.log('--- CLIENT-SIDE UPLOAD SUCCESS ---', fileUrl);
         } catch (uploadErr: any) {
           console.error('--- CLIENT-SIDE UPLOAD FAILED ---', uploadErr);
-          throw uploadErr;
+          toast.dismiss(loadingToastId);
+          toast.error(`Chyba při nahrávání: ${uploadErr.message}`);
+          setIsUploadingSheet(false);
+          return;
         }
       }
 
@@ -2493,6 +2513,14 @@ export default function TeacherDashboard() {
                 </div>
 
                 <div className="flex items-center gap-3">
+                  <Button 
+                    variant="outline" 
+                    className="h-10 rounded-xl font-bold bg-blue-50 text-brand-blue border-blue-100 hover:bg-blue-100" 
+                    onClick={() => window.open(selectedSheetForView.fileUrl, '_blank')}
+                  >
+                    <ArrowRight size={18} className="mr-2 rotate-[-45deg]" />
+                    Otevřít v panelu
+                  </Button>
                   <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
                     const a = document.createElement('a');
                     a.href = selectedSheetForView.fileUrl || '';
@@ -2512,17 +2540,45 @@ export default function TeacherDashboard() {
                 </div>
               </div>
 
-              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4">
+              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
                 {selectedSheetForView.fileUrl ? (
-                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
                     {pdfBlobUrl ? (
                       <iframe
+                        key={pdfBlobUrl}
                         src={pdfBlobUrl}
                         className="w-full h-full border-none"
+                        title={selectedSheetForView.title}
                       />
                     ) : (
-                      <div className="w-full h-full flex items-center justify-center">
-                        <div className="animate-spin w-8 h-8 rounded-full border-4 border-brand-purple border-t-transparent" />
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
+                        <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
+                          <FileText size={48} />
+                        </div>
+                        <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
+                        <p className="text-gray-500 max-w-sm mb-10 font-medium">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej však otevřít v novém panelu nebo stáhnout.</p>
+                        
+                        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
+                          <Button 
+                            variant="default"
+                            className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
+                            onClick={() => window.open(selectedSheetForView.fileUrl, '_blank')}
+                          >
+                            <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
+                            onClick={() => {
+                              const a = document.createElement('a');
+                              a.href = selectedSheetForView.fileUrl || '';
+                              a.download = `${selectedSheetForView.title || 'material'}.pdf`;
+                              a.click();
+                            }}
+                          >
+                            <Download size={22} /> Stáhnout PDF
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2909,8 +2965,19 @@ export default function TeacherDashboard() {
           <div className="p-6 border-t border-gray-100 bg-white flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogFooter>
-                <Button onClick={handleSaveSheet} disabled={isUploadingSheet} className="btn-orange w-full h-14 rounded-2xl text-lg font-bold">
-                  {isUploadingSheet ? <><Loader2 className="mr-2 animate-spin" size={18} /> Ukládám...</> : 'Vytvořit materiál'}
+                <Button onClick={handleSaveSheet} disabled={isUploadingSheet} className="btn-orange w-full h-14 rounded-2xl text-lg font-bold relative overflow-hidden">
+                  {isUploadingSheet ? (
+                    <>
+                      <div 
+                        className="absolute left-0 top-0 bottom-0 bg-white/20 transition-all duration-300" 
+                        style={{ width: `${uploadMaterialProgress}%` }} 
+                      />
+                      <Loader2 className="mr-2 animate-spin relative z-10" size={18} /> 
+                      <span className="relative z-10">
+                        {newSheet.file ? `Nahrávám... ${Math.round(uploadMaterialProgress)}%` : 'Ukládám...'}
+                      </span>
+                    </>
+                  ) : 'Vytvořit materiál'}
                 </Button>
               </DialogFooter>
             </div>

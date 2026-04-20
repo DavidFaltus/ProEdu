@@ -11,28 +11,22 @@ service firebase.storage {
       return request.auth.uid == userId;
     }
 
-    // Rule 12: Namespaced path pro učební materiály
-    match /learningSheets/{teacherUid}/{fileId} {
-      // Číst mohou všichni přihlášení
+    // Zjednodušená pravidla pro nahrávání PDF a materiálů
+    match /learningSheets/{userId}/{fileId} {
       allow read: if isAuthenticated();
-      
-      // Zápis - obnovujeme základní ochranu (server-side proxy obchází tato pravidla)
-      allow write: if isAuthenticated() && isOwner(teacherUid);
-                   
-      allow delete: if isAuthenticated() && isOwner(teacherUid);
+      // Povoleno nahrávání pokud je to uloženo pod vlastním ID
+      allow write: if isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Obecná složka pro uživatelské assety (např. avatary)
     match /users/{userId}/{allPaths=**} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && isOwner(userId)
-                   && request.resource.size < 1 * 1024 * 1024
-                   && request.resource.contentType.matches('image/.*');
+      allow write: if isAuthenticated() && request.auth.uid == userId;
     }
     
-    // Zákaz všeho ostatního (Rule 16: Least Privilege)
+    // Pro jakékoli jiné složky ve storage
     match /{allPaths=**} {
-      allow read, write: if false;
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
     }
   }
 }

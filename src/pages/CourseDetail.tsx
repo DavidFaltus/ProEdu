@@ -16,6 +16,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
+import { uploadFileWithProgress } from '../lib/uploadHelper';
 
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
@@ -30,6 +31,8 @@ export default function CourseDetail() {
   const [teacherTests, setTeacherTests] = useState<Test[]>([]);
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [previewTest, setPreviewTest] = useState<Test | null>(null);
+  const [pdfPreview, setPdfPreview] = useState<{ url: string, name: string } | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
 
   // Form states
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
@@ -40,6 +43,7 @@ export default function CourseDetail() {
   const [itemDate, setItemDate] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number>(0);
 
   useEffect(() => {
     // Reset form when type changes or dialog closes/opens
@@ -48,6 +52,7 @@ export default function CourseDetail() {
     setSelectedTestId('');
     setItemDate('');
     setFiles([]);
+    setUploadProgress(0);
   }, [itemType, isAddItemOpen]);
 
   useEffect(() => {
@@ -82,6 +87,60 @@ export default function CourseDetail() {
       unsubItems();
     };
   }, [id, profile, navigate]);
+
+  useEffect(() => {
+    if (!pdfPreview?.url) {
+      setPdfPreviewUrl(null);
+      return;
+    }
+
+    let currentUrl = pdfPreview.url;
+    let revokeUrl: string | null = null;
+
+    const loadPdf = async () => {
+      if (currentUrl.startsWith('data:')) {
+        try {
+          const dataURI = currentUrl;
+          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
+          const byteString = atob(dataURI.split(',')[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          const blob = new Blob([ab], { type: mimeString });
+          const url = URL.createObjectURL(blob);
+          revokeUrl = url;
+          setPdfPreviewUrl(url);
+        } catch (e) {
+          console.error('Failed to create blob from data URI', e);
+          setPdfPreviewUrl(null); // Force failsafe UI
+        }
+      } else {
+        // Try fetching to create a blob URL
+        try {
+          const response = await fetch(currentUrl, { mode: 'cors' });
+          if (response.ok) {
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            revokeUrl = url;
+            setPdfPreviewUrl(url);
+          } else {
+            setPdfPreviewUrl(currentUrl); // Fallback to raw URL
+          }
+        } catch (e) {
+          console.warn('CORS fetch failed, falling back to raw URL', e);
+          setPdfPreviewUrl(currentUrl);
+        }
+      }
+    };
+
+    loadPdf();
+
+    return () => {
+      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
+    };
+  }, [pdfPreview]);
 
   useEffect(() => {
     // Load students data
@@ -156,27 +215,11 @@ export default function CourseDetail() {
           console.log('--- STARTING CLIENT-SIDE UPLOAD ---', file.name);
           
           try {
-            const storageRef = ref(storage, storagePath);
-            const uploadTask = uploadBytesResumable(storageRef, file);
-
-            // Re-use the promise pattern for resumable upload
-            const url = await new Promise<string>((resolve, reject) => {
-              uploadTask.on(
-                'state_changed',
-                (snapshot) => {
-                  const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-                  console.log(`Upload progress: ${progress.toFixed(2)}%`);
-                },
-                (error) => {
-                  console.error('Upload error detail:', error);
-                  reject(error);
-                },
-                async () => {
-                  const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                  resolve(downloadURL);
-                }
-              );
-            });
+            const url = await uploadFileWithProgress(
+              file, 
+              storagePath, 
+              (progress) => setUploadProgress(progress)
+            );
 
             console.log('--- CLIENT-SIDE UPLOAD SUCCESS ---', url);
             
@@ -200,8 +243,11 @@ export default function CourseDetail() {
               createdAt: serverTimestamp()
             });
           } catch (uploadErr: any) {
-            console.error('--- SERVER-SIDE UPLOAD FAILED ---', uploadErr);
-            throw uploadErr;
+            console.error('--- UPLOAD FAILED ---', uploadErr);
+            toast.dismiss(loadingToastId);
+            toast.error(`Chyba u ${file.name}: ${uploadErr.message}`);
+            setIsUploading(false);
+            return; // Halt on error
           }
         }
       }
@@ -412,7 +458,7 @@ export default function CourseDetail() {
                     ) : (
                       <div className="space-y-3">
                         <Label className="font-bold text-gray-700">Popis nebo Odkaz</Label>
-                        <Textarea value={itemContent} onChange={e => setItemContent(e.target.value)} required className="min-h-[120px] rounded-2xl bg-gray-50 border-gray-200 resize-none" placeholder={itemType === 'lesson' ? "Instrukce k hodině, odkaz na Meet..." : "Základní instrukce či odkaz..."} />
+                        <Textarea value={itemContent} onChange={e => setItemContent(e.target.value)} required={itemType !== 'material' || files.length === 0} className="min-h-[120px] rounded-2xl bg-gray-50 border-gray-200 resize-none" placeholder={itemType === 'lesson' ? "Instrukce k hodině, odkaz na Meet..." : "Základní instrukce či odkaz (nepovinné, pokud nahráváte PDF)..."} />
                       </div>
                     )}
 
@@ -448,10 +494,21 @@ export default function CourseDetail() {
                         <Button type="button" variant="ghost" onClick={() => setIsAddItemOpen(false)} className="rounded-xl font-bold h-12">Zrušit</Button>
                         <Button 
                           type="submit" 
-                          disabled={!itemTitle || (itemType !== 'test' && !itemContent) || (itemType === 'test' && !selectedTestId) || isUploading} 
-                          className="rounded-xl font-bold h-12 px-8 btn-brand"
+                          disabled={!itemTitle || (itemType !== 'test' && !itemContent && files.length === 0) || (itemType === 'test' && !selectedTestId) || isUploading} 
+                          className="rounded-xl font-bold h-12 px-8 btn-brand relative overflow-hidden"
                         >
-                          {isUploading ? <><Loader2 size={18} className="animate-spin mr-2"/> Ukládám...</> : 'Uložit položku'}
+                          {isUploading ? (
+                            <>
+                              <div 
+                                className="absolute left-0 top-0 bottom-0 bg-white/20 transition-all duration-300" 
+                                style={{ width: `${uploadProgress}%` }} 
+                              />
+                              <Loader2 size={18} className="animate-spin mr-2 relative z-10"/>
+                              <span className="relative z-10">
+                                {files.length > 0 ? `Nahrávám... ${Math.round(uploadProgress)}%` : 'Ukládám...'}
+                              </span>
+                            </>
+                          ) : 'Uložit položku'}
                         </Button>
                       </div>
                     </DialogFooter>
@@ -552,23 +609,46 @@ export default function CourseDetail() {
                     {/* Attachments Section */}
                     {item.attachments && item.attachments.length > 0 && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
-                        {item.attachments.map((file) => (
-                           <a 
-                             key={file.id} 
-                             href={file.url} 
-                             target="_blank" 
-                             rel="noopener noreferrer"
-                             className="flex items-center gap-3 p-3 rounded-2xl border border-gray-200 bg-gray-50 hover:bg-blue-50 hover:border-blue-200 transition-colors group/file text-left w-full h-auto overflow-hidden" // ensures proper flex wrapping
-                           >
-                              <div className="w-10 h-10 rounded-xl bg-white border border-gray-100 flex items-center justify-center shrink-0 text-gray-400 group-hover/file:text-brand-blue">
-                                <Download size={18} />
-                              </div>
-                              <div className="flex-1 min-w-0 pr-4">
-                                <p className="text-sm font-bold text-gray-800 truncate group-hover/file:text-brand-blue">{file.name}</p>
-                                <p className="text-xs text-gray-500 font-medium">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
-                              </div>
-                           </a>
-                        ))}
+                        {item.attachments.map((file) => {
+                          const isPDF = file.name.toLowerCase().endsWith('.pdf') || 
+                                       file.type === 'application/pdf' || 
+                                       file.url.startsWith('data:application/pdf');
+                          
+                          return (
+                           <div key={file.id} className="relative group/file">
+                             <a 
+                               href={file.url} 
+                               download={file.url.startsWith('data:') ? file.name : undefined}
+                               target={file.url.startsWith('data:') ? undefined : "_blank"}
+                               rel="noopener noreferrer"
+                               className="flex items-center gap-3 p-3 rounded-2xl border border-gray-200 bg-gray-50 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left w-full h-auto overflow-hidden pr-12"
+                             >
+                                <div className="w-10 h-10 rounded-xl bg-white border border-gray-100 flex items-center justify-center shrink-0 text-gray-400 group-hover/file:text-brand-blue">
+                                  <Download size={18} />
+                                </div>
+                                <div className="flex-1 min-w-0 pr-2">
+                                  <p className="text-sm font-bold text-gray-800 truncate group-hover/file:text-brand-blue">{file.name}</p>
+                                  <p className="text-xs text-gray-500 font-medium">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
+                                </div>
+                             </a>
+                             {isPDF && (
+                               <Button
+                                 size="icon"
+                                 variant="ghost"
+                                 onClick={(e) => {
+                                   e.preventDefault();
+                                   e.stopPropagation();
+                                   setPdfPreview({ url: file.url, name: file.name });
+                                 }}
+                                 className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg bg-white/80 border border-gray-100 text-gray-500 hover:text-brand-blue hover:bg-white shadow-sm transition-all"
+                                 title="Zobrazit PDF"
+                               >
+                                 <Eye size={16} />
+                               </Button>
+                             )}
+                           </div>
+                          );
+                        })}
                       </div>
                     )}
 
@@ -775,6 +855,86 @@ export default function CourseDetail() {
                  })()}
                </div>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* PDF Preview Dialog */}
+      <Dialog open={!!pdfPreview} onOpenChange={(open) => !open && setPdfPreview(null)}>
+        <DialogContent className="max-w-[95vw] w-[95vw] h-[95vh] max-h-[95vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden bg-gray-900 border-white/5">
+          <div className="p-6 pb-4 border-b border-white/10 bg-black/40 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center shadow-lg">
+                <FileText size={24} />
+              </div>
+              <div className="min-w-0">
+                <DialogTitle className="text-xl font-display font-bold text-white leading-tight truncate max-w-[50vw]">
+                  {pdfPreview?.name}
+                </DialogTitle>
+                <div className="flex items-center gap-2 text-gray-400 text-sm font-medium">
+                  <Eye size={12} />
+                  <span>Náhled dokumentu</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+               <Button 
+                 variant="outline" 
+                 className="p-3 bg-white/10 hover:bg-white/20 border-white/20 text-white rounded-xl transition-colors flex items-center gap-2 font-bold text-sm hidden sm:flex"
+                 onClick={() => window.open(pdfPreview?.url, '_blank')}
+               >
+                 <ArrowRight size={18} className="rotate-[-45deg]" /> Otevřít v panelu
+               </Button>
+               <a 
+                 href={pdfPreview?.url} 
+                 download={pdfPreview?.name}
+                 className="p-3 bg-white/10 hover:bg-white/20 text-white rounded-xl transition-colors flex items-center gap-2 font-bold text-sm hidden sm:flex"
+               >
+                 <Download size={18} /> Stáhnout
+               </a>
+               <Button 
+                 variant="ghost" 
+                 size="icon" 
+                 className="rounded-xl hover:bg-white/10 text-white w-12 h-12" 
+                 onClick={() => setPdfPreview(null)}
+               >
+                 <Plus size={28} className="rotate-45" />
+               </Button>
+            </div>
+          </div>
+          <div className="flex-1 bg-white/5 flex items-center justify-center p-0 overflow-hidden relative">
+            {pdfPreviewUrl ? (
+              <iframe 
+                key={pdfPreviewUrl}
+                src={pdfPreviewUrl} 
+                className="w-full h-full border-none bg-white font-sans"
+                title={pdfPreview?.name}
+              />
+            ) : (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-900">
+                <div className="w-24 h-24 bg-white/5 rounded-3xl flex items-center justify-center text-brand-purple mb-8">
+                  <FileText size={48} />
+                </div>
+                <h3 className="text-2xl font-display font-black text-white mb-4">Není k dispozici náhled</h3>
+                <p className="text-gray-400 max-w-sm mb-10 font-medium tracking-wide">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu z důvodu zabezpečení. Můžete jej otevřít přímo.</p>
+                
+                <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
+                   <Button 
+                    variant="default"
+                    className="flex-1 h-16 btn-orange rounded-2xl font-black text-lg shadow-xl shadow-orange-500/10 gap-3"
+                    onClick={() => window.open(pdfPreview?.url, '_blank')}
+                  >
+                    <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít dokument
+                  </Button>
+                  <a 
+                    href={pdfPreview?.url} 
+                    download={pdfPreview?.name}
+                    className="flex-1 h-16 rounded-2xl border-2 border-white/10 font-black text-white hover:bg-white/5 flex items-center justify-center gap-3"
+                  >
+                    <Download size={22} /> Stáhnout PDF
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

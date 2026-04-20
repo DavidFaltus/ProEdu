@@ -53,25 +53,23 @@ export default function LearningSheets() {
           setPdfBlobUrl(url);
         } catch (e) {
           console.error('Failed to create blob from data URI', e);
-          setPdfBlobUrl(currentUrl);
+          setPdfBlobUrl(null); // Force failsafe UI
         }
       } else {
-        // Try fetching to create a blob URL (helps with some iframe display issues)
-        // If fetch fails (CORS), we fall back to the raw URL
+        // Try fetching to create a blob URL
         try {
-          const response = await fetch(currentUrl);
+          const response = await fetch(currentUrl, { mode: 'cors' });
           if (response.ok) {
             const blob = await response.blob();
             const url = URL.createObjectURL(blob);
             revokeUrl = url;
             setPdfBlobUrl(url);
           } else {
-            // Fallback to Google Docs Viewer instead of raw URL for better iframe support
-            setPdfBlobUrl(`https://docs.google.com/viewer?url=${encodeURIComponent(currentUrl)}&embedded=true`);
+            setPdfBlobUrl(null); // Force failsafe UI
           }
         } catch (e) {
-          console.warn('CORS fetch failed, using Google Docs Viewer', e);
-          setPdfBlobUrl(`https://docs.google.com/viewer?url=${encodeURIComponent(currentUrl)}&embedded=true`);
+          console.warn('CORS fetch failed, using failsafe button', e);
+          setPdfBlobUrl(null); // Force failsafe UI
         }
       }
     };
@@ -252,10 +250,34 @@ export default function LearningSheets() {
                         title={selectedSheet.title}
                       />
                     ) : (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
-                        <Loader2 className="w-10 h-10 text-brand-purple animate-spin mb-4" />
-                        <p className="text-gray-500 font-bold">Načítám PDF materiál...</p>
-                        <p className="text-xs text-gray-400 mt-2">Pokud se soubor nezobrazí, klikněte na "Otevřít v panelu" nahoře.</p>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
+                        <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
+                          <FileText size={48} />
+                        </div>
+                        <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
+                        <p className="text-gray-500 max-w-sm mb-10 font-medium tracking-wide">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej otevřít v novém panelu nebo stáhnout.</p>
+                        
+                        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
+                          <Button 
+                            variant="default"
+                            className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
+                            onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
+                          >
+                            <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
+                          </Button>
+                          <Button 
+                            variant="outline"
+                            className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
+                            onClick={() => {
+                              const a = document.createElement('a');
+                              a.href = selectedSheet.fileUrl || '';
+                              a.download = `${selectedSheet.title || 'material'}.pdf`;
+                              a.click();
+                            }}
+                          >
+                            <Download size={22} /> Stáhnout PDF
+                          </Button>
+                        </div>
                       </div>
                     )}
                   </div>
