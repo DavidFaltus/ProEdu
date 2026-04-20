@@ -14,7 +14,7 @@ export default defineConfig({
     hmr: process.env.DISABLE_HMR !== 'true',
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:3005',
+        target: 'http://127.0.0.1:3006',
         changeOrigin: true,
       },
     },

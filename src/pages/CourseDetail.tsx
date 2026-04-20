@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
-import { ArrowLeft, BookOpen, Calendar, Clock, FileText, LayoutDashboard, Plus, Settings, Users, Video, Edit, Trash2, CheckCircle, FileQuestion, Paperclip, Download, Loader2 } from 'lucide-react';
+import { ArrowLeft, BookOpen, Calendar, Clock, FileText, LayoutDashboard, Plus, Settings, Users, Video, Edit, Trash2, CheckCircle, FileQuestion, Paperclip, Download, Loader2, Eye, ArrowRight, MessageSquare, Sparkles } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger } from '../components/ui/dialog';
 import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -29,6 +29,7 @@ export default function CourseDetail() {
   const [loading, setLoading] = useState(true);
   const [teacherTests, setTeacherTests] = useState<Test[]>([]);
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
+  const [previewTest, setPreviewTest] = useState<Test | null>(null);
 
   // Form states
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
@@ -536,7 +537,7 @@ export default function CourseDetail() {
                                 variant="outline" 
                                 className="bg-white border-orange-200 text-orange-700 hover:bg-orange-50 hover:text-orange-800 font-bold rounded-xl"
                                 onClick={() => {
-                                  toast.info('Učitelé mohou spravovat testy na hlavní nástěnce.');
+                                  navigate(`/teacher?tab=tests&viewTestId=${item.content}&courseId=${course.id}`);
                                 }}
                               >
                                 Spravovat výsledky v dashboardu
@@ -643,6 +644,140 @@ export default function CourseDetail() {
           </div>
         </TabsContent>
       </Tabs>
+
+      {/* Test Preview Dialog (Course Detail) */}
+      <Dialog open={!!previewTest} onOpenChange={(open) => !open && setPreviewTest(null)}>
+        <DialogContent className="max-w-[95vw] sm:max-w-6xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[90vh]">
+          <div className="flex flex-col md:flex-row flex-1 overflow-hidden h-full">
+            {/* Left side - Test Preview */}
+            <div className="flex-1 overflow-y-auto p-8 lg:p-12 relative bg-white">
+              <div className="flex justify-between items-start mb-8">
+                <div>
+                   <h2 className="text-3xl font-display font-black text-brand-orange">{previewTest?.title}</h2>
+                   <p className="text-gray-500 mt-2 font-medium">{previewTest?.description}</p>
+                </div>
+                <div className="px-4 py-2 bg-orange-50 text-orange-600 rounded-xl font-bold text-xs shadow-sm border border-orange-100">
+                   Náhled detailního testu
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                 {previewTest?.questions?.map((q, idx) => (
+                    <div key={q.id || idx} className="p-8 rounded-[2rem] border border-gray-100 bg-gray-50 shadow-sm relative overflow-hidden group">
+                       <div className="absolute top-0 left-0 w-2 h-full bg-brand-teal rounded-l-[2rem] opacity-0 group-hover:opacity-100 transition-opacity" />
+                       <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-4">Otázka {idx + 1}</span>
+                       <h3 className="text-2xl font-bold text-gray-900 mb-6 leading-tight">{q.question}</h3>
+                       {q.imageUrl && (
+                          <div className="mb-6 rounded-2xl overflow-hidden shadow-sm bg-white p-2">
+                             <img src={q.imageUrl} alt="Zadání" className="w-full object-contain max-h-72 rounded-xl" referrerPolicy="no-referrer" />
+                          </div>
+                       )}
+                       <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-gray-200">
+                          <p className="text-gray-400 font-medium text-sm flex items-center gap-2">
+                            <MessageSquare size={16} /> Otevřená odpověď (student zde vyplní text, výsledek nebo postup)
+                          </p>
+                       </div>
+                    </div>
+                 ))}
+                 {!previewTest?.questions?.length && (
+                    <p className="text-gray-400 italic">Test nemá žádné otázky.</p>
+                 )}
+              </div>
+            </div>
+
+            {/* Right side - Students List */}
+            <div className="w-full md:w-[350px] lg:w-[400px] border-l border-gray-100 bg-gray-50 overflow-y-auto flex flex-col shrink-0 shadow-[-10px_0_30px_-15px_rgba(0,0,0,0.05)]">
+               <div className="p-8 border-b border-gray-100 bg-white sticky top-0 z-10">
+                 <h3 className="text-2xl font-bold font-display text-gray-900 flex items-center gap-2">
+                    <Users size={24} className="text-brand-blue" />
+                    Stav vyplnění
+                 </h3>
+                 <p className="text-sm font-bold text-brand-blue mt-2 bg-blue-50 px-3 py-1.5 rounded-lg inline-block">
+                   Tento kurz
+                 </p>
+               </div>
+               
+               <div className="p-6 space-y-8 flex-1">
+                 {(() => {
+                    const relevantAsgmts = assignedTests.filter(at => 
+                       at.testId === previewTest?.id && 
+                       at.courseId === course?.id
+                    );
+                    const completed = relevantAsgmts.filter(a => a.status === 'submitted' || a.status === 'graded');
+                    const pending = relevantAsgmts.filter(a => a.status === 'pending');
+
+                    return (
+                      <>
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between text-xs font-black uppercase tracking-widest text-green-600 px-1 border-b border-green-100 pb-2">
+                              <span className="flex items-center gap-2"><CheckCircle size={14} /> Vyplněno</span>
+                              <span className="bg-green-100 px-2 py-0.5 rounded-full">{completed.length}</span>
+                           </div>
+                           {completed.length === 0 && <p className="text-sm text-gray-400 italic px-2">Zatím nikdo nevyplnil.</p>}
+                           <div className="space-y-2">
+                             {completed.map(at => {
+                                const student = students.find(s => s.uid === at.studentId);
+                                return (
+                                  <button 
+                                     key={at.id}
+                                     onClick={() => {
+                                        navigate(`/teacher?tab=tests&viewTestId=${previewTest?.id}&courseId=${course?.id}`);
+                                     }}
+                                     className="w-full flex items-center justify-between p-4 rounded-2xl bg-white border border-gray-100 hover:border-brand-blue hover:shadow-lg transition-all group text-left"
+                                  >
+                                     <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-orange-100 text-brand-orange flex items-center justify-center font-bold text-lg shrink-0 group-hover:bg-brand-orange group-hover:text-white transition-colors">
+                                          {student?.name?.charAt(0) || '?'}
+                                        </div>
+                                        <div className="truncate">
+                                          <p className="text-base font-bold text-gray-900 group-hover:text-brand-blue truncate">{student?.name || 'Neznámý'}</p>
+                                          <p className={cn("text-[10px] font-black uppercase tracking-wider", at.status === 'graded' ? "text-green-500" : "text-brand-orange")}>
+                                            {at.status === 'graded' ? 'Oznámkováno' : 'Čeká na opravu'}
+                                          </p>
+                                        </div>
+                                     </div>
+                                     <ArrowRight size={18} className="text-gray-300 group-hover:text-brand-blue transform group-hover:translate-x-1 transition-all" />
+                                  </button>
+                                )
+                             })}
+                           </div>
+                        </div>
+                        
+                        <div className="space-y-4">
+                           <div className="flex items-center justify-between text-xs font-black uppercase tracking-widest text-gray-400 px-1 border-b border-gray-200 pb-2">
+                              <span className="flex items-center gap-2"><Clock size={14} /> Nevyplněno</span>
+                              <span className="bg-gray-200 px-2 py-0.5 rounded-full text-gray-600">{pending.length}</span>
+                           </div>
+                           {pending.length === 0 && completed.length > 0 && (
+                             <div className="bg-green-50 text-green-700 p-4 rounded-xl flex items-center gap-3 font-bold text-sm">
+                               <Sparkles size={18} /> Všichni studenti vyplnili!
+                             </div>
+                           )}
+                           <div className="space-y-2">
+                             {pending.map(at => {
+                                const student = students.find(s => s.uid === at.studentId);
+                                return (
+                                  <div key={at.id} className="flex items-center gap-3 p-4 rounded-2xl bg-white border border-gray-50 opacity-60 grayscale hover:grayscale-0 transition-all">
+                                    <div className="w-10 h-10 rounded-xl bg-gray-100 text-gray-500 flex items-center justify-center font-bold text-lg shrink-0">
+                                      {student?.name?.charAt(0) || '?'}
+                                    </div>
+                                    <div className="truncate">
+                                      <p className="text-base font-bold text-gray-600 truncate">{student?.name || 'Neznámý student'}</p>
+                                      <p className="text-[10px] uppercase font-black tracking-wider text-gray-400">Přiřazeno</p>
+                                    </div>
+                                  </div>
+                                )
+                             })}
+                           </div>
+                        </div>
+                      </>
+                    )
+                 })()}
+               </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

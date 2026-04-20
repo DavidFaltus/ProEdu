@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { GeometryDiagram } from '../components/GeometryDiagram';
 import { Label } from '../components/ui/label';
 import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
+import { Textarea } from '../components/ui/textarea';
 import { postApi } from '../services/apiClient';
 
 interface SubmitResponse {
@@ -270,6 +271,11 @@ export default function TestTaker() {
               <CardTitle className="text-3xl md:text-4xl leading-tight font-display text-gray-900">
                 {activeQuestion.question}
               </CardTitle>
+              {activeQuestion.imageUrl && (
+                <div className="mt-6 rounded-2xl overflow-hidden border border-gray-100 shadow-sm max-w-2xl mx-auto">
+                   <img src={activeQuestion.imageUrl} alt="Zadání otázky" className="w-full object-contain max-h-[400px]" referrerPolicy="no-referrer" />
+                </div>
+              )}
               {activeQuestion.diagram && (
                 <div className="mt-8">
                   <GeometryDiagram type={activeQuestion.diagram} />
@@ -328,6 +334,20 @@ function QuestionOptions({
   selectedAnswer: string;
   onChange: (value: string) => void;
 }) {
+  if (question.type === 'open') {
+    return (
+      <div className="space-y-4">
+        <Label className="text-sm font-bold text-gray-400 uppercase tracking-widest pl-4">Tvá odpověď</Label>
+        <Textarea
+          value={selectedAnswer}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="Zde napište své řešení..."
+          className="rounded-[2rem] border-4 border-gray-50 bg-gray-50/30 p-8 text-xl font-medium min-h-[200px] focus:border-brand-blue focus:bg-white transition-all outline-none"
+        />
+      </div>
+    );
+  }
+
   return (
     <RadioGroup value={selectedAnswer} onValueChange={onChange} className="grid grid-cols-1 md:grid-cols-2 gap-6">
       {question.options.map((option, index) => (

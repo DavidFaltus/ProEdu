@@ -27,7 +27,7 @@ export interface PublicQuestion {
   diagram?: 'square' | 'triangle' | 'circle' | 'coordinate';
   courseId?: string;
   imageUrl?: string;
-  answerType?: 'choice' | 'text' | 'file';
+  type?: 'multiple-choice' | 'open';
 }
 
 export interface Question extends PublicQuestion {
@@ -51,7 +51,6 @@ export interface Test {
   createdAt: Timestamp;
   topic?: MathTopic;
   autoGrade?: boolean;
-  isManual?: boolean;
   courseId?: string;
   studentId?: string;
 }
@@ -73,11 +72,9 @@ export interface AssignedTest {
   testDescription?: string;
   topic?: MathTopic;
   autoGrade?: boolean;
-  isManual?: boolean;
   questions?: PublicQuestion[];
   reviewQuestions?: ReviewQuestion[];
   topicPerformance?: Record<string, { correct: number; total: number }>;
-  manualAnswers?: Record<string, { text?: string; fileUrl?: string; fileName?: string }>;
   createdBy?: string;
 }
 
