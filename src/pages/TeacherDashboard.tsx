@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { collection, query, getDocs, addDoc, Timestamp, where, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { db, storage, auth } from '../lib/firebase';
@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Textarea } from '../components/ui/textarea';
-import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes, Target, FileQuestion, MessageSquare, Save } from 'lucide-react';
+import { Plus, Users, FileText, CheckCircle, Send, BookOpen, Trash2, Sparkles, Loader2, UploadCloud, GraduationCap, FolderOpen, Edit, ArrowRight, Eye, EyeOff, Settings, User as UserIcon, Percent, Shapes, Target, FileQuestion, MessageSquare, Save, Download } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -23,7 +23,8 @@ import { assignPracticeCourseToStudent } from '../services/courseService';
 import { uploadFileWithProgress } from '../lib/uploadHelper';
 import TestImporter from '../components/TestImporter';
 import TodoManager from '../components/TodoManager';
-import { Clock } from 'lucide-react';
+import { Clock, Search } from 'lucide-react';
+import { PDFViewer } from '../components/PDFViewer';
 
 const SUBJECTS = [
   'Matematika',
@@ -77,6 +78,14 @@ export default function TeacherDashboard() {
   const [tests, setTests] = useState<Test[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [students, setStudents] = useState<UserProfile[]>([]);
+  const [studentSearchQuery, setStudentSearchQuery] = useState('');
+  
+  const filteredStudents = useMemo(() => {
+    return students.filter(student => 
+      student.name.toLowerCase().includes(studentSearchQuery.toLowerCase()) || 
+      student.email.toLowerCase().includes(studentSearchQuery.toLowerCase())
+    );
+  }, [students, studentSearchQuery]);
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [practiceCourses, setPracticeCourses] = useState<PracticeCourse[]>([]);
@@ -108,6 +117,7 @@ export default function TeacherDashboard() {
   const [isAddingQuestion, setIsAddingQuestion] = useState(false);
   const [isImportingPDF, setIsImportingPDF] = useState(false);
   const [isAddingCourse, setIsAddingCourse] = useState(false);
+  const [isAddingFullCourse, setIsAddingFullCourse] = useState(false);
   const [isAddingDetailedTest, setIsAddingDetailedTest] = useState(false);
   const [newDetailedTest, setNewDetailedTest] = useState<{ title: string, description: string, questions: { text: string, type: 'open', imageFile?: File | null }[] }>({
     title: '', description: '', questions: [{ text: '', type: 'open' }]
@@ -120,6 +130,7 @@ export default function TeacherDashboard() {
   const [gradingState, setGradingState] = useState<{ grade: string, feedback: string }>({ grade: '', feedback: '' });
   const [isSavingGrade, setIsSavingGrade] = useState(false);
   const [isAssigningTest, setIsAssigningTest] = useState(false);
+  const [assignSearchQuery, setAssignSearchQuery] = useState("");
   const [isUploadingSheet, setIsUploadingSheet] = useState(false);
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [isProcessingPDF, setIsProcessingPDF] = useState(false);
@@ -136,67 +147,24 @@ export default function TeacherDashboard() {
   const [selectedQuestionIds, setSelectedQuestionIds] = useState<Set<string>>(new Set());
 
   const [selectedSheetForView, setSelectedSheetForView] = useState<LearningSheet | null>(null);
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [isTodoViewOpen, setIsTodoViewOpen] = useState(false);
   const [viewingStudentForTodo, setViewingStudentForTodo] = useState<UserProfile | null>(null);
-
-  useEffect(() => {
-    if (!selectedSheetForView?.fileUrl) {
-      setPdfBlobUrl(null);
-      return;
-    }
-
-    let currentUrl = selectedSheetForView.fileUrl;
-    let revokeUrl: string | null = null;
-
-    const loadPdf = async () => {
-      if (currentUrl.startsWith('data:')) {
-        try {
-          const dataURI = currentUrl;
-          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-          const byteString = atob(dataURI.split(',')[1]);
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let i = 0; i < byteString.length; i++) {
-            ia[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([ab], { type: mimeString });
-          const url = URL.createObjectURL(blob);
-          revokeUrl = url;
-          setPdfBlobUrl(url);
-        } catch (e) {
-          console.error('Failed to create blob from data URI', e);
-          setPdfBlobUrl(null); // Force failsafe UI
-        }
-      } else {
-        // Try fetching to create a blob URL
-        try {
-          const response = await fetch(currentUrl, { mode: 'cors' });
-          if (response.ok) {
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            revokeUrl = url;
-            setPdfBlobUrl(url);
-          } else {
-            setPdfBlobUrl(currentUrl); // Fallback to raw URL
-          }
-        } catch (e) {
-          console.warn('CORS fetch failed, falling back to raw URL', e);
-          setPdfBlobUrl(currentUrl);
-        }
-      }
-    };
-
-    loadPdf();
-
-    return () => {
-      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
-    };
-  }, [selectedSheetForView]);
-
-  // Form states
-  const [newSheet, setNewSheet] = useState<{ title: string, subject: string, level: string, topic: MathTopic, file: File | null }>({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', file: null });
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{type: 'course' | 'practiceCourse', id: string} | null>(null);
+  const [newSheet, setNewSheet] = useState<{ title: string, subject: string, level: string, topic: string, topics: string[], file: File | null }>({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', topics: ['Aritmetika'], file: null });
   const [newQuestion, setNewQuestion] = useState<Partial<Question> & { imageFile?: File | null }>({ question: '', options: ['', '', '', ''], correctAnswer: '', topic: 'Aritmetika', topics: [], courseId: '', imageFile: null });
+
+  const [sheetSearchQuery, setSheetSearchQuery] = useState('');
+  const [sheetTopicFilter, setSheetTopicFilter] = useState('');
+  const [sheetSubjectFilter, setSheetSubjectFilter] = useState('');
+
+  const filteredLearningSheets = useMemo(() => {
+    return learningSheets.filter(sheet => {
+      const matchesSearch = sheet.title.toLowerCase().includes(sheetSearchQuery.toLowerCase());
+      const matchesTopic = sheetTopicFilter && sheetTopicFilter !== 'all' ? sheet.topic === sheetTopicFilter || sheet.topic?.includes(sheetTopicFilter) : true;
+      const matchesSubject = sheetSubjectFilter && sheetSubjectFilter !== 'all' ? sheet.subject === sheetSubjectFilter : true;
+      return matchesSearch && matchesTopic && matchesSubject;
+    });
+  }, [learningSheets, sheetSearchQuery, sheetTopicFilter, sheetSubjectFilter]);
   const [pdfImport, setPdfImport] = useState<{ questionsFile: File | null, answersFile: File | null, topic: string, topics?: string[], courseId: string }>({ questionsFile: null, answersFile: null, topic: 'Aritmetika', topics: [], courseId: '' });
   const [newCourse, setNewCourse] = useState<{ title: string, description: string, topics: string[], difficulty: string, questionCount: number, color: string }>({
     title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff'
@@ -209,9 +177,19 @@ export default function TeacherDashboard() {
   const [isSavingCourse, setIsSavingCourse] = useState(false);
 
   const [dbCustomTopics, setDbCustomTopics] = useState<string[]>([]);
+  const [dbCustomTopicsObjs, setDbCustomTopicsObjs] = useState<{id?: string, name: string, subject?: string}[]>([]);
+  const [dbCustomSubjects, setDbCustomSubjects] = useState<string[]>([]);
+  const [isAddingNewSubjectForSheet, setIsAddingNewSubjectForSheet] = useState(false);
+  const [newSubjectInputForSheet, setNewSubjectInputForSheet] = useState('');
+  const [isAddingNewTopicForSheet, setIsAddingNewTopicForSheet] = useState(false);
+  const [newTopicInputForSheet, setNewTopicInputForSheet] = useState('');
   const [newTopicInput, setNewTopicInput] = useState('');
   const [customCourseTopic, setCustomCourseTopic] = useState('');
-  const allTopics = Array.from(new Set([...MATH_TOPICS, ...dbCustomTopics]));
+  const allTopics = Array.from(new Set([...dbCustomTopics]));
+  const allSubjects = Array.from(new Set([...dbCustomSubjects]));
+  const allTopicsWithSubjects = [
+    ...dbCustomTopicsObjs.map(t => ({ id: t.id, name: t.name, subject: t.subject || 'Matematika' }))
+  ];
 
   const buildPreviewQuestion = (question: Partial<Question> & { id?: string }): PublicQuestion | null => {
     if (!question.id || !question.question || !question.options || !question.topic) {
@@ -332,43 +310,112 @@ export default function TeacherDashboard() {
     setNewTopicInput('');
   };
 
+  const handleAddNewSubjectForSheet = async () => {
+    if (!newSubjectInputForSheet.trim()) {
+      setIsAddingNewSubjectForSheet(false);
+      return;
+    }
+    const val = newSubjectInputForSheet.trim();
+    if (!profile) return;
+    if (!allSubjects.includes(val)) {
+      try {
+        await addDoc(collection(db, 'customSubjects'), { name: val, createdBy: profile.uid });
+        setDbCustomSubjects(prev => [...Array.from(new Set([...prev, val]))]);
+      } catch (e) {
+        console.warn(e);
+        setDbCustomSubjects(prev => [...Array.from(new Set([...prev, val]))]);
+      }
+    }
+    setNewSheet({ ...newSheet, subject: val, topics: [] }); // reset topics when subject changes
+    setNewSubjectInputForSheet('');
+    setIsAddingNewSubjectForSheet(false);
+  };
+
+  const handleAddNewTopicForSheet = async () => {
+    if (!newTopicInputForSheet.trim() || !newSheet.subject) {
+      setIsAddingNewTopicForSheet(false);
+      return;
+    }
+    if (!profile) return;
+    const val = newTopicInputForSheet.trim();
+    if (!allTopicsWithSubjects.find(t => t.name === val && t.subject === newSheet.subject)) {
+      try {
+        const docRef = await addDoc(collection(db, 'customTopics'), { name: val, subject: newSheet.subject, createdBy: profile.uid });
+        setDbCustomTopicsObjs(prev => [...prev, { id: docRef.id, name: val, subject: newSheet.subject }]);
+      } catch (e) {
+        console.warn(e);
+        setDbCustomTopicsObjs(prev => [...prev, { name: val, subject: newSheet.subject }]);
+      }
+    }
+    setNewSheet({ ...newSheet, topics: [...new Set([...newSheet.topics, val])] });
+    setNewTopicInputForSheet('');
+    setIsAddingNewTopicForSheet(false);
+  };
+
+  const handleToggleTopicForSheet = (t: string) => {
+    if (newSheet.topics.includes(t)) {
+      setNewSheet({ ...newSheet, topics: newSheet.topics.filter(x => x !== t) });
+    } else {
+      setNewSheet({ ...newSheet, topics: [...newSheet.topics, t] });
+    }
+  };
+
+  const [isDeletingTopicMode, setIsDeletingTopicMode] = useState(false);
+
+  const handleDeleteAllCustomTopicsForSubject = async (subject: string) => {
+    if (!window.confirm(`Opravdu chcete smazat VŠECHNA VLASTNÍ témata pro předmět "${subject}"? (Bude odstraněno pouze to, co jste vytvořil/a Vy)`)) return;
+    try {
+      const topicsToDelete = dbCustomTopicsObjs.filter(t => t.subject === subject && t.id);
+      await Promise.all(topicsToDelete.map(t => deleteDoc(doc(db, 'customTopics', t.id!))));
+      setDbCustomTopicsObjs(prev => prev.filter(t => !(t.subject === subject && t.id)));
+      setNewSheet(prev => ({...prev, topics: []}));
+      toast.success(`Všechna vlastní témata pro předmět ${subject} odstraněna.`);
+    } catch (e) {
+      console.error(e);
+      toast.error('Chyba při plošném mazání témat.');
+    }
+  };
+
+  const handleDeleteCustomTopic = async (e: React.MouseEvent, topicObj: {id?: string, name: string, subject?: string}) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!topicObj.id) {
+        toast.error('Nelze smazat výchozí předdefinované téma');
+        return;
+    }
+    if (!window.confirm(`Opravdu smazat téma "${topicObj.name}"?`)) return;
+    try {
+      await deleteDoc(doc(db, 'customTopics', topicObj.id));
+      setDbCustomTopicsObjs(prev => prev.filter(t => t.id !== topicObj.id));
+      setNewSheet(prev => ({...prev, topics: prev.topics.filter(t => t !== topicObj.name)}));
+      toast.success('Téma odstraněno');
+    } catch (err) {
+      console.error(err);
+      toast.error('Chyba při mazání tématu');
+    }
+  };
+
   const [newAssignment, setNewAssignment] = useState<{ courseId: string, dueDate: string }>({ courseId: '', dueDate: '' });
 
   useEffect(() => {
     if (!profile) return;
 
-    // Real-time listenery pouze pro data, kde je to skutečně potřeba
-    const unsubStudents = onSnapshot(query(collection(db, 'users'), where('role', '==', 'student')), (snap) => {
-      setStudents(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)));
-    });
+    const unsubs: (() => void)[] = [
+      onSnapshot(query(collection(db, 'users'), where('role', '==', 'student')), (snap) => setStudents(snap.docs.map(d => ({ uid: d.id, ...d.data() } as UserProfile)))),
+      onSnapshot(collection(db, 'assignedTests'), (snap) => setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)))),
+      onSnapshot(collection(db, 'tests'), (snap) => setTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as Test)))),
+      onSnapshot(collection(db, 'questions'), (snap) => setQuestions(snap.docs.map(d => ({ id: d.id, ...d.data() } as Question)))),
+      onSnapshot(collection(db, 'learningSheets'), (snap) => setLearningSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)))),
+      onSnapshot(collection(db, 'practiceCourses'), (snap) => setPracticeCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)))),
+      onSnapshot(collection(db, 'customTopics'), (snap) => {
+        setDbCustomTopics(snap.docs.map(d => d.data().name as string));
+        setDbCustomTopicsObjs(snap.docs.map(d => ({ id: d.id, ...(d.data() as {name: string, subject?: string}) })));
+      }),
+      onSnapshot(query(collection(db, 'courses'), where('teacherId', '==', profile.uid)), (snap) => setCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Course)))),
+      onSnapshot(collection(db, 'customSubjects'), (snap) => setDbCustomSubjects(snap.docs.map(d => d.data().name as string)), () => setDbCustomSubjects([]))
+    ];
 
-    const unsubAssigned = onSnapshot(collection(db, 'assignedTests'), (snap) => {
-      setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)));
-    });
-
-    // Jednorázové načtení pro data, která se v průběhu session nemění — šetří Firestore reads
-    const loadStaticData = async () => {
-      const [testsSnap, questionsSnap, sheetsSnap, coursesSnap, topicsSnap, fullCoursesSnap] = await Promise.all([
-        getDocs(collection(db, 'tests')),
-        getDocs(collection(db, 'questions')),
-        getDocs(collection(db, 'learningSheets')),
-        getDocs(collection(db, 'practiceCourses')),
-        getDocs(collection(db, 'customTopics')),
-        getDocs(query(collection(db, 'courses'), where('teacherId', '==', profile.uid))),
-      ]);
-      setTests(testsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Test)));
-      setQuestions(questionsSnap.docs.map(d => ({ id: d.id, ...d.data() } as Question)));
-      setLearningSheets(sheetsSnap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
-      setPracticeCourses(coursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as PracticeCourse)));
-      setCourses(fullCoursesSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course)));
-      setDbCustomTopics(topicsSnap.docs.map(d => d.data().name as string));
-    };
-    loadStaticData();
-
-    return () => {
-      unsubStudents();
-      unsubAssigned();
-    };
+    return () => unsubs.forEach(u => u());
   }, [profile]);
 
   const handleBulkDeleteQuestions = async () => {
@@ -459,23 +506,35 @@ export default function TeacherDashboard() {
           testId: detailedTest.id,
           studentId: selectedStudent.uid,
           testTitle: detailedTest.title,
-          testDescription: detailedTest.description,
+          testDescription: detailedTest.description || '',
           topic: detailedTest.topic || 'Test',
           autoGrade: false,
           status: 'pending',
           assignedAt: serverTimestamp(),
-          dueDate: Timestamp.fromDate(new Date(newAssignment.dueDate)),
-          createdBy: profile?.uid,
+          dueDate: newAssignment.dueDate ? Timestamp.fromDate(new Date(newAssignment.dueDate)) : null,
+          createdBy: profile?.uid || '',
           questions: detailedTest.questions.map(q => ({
-            id: q.id,
-            question: (q as any).text || q.question,
-            imageUrl: q.imageUrl,
+            id: q.id || crypto.randomUUID(),
+            question: (q as any).text || q.question || '',
+            imageUrl: q.imageUrl || null,
             type: q.type || 'open',
             options: q.options || [],
             topic: q.topic || 'Test'
           }))
         };
-        await addDoc(collection(db, 'assignedTests'), assignedPayload);
+        const assignedRef = await addDoc(collection(db, 'assignedTests'), assignedPayload);
+
+        await addDoc(collection(db, 'todos'), {
+          studentId: selectedStudent.uid,
+          title: `[Test] ${detailedTest.title}`,
+          type: 'test',
+          referenceId: detailedTest.id,
+          assignedTestId: assignedRef.id,
+          completed: false,
+          dueDate: newAssignment.dueDate ? Timestamp.fromDate(new Date(newAssignment.dueDate)) : null,
+          addedBy: profile?.uid || '',
+          createdAt: serverTimestamp()
+        });
       }
 
       toast.success('Test byl úspěšně přiřazen studentovi');
@@ -502,7 +561,7 @@ export default function TeacherDashboard() {
           id: Math.random().toString(36).substr(2, 9),
           question: q.text,
           type: q.type,
-          imageUrl: imageUrl || undefined,
+          imageUrl: imageUrl || null,
           correctAnswer: 'MANUAL_GRADING_REQUIRED', // Placeholder for open-ended
           options: [],
           topic: 'Znalost',
@@ -548,7 +607,7 @@ export default function TeacherDashboard() {
           id: q.id || Math.random().toString(36).substr(2, 9),
           question: q.text,
           type: q.type,
-          imageUrl: imageUrl || undefined,
+          imageUrl: imageUrl || null,
           correctAnswer: 'MANUAL_GRADING_REQUIRED', // Placeholder for open-ended
           options: [],
           topic: 'Znalost',
@@ -643,14 +702,27 @@ export default function TeacherDashboard() {
   };
 
   const handleDeleteFullCourse = async (courseId: string) => {
-    if (!confirm('Opravdu chcete tento kurz smazat? Tato akce je nevratná.')) return;
-    
+    setDeleteConfirmation({ type: 'course', id: courseId });
+  };
+
+  const executeDeleteCourse = async () => {
+    if (!deleteConfirmation) return;
+    const { type, id } = deleteConfirmation;
+
     try {
-      await deleteDoc(doc(db, 'courses', courseId));
-      setCourses(prev => prev.filter(c => c.id !== courseId));
-      toast.success('Kurz byl smazán.');
+      if (type === 'course') {
+        await deleteDoc(doc(db, 'courses', id));
+        setCourses(prev => prev.filter(c => c.id !== id));
+        toast.success('Kurz byl smazán.');
+      } else {
+        await deleteDoc(doc(db, 'practiceCourses', id));
+        setPracticeCourses(prev => prev.filter(c => c.id !== id));
+        toast.success('Sekce byla smazána');
+      }
     } catch (err: any) {
-      toast.error('Chyba při mazání kurzu: ' + err.message);
+      toast.error('Chyba při mazání: ' + err.message);
+    } finally {
+      setDeleteConfirmation(null);
     }
   };
 
@@ -763,14 +835,7 @@ export default function TeacherDashboard() {
   };
 
   const handleDeleteCourse = async (id: string) => {
-    if (!window.confirm('Opravdu chcete smazat tuto sekci? Otázky v ní zůstanou, ale nebudou k ní přiřazeny.')) return;
-    try {
-      await deleteDoc(doc(db, 'practiceCourses', id));
-      setPracticeCourses(prev => prev.filter(c => c.id !== id));
-      toast.success('Sekce byla smazána');
-    } catch (err) {
-      toast.error('Chyba při mazání sekce');
-    }
+    setDeleteConfirmation({ type: 'practiceCourse', id });
   };
 
   const handleDeleteQuestion = async (id: string) => {
@@ -850,7 +915,8 @@ export default function TeacherDashboard() {
         title: newSheet.title,
         subject: newSheet.subject,
         level: newSheet.level,
-        topic: newSheet.topic,
+        topic: newSheet.topics[0] || 'Obecné', // Keep topic for backward compatibility or when topics array is empty
+        topics: newSheet.topics, // Add multiple topics support
         fileUrl,
         fileType,
         createdBy: profile.uid,
@@ -868,7 +934,7 @@ export default function TeacherDashboard() {
       toast.dismiss(loadingToastId);
       toast.success('Materiál byl úspěšně vytvořen');
       setIsAddingSheet(false);
-      setNewSheet({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', file: null });
+      setNewSheet({ title: '', subject: 'Matematika', level: '2. stupeň ZŠ', topic: 'Aritmetika', topics: ['Aritmetika'], file: null });
 
     } catch (error: any) {
       console.error('Save Sheet Error:', error);
@@ -1101,8 +1167,8 @@ export default function TeacherDashboard() {
                 >
                   <div className="flex justify-between items-start mb-6 w-full">
                     <div className="flex flex-wrap gap-2 pr-2">
-                      {(course.topics?.length ? course.topics : [course.topic]).map(t => (
-                        <span key={t} className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
+                      {(course.topics?.length ? course.topics : [course.topic]).map((t, tidx) => (
+                        <span key={`${t}-${tidx}`} className="px-3 py-1 bg-white/60 backdrop-blur-md text-gray-700 rounded-xl text-[10px] font-black uppercase tracking-wider">
                           {t}
                         </span>
                       ))}
@@ -1235,8 +1301,58 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
+          <div className="flex flex-col md:flex-row gap-4 mb-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <Input 
+                placeholder="Hledat materiál podle názvu..." 
+                className="pl-12 h-14 rounded-2xl border-gray-200 focus:border-brand-purple focus:ring-brand-purple/20 text-lg"
+                value={sheetSearchQuery}
+                onChange={(e) => setSheetSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="w-full md:w-64">
+              <Select value={sheetSubjectFilter} onValueChange={setSheetSubjectFilter}>
+                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
+                  <SelectValue placeholder="Všechny předměty" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">Všechny předměty</SelectItem>
+                  {allSubjects.map(subject => (
+                    <SelectItem key={subject} value={subject}>{subject}</SelectItem>
+                  ))}
+                  {!allSubjects.includes('Matematika') && (
+                    <SelectItem value="Matematika">Matematika</SelectItem>
+                  )}
+                  {!allSubjects.includes('Angličtina') && (
+                    <SelectItem value="Angličtina">Angličtina</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-full md:w-64">
+              <Select value={sheetTopicFilter} onValueChange={setSheetTopicFilter}>
+                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
+                  <SelectValue placeholder="Všechna témata" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">Všechna témata</SelectItem>
+                  {allTopics.map(topic => (
+                    <SelectItem key={topic} value={topic}>{topic}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {learningSheets.map(sheet => (
+            {filteredLearningSheets.length === 0 ? (
+              <div className="col-span-full py-12 text-center bg-white/50 rounded-3xl border-2 border-dashed border-gray-200">
+                <BookOpen size={48} className="mx-auto text-gray-300 mb-4" />
+                <h3 className="text-xl font-bold text-gray-600 mb-2">Žádné materiály nebyly nalezeny</h3>
+                <p className="text-gray-500">Zkuste upravit filtry hledání nebo přidejte nový materiál.</p>
+              </div>
+            ) : filteredLearningSheets.map(sheet => (
               <Card key={sheet.id} className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all bg-white overflow-hidden group">
                 <CardHeader className="bg-purple-50/50 pb-6 p-8">
                   <div className="flex justify-between items-start mb-4">
@@ -1326,7 +1442,7 @@ export default function TeacherDashboard() {
               <p className="text-gray-500 text-lg">Sestavujte dlouhodobé výukové plány a sledujte progres skupin.</p>
             </div>
             <div className="flex gap-3">
-              <Button onClick={() => setIsAddingCourse(true)} className="btn-green rounded-[1.25rem] px-8 h-14 font-bold shadow-xl shadow-green-100">
+              <Button onClick={() => setIsAddingFullCourse(true)} className="btn-green rounded-[1.25rem] px-8 h-14 font-bold shadow-xl shadow-green-100">
                 <Plus size={20} className="mr-2" /> Nový kurz
               </Button>
             </div>
@@ -1420,14 +1536,14 @@ export default function TeacherDashboard() {
                 </div>
                 <h2 className="text-3xl font-display font-black text-gray-700 mb-4">Zatím nemáte žádné kurzy</h2>
                 <p className="text-gray-500 max-w-md mx-auto text-lg leading-relaxed">Vytvořte svůj první komplexní kurz a začněte organizovat výuku efektivně.</p>
-                <Button onClick={() => setIsAddingCourse(true)} className="mt-8 btn-green rounded-2xl h-14 px-10 font-bold">
+                <Button onClick={() => setIsAddingFullCourse(true)} className="mt-8 btn-green rounded-2xl h-14 px-10 font-bold">
                   Vytvořit první kurz
                 </Button>
               </div>
             )}
           </div>
 
-          <Dialog open={isAddingCourse} onOpenChange={setIsAddingCourse}>
+          <Dialog open={isAddingFullCourse} onOpenChange={setIsAddingFullCourse}>
             <DialogContent className="sm:max-w-[550px] rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
               <div className="p-8 pb-6 border-b border-gray-100 bg-green-50/30">
                 <DialogTitle className="text-3xl font-display font-black text-green-600 flex items-center gap-3">
@@ -1487,7 +1603,7 @@ export default function TeacherDashboard() {
                 </div>
 
                 <DialogFooter className="pt-6 border-t border-gray-50">
-                  <Button type="button" variant="ghost" onClick={() => setIsAddingCourse(false)} className="rounded-2xl h-14 font-bold">
+                  <Button type="button" variant="ghost" onClick={() => setIsAddingFullCourse(false)} className="rounded-2xl h-14 font-bold">
                     Zrušit
                   </Button>
                   <Button type="submit" disabled={isSavingCourse || !newFullCourse.title} className="btn-green rounded-2xl h-14 px-10 font-bold shadow-lg shadow-green-100">
@@ -1713,7 +1829,7 @@ export default function TeacherDashboard() {
           </div>
 
           <Dialog open={isAddingDetailedTest} onOpenChange={setIsAddingDetailedTest}>
-            <DialogContent className="max-w-[90vw] sm:max-w-3xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[90vh]">
+            <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-3xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[85dvh]">
               <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30 shrink-0">
                 <DialogTitle className="text-3xl font-display font-black text-brand-orange flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
@@ -1832,7 +1948,7 @@ export default function TeacherDashboard() {
             </DialogContent>
           </Dialog>
           <Dialog open={!!editingDetailedTest} onOpenChange={() => setEditingDetailedTest(null)}>
-            <DialogContent className="max-w-[90vw] sm:max-w-3xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[90vh]">
+            <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-3xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[85dvh]">
               <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 shrink-0">
                 <DialogTitle className="text-3xl font-display font-black text-brand-blue flex items-center gap-3">
                   <div className="w-12 h-12 rounded-2xl bg-white shadow-lg flex items-center justify-center">
@@ -1977,123 +2093,155 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {students.map(student => (
-              <Card key={student.uid} className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all overflow-hidden bg-white group">
-                <CardHeader className="bg-orange-50/30 pb-6 p-8 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform">
-                    <Users size={80} />
+          <div className="flex flex-col gap-4">
+            <div className="relative mb-2">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <Input 
+                placeholder="Hledat studenta podle jména nebo e-mailu..." 
+                className="pl-12 h-14 rounded-2xl border-gray-200 focus:border-brand-orange focus:ring-brand-orange/20 text-lg w-full"
+                value={studentSearchQuery}
+                onChange={(e) => setStudentSearchQuery(e.target.value)}
+              />
+            </div>
+            
+            {filteredStudents.length === 0 && students.length > 0 && (
+              <div className="py-12 text-center bg-white/50 rounded-3xl border-2 border-dashed border-gray-200">
+                <Users size={48} className="mx-auto text-gray-300 mb-4" />
+                <h3 className="text-xl font-bold text-gray-600 mb-2">Žádný student nenalezen</h3>
+                <p className="text-gray-500">Zkuste změnit hledaný výraz.</p>
+              </div>
+            )}
+
+            {filteredStudents.map(student => (
+              <div key={student.uid} className="flex flex-col md:flex-row items-center justify-between p-3 sm:p-4 bg-white rounded-2xl shadow-sm hover:shadow-md transition-all border border-gray-100 gap-3 group">
+                <div className="flex items-center gap-3 w-full md:w-auto overflow-hidden">
+                  <div className="w-12 h-12 sm:w-14 sm:h-14 bg-orange-50 group-hover:bg-brand-orange group-hover:text-white transition-colors rounded-xl flex items-center justify-center text-brand-orange font-display text-xl sm:text-2xl font-black shrink-0 shadow-inner">
+                    {student.name.charAt(0)}
                   </div>
-                  <div className="flex items-center gap-4 relative z-10">
-                    <div className="w-16 h-16 bg-white shadow-xl rounded-[1.25rem] flex items-center justify-center text-brand-orange font-display text-3xl font-black">
-                      {student.name.charAt(0)}
-                    </div>
-                    <div>
-                      <CardTitle className="text-2xl font-display font-black text-gray-900 leading-tight">{student.name}</CardTitle>
-                      <CardDescription className="text-gray-400 font-bold uppercase tracking-widest text-[10px] mt-1">{student.email}</CardDescription>
-                    </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg sm:text-xl font-display font-black text-gray-900 leading-tight truncate">{student.name}</h3>
+                    <p className="text-gray-400 font-bold uppercase tracking-wider text-[10px] sm:text-xs mt-0.5 truncate">{student.email}</p>
                   </div>
-                </CardHeader>
-                <CardContent className="p-8 pt-6 space-y-6">
-                  <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl transition-colors group-hover:bg-orange-50/50">
-                    <div className="flex items-center gap-2 text-gray-500 font-bold">
+                </div>
+
+                <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto pb-2 md:pb-0 scrollbar-hide">
+                  <div className="flex items-center gap-2 px-3 py-1.5 bg-orange-50/50 rounded-xl shrink-0">
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 bg-white rounded-lg shadow-sm flex items-center justify-center text-brand-orange shrink-0">
                       <GraduationCap size={18} />
-                      <span className="text-sm">Splněné testy:</span>
                     </div>
-                    <span className="font-black text-xl text-brand-orange">
-                      {assignedTests.filter(at => at.studentId === student.uid && at.status === 'graded').length}
-                    </span>
+                    <div className="flex flex-col">
+                      <span className="text-[9px] sm:text-[10px] text-gray-400 font-bold uppercase tracking-widest leading-none mb-1">Splněno</span>
+                      <span className="font-black text-base sm:text-lg text-gray-900 leading-none">
+                        {assignedTests.filter(at => at.studentId === student.uid && at.status === 'graded').length}
+                      </span>
+                    </div>
                   </div>
 
-                  {student.focusAreas && student.focusAreas.length > 0 ? (
-                    <div className="space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-black text-orange-500 uppercase tracking-widest">
-                        <Sparkles size={14} /> Doporučení AI:
-                      </div>
-                      <div className="flex flex-wrap gap-1.5">
-                        {student.focusAreas?.slice(0, 3).map((area, i) => (
-                          <span key={i} className="px-3 py-1.5 bg-orange-50 text-orange-600 rounded-xl text-[10px] font-black uppercase tracking-wider">
-                            {area}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="h-[60px] flex items-center text-gray-300 italic text-sm font-bold border-t border-dashed border-gray-100 pt-4">
-                      Zatím žádná AI doporučení
-                    </div>
+                  {student.focusAreas && student.focusAreas.length > 0 && (
+                     <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-xl shrink-0 max-w-[200px] sm:max-w-[250px]">
+                        <Sparkles size={14} className="text-orange-400 shrink-0" />
+                        <div className="flex flex-wrap gap-1 overflow-hidden h-[20px] sm:h-[24px]">
+                          {student.focusAreas.slice(0, 2).map((area, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-white text-gray-600 rounded-md text-[9px] sm:text-[10px] font-bold uppercase tracking-wider shadow-sm truncate max-w-[80px] sm:max-w-[100px]">
+                              {area}
+                            </span>
+                          ))}
+                        </div>
+                     </div>
                   )}
+                </div>
 
-                  <div className="grid grid-cols-2 gap-3 mt-4">
-                    <Button
-                      onClick={() => setSelectedStudent(student)}
-                      variant="outline"
-                      className="h-14 rounded-2xl border-2 border-gray-100 hover:border-brand-orange hover:text-brand-orange font-black"
-                    >
-                      Profil žáka
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setViewingStudentForTodo(student);
-                        setIsTodoViewOpen(true);
-                      }}
-                      className="h-14 rounded-2xl gap-2 bg-brand-blue hover:bg-brand-blue/90 text-white font-black shadow-lg shadow-blue-100"
-                    >
-                      <Clock size={16} />
-                      TODO List
-                    </Button>
-                    <Button 
-                      onClick={() => {
-                        setSelectedStudent(student);
-                        setIsAssigningTest(true);
-                      }}
-                      className="h-14 rounded-2xl gap-2 btn-orange shadow-lg shadow-orange-100 font-black"
-                    >
-                      Přiřadit test
-                    </Button>
-                    <Dialog open={isAssigningTest && selectedStudent?.uid === student.uid} onOpenChange={(open) => {
-                      setIsAssigningTest(open);
-                      if (!open) setSelectedStudent(null);
-                    }}>
-                      <DialogContent className="rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
-                        <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30">
-                          <DialogTitle className="text-3xl font-display font-black text-brand-orange">Přiřadit test</DialogTitle>
-                          <DialogDescription className="text-lg font-bold text-gray-500 mt-2">Student: {student.name}</DialogDescription>
-                        </div>
-                        <div className="p-8 space-y-6 bg-white">
-                          <div className="space-y-3">
-                            <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Výběr procvičování</Label>
-                            <Select onValueChange={(val: string) => setNewAssignment({ ...newAssignment, courseId: val })}>
-                              <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6">
-                                <SelectValue placeholder="Vyberte téma procvičování..." />
-                              </SelectTrigger>
-                              <SelectContent className="rounded-2xl">
-                                {([...practiceCourses]).map(course => (
-                                  <SelectItem key={course.id} value={course.id || ''} className="rounded-xl">{course.title}</SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-3">
-                            <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Datum odevzdání (Deadline)</Label>
-                            <Input
-                              type="date"
-                              className="rounded-2xl h-14 border-gray-100 px-6"
-                              value={newAssignment.dueDate}
-                              onChange={(e) => setNewAssignment({ ...newAssignment, dueDate: e.target.value })}
-                            />
-                          </div>
-                        </div>
-                        <div className="p-8 bg-gray-50 border-t border-gray-100">
-                          <Button onClick={handleAssignTest} className="btn-orange w-full rounded-2xl h-14 text-lg font-black shadow-xl shadow-orange-100">
-                            Potvrdit a odeslat
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-                </CardContent>
-              </Card>
+                <div className="flex items-center gap-2 w-full md:w-auto shrink-0 justify-start sm:justify-end flex-wrap sm:flex-nowrap">
+                  <Button
+                    onClick={() => setSelectedStudent(student)}
+                    variant="outline"
+                    className="h-10 sm:h-12 rounded-xl border-gray-200 hover:border-brand-orange hover:text-brand-orange font-bold px-3 sm:px-4 text-xs sm:text-sm"
+                  >
+                    Profil
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setViewingStudentForTodo(student);
+                      setIsTodoViewOpen(true);
+                    }}
+                    className="h-10 sm:h-12 rounded-xl gap-2 bg-brand-blue hover:bg-brand-blue/90 text-white font-bold shadow-sm shadow-blue-100 px-3 sm:px-4 text-xs sm:text-sm"
+                  >
+                    <Clock size={14} />
+                    <span className="hidden xs:inline">TODO</span>
+                  </Button>
+                  <Button 
+                    onClick={() => {
+                      setSelectedStudent(student);
+                      setIsAssigningTest(true);
+                    }}
+                    className="h-10 sm:h-12 rounded-xl gap-2 btn-orange shadow-sm shadow-orange-100 font-bold px-3 sm:px-4 text-xs sm:text-sm"
+                  >
+                    <Plus size={14} />
+                    <span className="hidden xs:inline">Přiřadit</span>
+                  </Button>
+                </div>
+
+                <Dialog open={isAssigningTest && selectedStudent?.uid === student.uid} onOpenChange={(open) => {
+                  setIsAssigningTest(open);
+                  if (!open) setSelectedStudent(null);
+                }}>
+                  <DialogContent className="rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl">
+                    <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30">
+                      <DialogTitle className="text-3xl font-display font-black text-brand-orange">Přiřadit test</DialogTitle>
+                      <DialogDescription className="text-lg font-bold text-gray-500 mt-2">Student: {student.name}</DialogDescription>
+                    </div>
+                    <div className="p-8 space-y-6 bg-white">
+                      <div className="space-y-3">
+                        <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Výběr materiálu k přiřazení</Label>
+                        <Select value={newAssignment.courseId} onValueChange={(val: string) => setNewAssignment({ ...newAssignment, courseId: val })}>
+                          <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6">
+                            <SelectValue placeholder="Vyberte téma procvičování nebo test..." />
+                          </SelectTrigger>
+                          <SelectContent className="rounded-2xl max-h-[300px]">
+                            <div className="p-2 border-b border-gray-100 mb-1 sticky top-0 bg-white z-10">
+                              <Input 
+                                placeholder="Hledat test nebo procvičování..." 
+                                value={assignSearchQuery}
+                                onChange={(e) => setAssignSearchQuery(e.target.value)}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                className="h-10 rounded-xl bg-gray-50/50"
+                              />
+                            </div>
+                            <div className="px-2 py-1 text-xs font-bold text-gray-400 uppercase">Testy</div>
+                            {tests.filter(t => t.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).map(test => (
+                              <SelectItem key={test.id} value={test.id} className="rounded-xl font-medium">📝 {test.title}</SelectItem>
+                            ))}
+                            {tests.filter(t => t.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).length === 0 && (
+                               <div className="px-3 py-2 text-sm text-gray-400 italic">Žádné testy nenalezeny</div>
+                            )}
+                            <div className="px-2 py-1 mt-2 text-xs font-bold text-gray-400 uppercase">Procvičování</div>
+                            {practiceCourses.filter(c => c.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).map(course => (
+                              <SelectItem key={course.id} value={course.id || ''} className="rounded-xl font-medium">🎯 {course.title}</SelectItem>
+                            ))}
+                            {practiceCourses.filter(c => c.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).length === 0 && (
+                               <div className="px-3 py-2 text-sm text-gray-400 italic">Žádné procvičování nenalezeno</div>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-3">
+                        <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Datum odevzdání (Deadline)</Label>
+                        <Input
+                          type="date"
+                          className="rounded-2xl h-14 border-gray-100 px-6"
+                          value={newAssignment.dueDate}
+                          onChange={(e) => setNewAssignment({ ...newAssignment, dueDate: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="p-8 bg-gray-50 border-t border-gray-100">
+                      <Button onClick={handleAssignTest} className="btn-orange w-full rounded-2xl h-14 text-lg font-black shadow-xl shadow-orange-100">
+                        Potvrdit a odeslat
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
             ))}
           </div>
         </TabsContent>
@@ -2101,7 +2249,7 @@ export default function TeacherDashboard() {
 
       {/* Test Preview Dialog */}
       <Dialog open={!!previewTest} onOpenChange={handleCloseTestPreview}>
-        <DialogContent className="max-w-[95vw] sm:max-w-6xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[90vh]">
+        <DialogContent className="max-w-[95vw] sm:max-w-6xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[85dvh]">
           <div className="flex flex-col md:flex-row flex-1 overflow-hidden h-full">
             {/* Left side - Test Preview */}
             <div className="flex-1 overflow-y-auto p-8 lg:p-12 relative bg-white">
@@ -2269,7 +2417,7 @@ export default function TeacherDashboard() {
 
       {/* View Questions Dialog */}
       <Dialog open={!!viewingCourseId} onOpenChange={(open) => !open && setViewingCourseId(null)}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -2383,7 +2531,7 @@ export default function TeacherDashboard() {
 
       {/* Add Question Dialog */}
       <Dialog open={isAddingQuestion} onOpenChange={setIsAddingQuestion}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -2497,7 +2645,7 @@ export default function TeacherDashboard() {
 
       {/* View Material Detail Dialog */}
       <Dialog open={!!selectedSheetForView} onOpenChange={(open) => !open && setSelectedSheetForView(null)}>
-        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[98vh] h-[98vh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
+        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
           {selectedSheetForView && (
             <div className="flex flex-col h-full w-full bg-white">
               <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
@@ -2543,44 +2691,7 @@ export default function TeacherDashboard() {
               <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
                 {selectedSheetForView.fileUrl ? (
                   <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
-                    {pdfBlobUrl ? (
-                      <iframe
-                        key={pdfBlobUrl}
-                        src={pdfBlobUrl}
-                        className="w-full h-full border-none"
-                        title={selectedSheetForView.title}
-                      />
-                    ) : (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
-                        <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
-                          <FileText size={48} />
-                        </div>
-                        <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
-                        <p className="text-gray-500 max-w-sm mb-10 font-medium">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej však otevřít v novém panelu nebo stáhnout.</p>
-                        
-                        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
-                          <Button 
-                            variant="default"
-                            className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
-                            onClick={() => window.open(selectedSheetForView.fileUrl, '_blank')}
-                          >
-                            <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
-                            onClick={() => {
-                              const a = document.createElement('a');
-                              a.href = selectedSheetForView.fileUrl || '';
-                              a.download = `${selectedSheetForView.title || 'material'}.pdf`;
-                              a.click();
-                            }}
-                          >
-                            <Download size={22} /> Stáhnout PDF
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+                    <PDFViewer url={selectedSheetForView.fileUrl} title={selectedSheetForView.title} />
                   </div>
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center">
@@ -2596,7 +2707,7 @@ export default function TeacherDashboard() {
 
       {/* Edit Question Dialog */}
       <Dialog open={isEditingQuestion} onOpenChange={setIsEditingQuestion}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -2715,7 +2826,7 @@ export default function TeacherDashboard() {
 
       {/* Student Profile Dialog */}
       <Dialog open={!!selectedStudent} onOpenChange={(open) => !open && setSelectedStudent(null)}>
-        <DialogContent className="max-w-4xl w-full h-[80vh] flex flex-col rounded-[2.5rem] border-none shadow-2xl p-0 overflow-hidden">
+        <DialogContent className="max-w-4xl w-full h-[80dvh] flex flex-col rounded-[2.5rem] border-none shadow-2xl p-0 overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="flex items-center gap-4">
               <div className="w-16 h-16 bg-white shadow-md rounded-2xl flex items-center justify-center text-brand-blue font-display text-3xl font-bold">
@@ -2834,15 +2945,24 @@ export default function TeacherDashboard() {
                         <SelectTrigger className="rounded-2xl h-14 border-gray-100 px-6 bg-gray-50/50">
                           <SelectValue placeholder="Vyberte téma nebo detailní test..." />
                         </SelectTrigger>
-                        <SelectContent className="rounded-2xl">
+                        <SelectContent className="rounded-2xl max-h-[300px]">
+                          <div className="p-2 border-b border-gray-100 mb-1 sticky top-0 bg-white z-10">
+                            <Input 
+                              placeholder="Hledat test nebo procvičování..." 
+                              value={assignSearchQuery}
+                              onChange={(e) => setAssignSearchQuery(e.target.value)}
+                              onKeyDown={(e) => e.stopPropagation()}
+                              className="h-10 rounded-xl bg-gray-50/50"
+                            />
+                          </div>
                           <div className="p-2 text-[10px] font-black text-gray-400 uppercase tracking-widest bg-gray-50 mb-1 rounded-lg">Procvičování (Automatické)</div>
-                          {practiceCourses.map(course => (
+                          {practiceCourses.filter(c => c.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).map(course => (
                             <SelectItem key={course.id} value={course.id || ''} className="rounded-xl">{course.title}</SelectItem>
                           ))}
                           {tests.filter(t => t.createdBy === profile?.uid).length > 0 && (
                             <>
                               <div className="p-2 text-[10px] font-black text-gray-400 uppercase tracking-widest bg-gray-50 my-1 rounded-lg">Detailní testy (Manuální oprava)</div>
-                              {tests.filter(t => t.createdBy === profile?.uid).map(test => (
+                              {tests.filter(t => t.createdBy === profile?.uid && t.title.toLowerCase().includes(assignSearchQuery.toLowerCase())).map(test => (
                                 <SelectItem key={test.id} value={test.id} className="rounded-xl">{test.title}</SelectItem>
                               ))}
                             </>
@@ -2880,7 +3000,7 @@ export default function TeacherDashboard() {
 
       {/* Add Sheet Dialog */}
       <Dialog open={isAddingSheet} onOpenChange={setIsAddingSheet}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
              <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -2891,7 +3011,7 @@ export default function TeacherDashboard() {
           <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
             <div className="max-w-6xl mx-auto space-y-8 w-full">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
+                <div className="space-y-2 md:col-span-2">
                   <Label className="font-bold text-gray-700">Název materiálu</Label>
                   <Input
                     value={newSheet.title}
@@ -2900,32 +3020,47 @@ export default function TeacherDashboard() {
                     className="rounded-xl h-14 border-gray-100 bg-white"
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label className="font-bold text-gray-700">Téma</Label>
-                  <Select value={newSheet.topic} onValueChange={(val: MathTopic) => setNewSheet({ ...newSheet, topic: val })}>
-                    <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white">
-                      <SelectValue placeholder="Vyberte téma..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {MATH_TOPICS.map(topic => (
-                        <SelectItem key={topic} value={topic}>{topic}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                
                 <div className="space-y-2">
                   <Label className="font-bold text-gray-700">Předmět</Label>
-                  <Select value={newSheet.subject} onValueChange={(val: string) => setNewSheet({ ...newSheet, subject: val })}>
+                  <Select value={newSheet.subject} onValueChange={(val: string) => {
+                    if (val === '__NEW__') {
+                      setIsAddingNewSubjectForSheet(true);
+                      setNewSheet({ ...newSheet, subject: '' });
+                    } else {
+                      setNewSheet({ ...newSheet, subject: val, topics: [] });
+                      setIsAddingNewSubjectForSheet(false);
+                    }
+                  }}>
                     <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white">
                       <SelectValue placeholder="Vyberte předmět..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {SUBJECTS.map(subject => (
+                      {allSubjects.map(subject => (
                         <SelectItem key={subject} value={subject}>{subject}</SelectItem>
                       ))}
+                      <SelectItem value="__NEW__" className="text-brand-purple font-bold border-t mt-1 pt-2">+ Přidat nový předmět...</SelectItem>
                     </SelectContent>
                   </Select>
+                  {isAddingNewSubjectForSheet && (
+                    <div className="flex gap-2 mt-2">
+                      <Input
+                        value={newSubjectInputForSheet}
+                        onChange={(e) => setNewSubjectInputForSheet(e.target.value)}
+                        placeholder="Napište nový předmět..."
+                        className="rounded-xl flex-1"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddNewSubjectForSheet();
+                          }
+                        }}
+                      />
+                      <Button onClick={handleAddNewSubjectForSheet} className="rounded-xl" variant="outline">Přidat</Button>
+                    </div>
+                  )}
                 </div>
+
                 <div className="space-y-2">
                   <Label className="font-bold text-gray-700">Stupeň</Label>
                   <Select value={newSheet.level} onValueChange={(val: string) => setNewSheet({ ...newSheet, level: val })}>
@@ -2938,6 +3073,92 @@ export default function TeacherDashboard() {
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-3 col-span-1 md:col-span-2">
+                  <div className="flex justify-between items-end">
+                    <Label className="font-bold text-gray-700">Témata pro {newSheet.subject || 'vybraný předmět'} (lze vybrat více)</Label>
+                    {newSheet.subject && (
+                      <div className="flex gap-2">
+                        <Button 
+                          type="button"
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => setIsDeletingTopicMode(!isDeletingTopicMode)}
+                          className={`text-xs h-8 ${isDeletingTopicMode ? 'bg-red-100 text-red-600' : 'text-gray-500'}`}
+                        >
+                          <Trash2 size={14} className="mr-1" /> Režim mazání
+                        </Button>
+                        <Button 
+                          type="button"
+                          variant="ghost" 
+                          size="sm" 
+                          onClick={() => handleDeleteAllCustomTopicsForSubject(newSheet.subject)}
+                          className="text-xs h-8 text-red-500 hover:text-red-700 hover:bg-red-50"
+                        >
+                          Smazat všechna moje
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                  {newSheet.subject ? (
+                    <>
+                      <div className="flex flex-wrap gap-2">
+                        {allTopicsWithSubjects.filter(t => t.subject === newSheet.subject).map(topic => {
+                          const isSelected = newSheet.topics.includes(topic.name);
+                          
+                          if (isDeletingTopicMode) {
+                            return (
+                              <div
+                                key={topic.name}
+                                onClick={(e) => topic.id ? handleDeleteCustomTopic(e, topic) : toast.info('Výchozí téma nelze smazat')}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium cursor-pointer transition-colors border bg-red-50 text-red-600 border-red-200 hover:bg-red-100 animate-pulse`}
+                              >
+                                <span>{topic.name}</span>
+                                {topic.id && <Trash2 size={14} />}
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div
+                              key={topic.name}
+                              onClick={() => handleToggleTopicForSheet(topic.name)}
+                              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium cursor-pointer transition-colors border ${isSelected ? 'bg-brand-blue text-white border-brand-blue shadow-sm' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}
+                            >
+                              <span>{topic.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex gap-2 max-w-sm mt-3">
+                        <Input
+                          value={newTopicInputForSheet}
+                          onChange={(e) => setNewTopicInputForSheet(e.target.value)}
+                          placeholder="Zadat nové téma..."
+                          className="h-10 rounded-xl"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddNewTopicForSheet();
+                            }
+                          }}
+                        />
+                        <Button 
+                          type="button" 
+                          variant="outline" 
+                          className="h-10 rounded-xl px-4"
+                          onClick={() => handleAddNewTopicForSheet()}
+                        >
+                          Přidat
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="p-4 bg-gray-50 text-gray-500 rounded-xl text-sm italic">
+                      Nejprve vyberte předmět, aby se zobrazila témata.
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2987,7 +3208,7 @@ export default function TeacherDashboard() {
 
       {/* Grading Dialog */}
       <Dialog open={isGrading} onOpenChange={(open) => !open && setIsGrading(false)}>
-        <DialogContent className="max-w-[95vw] sm:max-w-4xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[90vh]">
+        <DialogContent className="max-w-[95vw] sm:max-w-4xl rounded-[2.5rem] p-0 overflow-hidden border-none shadow-2xl flex flex-col h-[85dvh]">
           <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30 shrink-0">
             <DialogTitle className="text-3xl font-display font-black text-brand-orange flex items-center gap-3">
               Oprava testu: {gradingTest?.testTitle}
@@ -3067,7 +3288,7 @@ export default function TeacherDashboard() {
 
       {/* Import PDF Dialog */}
       <Dialog open={isImportingPDF} onOpenChange={setIsImportingPDF}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -3181,7 +3402,7 @@ export default function TeacherDashboard() {
 
       {/* Add Course Dialog */}
       <Dialog open={isAddingCourse} onOpenChange={setIsAddingCourse}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-blue-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -3213,8 +3434,8 @@ export default function TeacherDashboard() {
                 <div className="space-y-4 md:col-span-2">
                   <Label className="font-bold text-gray-700">Témata (vyberte nebo vytvořte) <span className="text-gray-400 font-normal">(jedno procvičování může mít více témat)</span></Label>
                   <div className="flex flex-wrap gap-2 mb-2">
-                    {newCourse.topics && newCourse.topics.length > 0 ? newCourse.topics.map(t => (
-                      <span key={t} className="px-3 py-1 bg-blue-100 text-brand-blue rounded-full text-sm font-bold flex items-center gap-2">
+                    {newCourse.topics && newCourse.topics.length > 0 ? newCourse.topics.map((t, tidx) => (
+                      <span key={`${t}-${tidx}`} className="px-3 py-1 bg-blue-100 text-brand-blue rounded-full text-sm font-bold flex items-center gap-2">
                         {t}
                         <button onClick={(e) => {
                           e.preventDefault();
@@ -3332,7 +3553,7 @@ export default function TeacherDashboard() {
 
       {/* Edit Course Dialog */}
       <Dialog open={!!editingCourse} onOpenChange={(open) => !open && setEditingCourse(null)}>
-        <DialogContent className="max-w-[90vw] sm:max-w-[90vw] w-[90vw] h-[90vh] max-h-[90vh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
+        <DialogContent className="max-w-[95vw] md:w-[90vw] sm:max-w-[95vw] md:w-[90vw] w-[95vw] md:w-[90vw] h-[85dvh] max-h-[85dvh] p-0 rounded-[2.5rem] flex flex-col border-none shadow-2xl overflow-hidden">
           <div className="p-8 pb-6 border-b border-gray-100 bg-orange-50/30 flex-shrink-0">
             <div className="max-w-6xl mx-auto w-full">
               <DialogHeader>
@@ -3362,8 +3583,8 @@ export default function TeacherDashboard() {
                 <div className="space-y-4 md:col-span-2">
                   <Label className="font-bold text-gray-700">Témata (vyberte nebo vytvořte)</Label>
                   <div className="flex flex-wrap gap-2 mb-2">
-                    {editingCourse?.topics && editingCourse.topics.length > 0 ? editingCourse.topics.map(t => (
-                      <span key={t} className="px-3 py-1 bg-blue-100 text-brand-blue rounded-full text-sm font-bold flex items-center gap-2">
+                    {editingCourse?.topics && editingCourse.topics.length > 0 ? editingCourse.topics.map((t, tidx) => (
+                      <span key={`${t}-${tidx}`} className="px-3 py-1 bg-blue-100 text-brand-blue rounded-full text-sm font-bold flex items-center gap-2">
                         {t}
                         <button onClick={(e) => {
                           e.preventDefault();
@@ -3455,6 +3676,35 @@ export default function TeacherDashboard() {
                 </Button>
               </DialogFooter>
             </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!deleteConfirmation} onOpenChange={(open) => !open && setDeleteConfirmation(null)}>
+        <DialogContent className="max-w-[400px] rounded-[2rem] p-0 overflow-hidden border-none shadow-2xl">
+          <div className="p-8 pb-6 border-b border-gray-100 bg-red-50/30">
+            <DialogHeader>
+              <DialogTitle className="text-2xl font-display font-black text-red-600 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white shadow-md flex items-center justify-center shrink-0">
+                  <Trash2 size={20} className="text-red-500" />
+                </div>
+                Opravdu smazat?
+              </DialogTitle>
+              <DialogDescription className="text-base font-medium text-gray-600 mt-3">
+                {deleteConfirmation?.type === 'course' 
+                  ? 'Tato akce je nevratná. Kurz a všechna přiřazení budou navždy odstraněny.'
+                  : 'Otázky v této sekci zůstanou zachovány ve vaší bance otázek, ale nebudou k ní již přiřazeny.'}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="p-6 bg-white flex items-center gap-3 w-full">
+             <Button variant="ghost" onClick={() => setDeleteConfirmation(null)} className="flex-1 h-12 rounded-xl font-bold bg-gray-50 hover:bg-gray-100">
+               Zrušit
+             </Button>
+             <Button onClick={executeDeleteCourse} className="flex-1 h-12 rounded-xl font-bold bg-red-500 hover:bg-red-600 shadow-lg shadow-red-100 text-white">
+               Smazat
+             </Button>
           </div>
         </DialogContent>
       </Dialog>

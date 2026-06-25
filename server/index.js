@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
-import { applicationDefault, cert, getApps, initializeApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
@@ -105,7 +105,8 @@ function initializeFirebaseAdmin() {
 initializeFirebaseAdmin();
 
 const auth = getAuth();
-const db = getFirestore('ai-studio-1fc75345-16e5-4af6-a275-4152ed6176ba');
+const appInstance = getApps().length > 0 ? getApp() : undefined;
+const db = getFirestore(appInstance, 'ai-studio-1fc75345-16e5-4af6-a275-4152ed6176ba');
 const storage = getStorage();
 const app = express();
 
@@ -272,16 +273,35 @@ async function requireAuth(req, res, next) {
 
     const decodedToken = await auth.verifyIdToken(token);
     
-    // We avoid fetching the profile from Firestore during auth middleware to prevent "PERMISSION_DENIED" 
-    // if the service account doesn't have enough permissions for the specific DB ID.
-    // Instead, we determine the role based on the email or token data.
-    const isTeacher = decodedToken.email === ADMIN_FALLBACK_EMAIL || 
-                    decodedToken.email === 'ucitel@ucitel.cz'; // Hardcoded for your debugging
+    let role = 'student';
+    const userRef = db.collection('users').doc(decodedToken.uid);
+    const userDoc = await userRef.get();
+    
+    const isTeacherEmail = decodedToken.email === ADMIN_FALLBACK_EMAIL || 
+                          decodedToken.email === 'ucitel@ucitel.cz';
+                          
+    if (userDoc.exists) {
+      const data = userDoc.data();
+      role = data.role || 'student';
+      if (isTeacherEmail && role !== 'teacher') {
+        await userRef.update({ role: 'teacher' });
+        role = 'teacher';
+      }
+    } else {
+      role = isTeacherEmail ? 'teacher' : 'student';
+      await userRef.set({
+        uid: decodedToken.uid,
+        email: decodedToken.email || '',
+        name: decodedToken.name || (isTeacherEmail ? 'Učitel' : 'Student'),
+        role: role,
+        createdAt: Timestamp.now(),
+      });
+    }
 
     req.user = {
       uid: decodedToken.uid,
       email: decodedToken.email || '',
-      role: isTeacher ? 'teacher' : 'student',
+      role: role,
     };
 
     next();
@@ -479,6 +499,22 @@ app.post('/api/assigned-tests/:id/submit', requireAuth, async (req, res) => {
     const totalQuestions = test.questions.length;
     const correctAnswers = Object.values(topicPerformance).reduce((sum, stats) => sum + stats.correct, 0);
     const percentage = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
+
+    // Complete associated todo items
+    try {
+      const todosSnapshot = await db.collection('todos')
+        .where('assignedTestId', '==', req.params.id)
+        .where('studentId', '==', assignedTest.studentId)
+        .get();
+      for (const tDoc of todosSnapshot.docs) {
+        await tDoc.ref.update({
+          completed: true,
+          completedAt: Timestamp.now(),
+        });
+      }
+    } catch (todoError) {
+      console.error('Failed to update associated todo items:', todoError);
+    }
 
     if (test.autoGrade) {
       const reviewQuestions = buildReviewQuestions(test.questions, answers);

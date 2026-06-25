@@ -2,6 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // --- HELPER FUNCTIONS ---
+
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -12,11 +14,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher' ||
-          request.auth.token.email == "davidfaltus03@gmail.com" ||
-          request.auth.token.email == "ucitel@ucitel.cz"
-        );
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
     }
 
     function unchanged(field) {
@@ -31,83 +29,210 @@ service cloud.firestore {
         unchanged('testId');
     }
 
+    // --- SCHEMAS VALIDATIONS ---
+
+    function isValidUser(data) {
+      return data.uid is string && data.uid.size() <= 128 &&
+             data.email is string && data.email.size() <= 256 &&
+             data.name is string && data.name.size() <= 128 &&
+             data.role is string && (data.role == 'student' || data.role == 'teacher') &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidTest(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 1000)) &&
+             (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             (!('autoGrade' in data) || data.autoGrade == null || data.autoGrade is bool) &&
+             data.createdBy is string && data.createdBy.size() <= 128 &&
+             (!('studentId' in data) || data.studentId == null || (data.studentId is string && data.studentId.size() <= 128)) &&
+             data.questions is list && data.questions.size() <= 200 &&
+             data.createdAt is timestamp &&
+             (!('courseId' in data) || data.courseId == null || (data.courseId is string && data.courseId.size() <= 128));
+    }
+
+    function isValidQuestion(data) {
+      return data.question is string && data.question.size() <= 1000 &&
+             data.options is list && data.options.size() <= 10 &&
+             data.correctAnswer is string && data.correctAnswer.size() <= 256 &&
+             (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             data.createdBy is string && data.createdBy.size() <= 128;
+    }
+
+    function isValidAssignedTest(data) {
+      return data.testId is string && data.testId.size() <= 128 &&
+             data.studentId is string && data.studentId.size() <= 128 &&
+             data.testTitle is string && data.testTitle.size() <= 256 &&
+             (!('testDescription' in data) || data.testDescription == null || (data.testDescription is string && data.testDescription.size() <= 1000)) &&
+             (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             (!('autoGrade' in data) || data.autoGrade == null || data.autoGrade is bool) &&
+             data.status is string && (data.status == 'pending' || data.status == 'submitted' || data.status == 'graded') &&
+             data.assignedAt is timestamp &&
+             (!('courseId' in data) || data.courseId == null || (data.courseId is string && data.courseId.size() <= 128)) &&
+             (!('dueDate' in data) || data.dueDate == null || data.dueDate is timestamp) &&
+             (!('answers' in data) || data.answers is map) &&
+             (!('topicPerformance' in data) || data.topicPerformance is map) &&
+             (!('reviewQuestions' in data) || data.reviewQuestions is list) &&
+             (!('feedback' in data) || data.feedback is string) &&
+             (!('grade' in data) || data.grade is string) &&
+             (!('gradedAt' in data) || data.gradedAt is timestamp) &&
+             (!('submittedAt' in data) || data.submittedAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy == null || (data.createdBy is string && data.createdBy.size() <= 128));
+    }
+
+    function isValidLearningSheet(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.createdBy is string && data.createdBy.size() <= 128 &&
+             data.createdAt is timestamp &&
+             (!('fileUrl' in data) || data.fileUrl == null || (data.fileUrl is string && data.fileUrl.size() <= 2048)) &&
+             (!('fileType' in data) || data.fileType == null || (data.fileType is string && data.fileType.size() <= 128)) &&
+             (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
+             (!('level' in data) || data.level == null || (data.level is string && data.level.size() <= 128)) &&
+             (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             (!('topics' in data) || data.topics == null || data.topics is list) &&
+             (!('content' in data) || data.content == null || data.content is string);
+    }
+
+    function isValidPracticeCourse(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.description is string && data.description.size() <= 1000 &&
+             (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             (!('topics' in data) || data.topics == null || data.topics is list) &&
+             (!('difficulty' in data) || data.difficulty == null || (data.difficulty is string)) &&
+             (!('questionCount' in data) || data.questionCount == null || data.questionCount is int || data.questionCount is string) &&
+             (!('color' in data) || data.color == null || (data.color is string)) &&
+             (!('createdBy' in data) || data.createdBy == null || (data.createdBy is string)) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp);
+    }
+
+    function isValidTodo(data) {
+      return data.studentId is string && data.studentId.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 &&
+             data.type is string && (data.type == 'practice' || data.type == 'test' || data.type == 'material' || data.type == 'custom' || data.type == 'course_lesson' || data.type == 'course_material' || data.type == 'course_practice') &&
+             data.completed is bool &&
+             data.addedBy is string && data.addedBy.size() <= 128 &&
+             data.createdAt is timestamp &&
+             (!('dueDate' in data) || data.dueDate == null || data.dueDate is timestamp) &&
+             (!('completedAt' in data) || data.completedAt == null || data.completedAt is timestamp) &&
+             (!('assignedTestId' in data) || data.assignedTestId == null || data.assignedTestId is string) &&
+             (!('referenceId' in data) || data.referenceId == null || data.referenceId is string);
+    }
+
+    function isValidCustomItem(data) {
+      return data.name is string && data.name.size() <= 256;
+    }
+
+    function isValidCourse(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.description is string && data.description.size() <= 1000 &&
+             data.teacherId is string && data.teacherId.size() <= 128 &&
+             data.studentIds is list && data.studentIds.size() <= 100;
+    }
+
+    function isValidCourseItem(data) {
+      return data.courseId is string && data.courseId.size() <= 128 &&
+             data.title is string && data.title.size() <= 256 &&
+             data.type is string && (data.type == 'pdf' || data.type == 'video' || data.type == 'link' || data.type == 'text' || data.type == 'test' || data.type == 'material' || data.type == 'lesson') &&
+             data.addedBy is string && data.addedBy.size() <= 128 &&
+             (!('content' in data) || data.content is string) &&
+             (!('date' in data) || data.date == null || data.date is timestamp) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('attachments' in data) || data.attachments == null || data.attachments is list);
+    }
+
+    // --- ROUTE MATCHERS ---
+
     match /users/{uid} {
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
       allow create: if isAuthenticated() &&
         isOwner(uid) &&
-        request.resource.data.role == 'student';
+        request.resource.data.role == 'student' &&
+        isValidUser(request.resource.data);
       allow update: if isAuthenticated() &&
         (isOwner(uid) || isAdmin()) &&
         keepsImmutableFields() &&
-        (isAdmin() || request.resource.data.role == resource.data.role);
+        (isAdmin() || request.resource.data.role == resource.data.role) &&
+        isValidUser(request.resource.data);
       allow delete: if false;
     }
 
     match /tests/{testId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin() &&
-        request.resource.data.createdBy == request.auth.uid;
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.studentId == request.auth.uid);
+      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.studentId == request.auth.uid && isValidTest(request.resource.data));
       allow update: if isAdmin() &&
         keepsImmutableFields() &&
-        resource.data.createdBy == request.auth.uid;
+        resource.data.createdBy == request.auth.uid &&
+        isValidTest(request.resource.data);
       allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
     match /questions/{questionId} {
-      allow read: if isAdmin();
+      allow read: if isAuthenticated();
       allow create: if isAdmin() &&
-        request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAdmin() && keepsImmutableFields();
+        request.resource.data.createdBy == request.auth.uid &&
+        isValidQuestion(request.resource.data);
+      allow update: if isAdmin() && keepsImmutableFields() && isValidQuestion(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /assignedTests/{assignedTestId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
-      allow create, update, delete: if isAdmin();
+      allow create: if isAdmin() || (isAuthenticated() && request.resource.data.studentId == request.auth.uid && isValidAssignedTest(request.resource.data));
+      allow update: if isAdmin() && isValidAssignedTest(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /learningSheets/{sheetId} {
       allow read: if isAuthenticated();
-      allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAdmin() && keepsImmutableFields() && resource.data.createdBy == request.auth.uid;
-      allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
+      allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid && isValidLearningSheet(request.resource.data);
+      allow update: if isAdmin() && keepsImmutableFields() && isValidLearningSheet(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /practiceCourses/{courseId} {
       allow read: if true;
-      allow create: if isAdmin();
-      allow update: if isAdmin() && keepsImmutableFields();
+      allow create: if isAdmin() && isValidPracticeCourse(request.resource.data);
+      allow update: if isAdmin() && keepsImmutableFields() && isValidPracticeCourse(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /todos/{todoId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
-      allow create: if isAuthenticated() && (isOwner(request.resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && (isOwner(request.resource.data.studentId) || isAdmin()) && isValidTodo(request.resource.data);
       allow update: if isAuthenticated() && (
         (isOwner(resource.data.studentId) &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'dueDate', 'completed', 'completedAt'])) ||
-        (isAdmin() && keepsImmutableFields())
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'dueDate', 'completed', 'completedAt']) &&
+          isValidTodo(request.resource.data)) ||
+        (isAdmin() && keepsImmutableFields() && isValidTodo(request.resource.data))
       );
       allow delete: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
     }
 
     match /customTopics/{topicId} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidCustomItem(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /customSubjects/{subjectId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidCustomItem(request.resource.data);
+      allow delete: if isAdmin();
     }
     
     match /courses/{courseId} {
       allow read: if isAuthenticated() && (
         isAdmin() || request.auth.uid in resource.data.studentIds
       );
-      allow create: if isAdmin() && request.resource.data.teacherId == request.auth.uid;
-      allow update: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.teacherId == request.auth.uid && isValidCourse(request.resource.data);
+      allow update: if isAdmin() && isValidCourse(request.resource.data);
       allow delete: if isAdmin();
     }
 
     match /courseItems/{itemId} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if isAdmin() && request.resource.data.addedBy == request.auth.uid;
+      allow create, update: if isAdmin() && request.resource.data.addedBy == request.auth.uid && isValidCourseItem(request.resource.data);
+      allow delete: if isAdmin() && resource.data.addedBy == request.auth.uid;
     }
   }
 }

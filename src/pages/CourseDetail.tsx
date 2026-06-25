@@ -16,6 +16,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
+import { PDFViewer } from '../components/PDFViewer';
 import { uploadFileWithProgress } from '../lib/uploadHelper';
 
 export default function CourseDetail() {
@@ -32,7 +33,6 @@ export default function CourseDetail() {
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [previewTest, setPreviewTest] = useState<Test | null>(null);
   const [pdfPreview, setPdfPreview] = useState<{ url: string, name: string } | null>(null);
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
 
   // Form states
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
@@ -87,60 +87,6 @@ export default function CourseDetail() {
       unsubItems();
     };
   }, [id, profile, navigate]);
-
-  useEffect(() => {
-    if (!pdfPreview?.url) {
-      setPdfPreviewUrl(null);
-      return;
-    }
-
-    let currentUrl = pdfPreview.url;
-    let revokeUrl: string | null = null;
-
-    const loadPdf = async () => {
-      if (currentUrl.startsWith('data:')) {
-        try {
-          const dataURI = currentUrl;
-          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-          const byteString = atob(dataURI.split(',')[1]);
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let i = 0; i < byteString.length; i++) {
-            ia[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([ab], { type: mimeString });
-          const url = URL.createObjectURL(blob);
-          revokeUrl = url;
-          setPdfPreviewUrl(url);
-        } catch (e) {
-          console.error('Failed to create blob from data URI', e);
-          setPdfPreviewUrl(null); // Force failsafe UI
-        }
-      } else {
-        // Try fetching to create a blob URL
-        try {
-          const response = await fetch(currentUrl, { mode: 'cors' });
-          if (response.ok) {
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            revokeUrl = url;
-            setPdfPreviewUrl(url);
-          } else {
-            setPdfPreviewUrl(currentUrl); // Fallback to raw URL
-          }
-        } catch (e) {
-          console.warn('CORS fetch failed, falling back to raw URL', e);
-          setPdfPreviewUrl(currentUrl);
-        }
-      }
-    };
-
-    loadPdf();
-
-    return () => {
-      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
-    };
-  }, [pdfPreview]);
 
   useEffect(() => {
     // Load students data
@@ -288,14 +234,31 @@ export default function CourseDetail() {
 
          // If it's a test, also assign it to the student
          if (itemType === 'test' && selectedTestId) {
-            addDoc(collection(db, 'assignedTests'), {
-               testId: selectedTestId,
-               studentId,
-               status: 'pending',
-               assignedAt: serverTimestamp(),
-               dueDate: parsedDate ? Timestamp.fromDate(parsedDate) : null,
-               courseId: course.id
-            });
+            const detailedTest = teacherTests.find(t => t.id === selectedTestId);
+            if (detailedTest) {
+              const assignedPayload = {
+                testId: detailedTest.id,
+                studentId,
+                testTitle: detailedTest.title,
+                testDescription: detailedTest.description || '',
+                topic: detailedTest.topic || 'Test',
+                autoGrade: false,
+                status: 'pending',
+                assignedAt: serverTimestamp(),
+                dueDate: parsedDate ? Timestamp.fromDate(parsedDate) : null,
+                courseId: course.id,
+                createdBy: profile.uid || '',
+                questions: detailedTest.questions.map(q => ({
+                  id: q.id || crypto.randomUUID(),
+                  question: (q as any).text || q.question || '',
+                  imageUrl: q.imageUrl || null,
+                  type: q.type || 'open',
+                  options: q.options || [],
+                  topic: q.topic || 'Test'
+                }))
+              };
+              addDoc(collection(db, 'assignedTests'), assignedPayload);
+            }
          }
       });
 
@@ -401,118 +364,126 @@ export default function CourseDetail() {
                 )}>
                   <Plus size={24} /> Přidat položku do kurzu
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[600px] rounded-[2rem] border-none shadow-2xl p-8">
-                  <DialogHeader className="mb-6">
-                    <DialogTitle className="text-2xl font-display font-black text-brand-blue flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-                        <Plus size={20} className="text-brand-blue" />
-                      </div>
-                      Nová položka výuky
-                    </DialogTitle>
-                  </DialogHeader>
+                <DialogContent className="max-w-[95vw] sm:max-w-[850px] rounded-[2rem] border-none shadow-2xl p-0 overflow-hidden">
+                  <div className="flex flex-col md:flex-row max-h-[85dvh]">
+                    {/* Left pane: Type selection */}
+                    <div className="bg-gray-50 p-8 md:w-[300px] shrink-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col space-y-6">
+                      <DialogHeader className="mb-2 text-left">
+                        <DialogTitle className="text-2xl font-display font-black text-brand-blue flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-blue-50 flex flex-shrink-0 items-center justify-center">
+                            <Plus size={20} className="text-brand-blue" />
+                          </div>
+                          Nová položka
+                        </DialogTitle>
+                      </DialogHeader>
 
-                  <form onSubmit={handleAddItem} className="space-y-6">
-                    <div className="space-y-3">
-                      <Label className="font-bold text-gray-700">Typ položky</Label>
-                      <div className="grid grid-cols-3 gap-3">
-                        <button type="button" onClick={() => setItemType('material')} className={cn("p-3 rounded-2xl border-2 font-bold flex flex-col items-center justify-center gap-2 transition-all", itemType === 'material' ? "border-brand-blue bg-blue-50 text-brand-blue" : "border-gray-100 bg-white hover:bg-gray-50 text-gray-500")}>
-                          <FileText size={20} /> Materiál
-                        </button>
-                        <button type="button" onClick={() => setItemType('lesson')} className={cn("p-3 rounded-2xl border-2 font-bold flex flex-col items-center justify-center gap-2 transition-all", itemType === 'lesson' ? "border-purple-500 bg-purple-50 text-purple-600" : "border-gray-100 bg-white hover:bg-gray-50 text-gray-500")}>
-                          <Calendar size={20} /> Hodina
-                        </button>
-                        <button type="button" onClick={() => setItemType('test')} className={cn("p-3 rounded-2xl border-2 font-bold flex flex-col items-center justify-center gap-2 transition-all", itemType === 'test' ? "border-orange-500 bg-orange-50 text-orange-600" : "border-gray-100 bg-white hover:bg-gray-50 text-gray-500")}>
-                          <FileQuestion size={20} /> Test / Úkol
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-3">
-                      <Label className="font-bold text-gray-700">Název / Nadpis</Label>
-                      <Input value={itemTitle} onChange={e => setItemTitle(e.target.value)} required className="h-14 rounded-2xl bg-gray-50 border-gray-200" placeholder="Např. 4. lekce: Rovnice" />
-                    </div>
-
-                    {itemType === 'test' ? (
-                      <div className="space-y-3">
-                        <Label className="font-bold text-gray-700">Vybrat existující test</Label>
-                        <Select value={selectedTestId} onValueChange={setSelectedTestId}>
-                          <SelectTrigger className="h-14 rounded-2xl bg-gray-50 border-gray-200">
-                            <SelectValue placeholder="Vyberte test..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {teacherTests.length === 0 ? (
-                              <div className="p-4 text-center text-sm text-gray-500">
-                                Nemáte žádné vytvořené testy.
-                              </div>
-                            ) : (
-                              teacherTests.map((t) => (
-                                <SelectItem key={t.id} value={t.id}>
-                                  {t.title}
-                                </SelectItem>
-                              ))
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <p className="text-xs text-gray-500">Testy můžete vytvářet na hlavní nástěnce.</p>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <Label className="font-bold text-gray-700">Popis nebo Odkaz</Label>
-                        <Textarea value={itemContent} onChange={e => setItemContent(e.target.value)} required={itemType !== 'material' || files.length === 0} className="min-h-[120px] rounded-2xl bg-gray-50 border-gray-200 resize-none" placeholder={itemType === 'lesson' ? "Instrukce k hodině, odkaz na Meet..." : "Základní instrukce či odkaz (nepovinné, pokud nahráváte PDF)..."} />
-                      </div>
-                    )}
-
-                    {itemType === 'material' && (
-                      <div className="space-y-3">
-                        <Label className="font-bold text-gray-700">Připojit PDF soubory (pouze pro materiály)</Label>
-                        <div className="flex items-center gap-4 p-4 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-colors">
-                          <Paperclip size={24} className="text-gray-400 shrink-0" />
-                          <Input 
-                            type="file" 
-                            multiple 
-                            accept="application/pdf"
-                            onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])} 
-                            className="bg-transparent border-none file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-brand-blue hover:file:bg-blue-100 shadow-none p-0 cursor-pointer text-gray-600 block w-full"
-                          />
+                      <div className="space-y-3 flex-1">
+                        <Label className="font-bold text-gray-700">Vyberte druh</Label>
+                        <div className="flex flex-col gap-3">
+                          <button type="button" onClick={() => setItemType('material')} className={cn("p-4 rounded-2xl border-2 font-bold flex items-center justify-start gap-3 transition-all text-left", itemType === 'material' ? "border-brand-blue bg-blue-100/50 text-brand-blue shadow-sm" : "border-gray-200 bg-white hover:bg-gray-50/80 text-gray-600 hover:border-blue-200")}>
+                            <FileText size={20} className={itemType === 'material' ? "text-brand-blue" : "text-gray-400"} /> Materiál
+                          </button>
+                          <button type="button" onClick={() => setItemType('lesson')} className={cn("p-4 rounded-2xl border-2 font-bold flex items-center justify-start gap-3 transition-all text-left", itemType === 'lesson' ? "border-purple-500 bg-purple-50 text-purple-600 shadow-sm" : "border-gray-200 bg-white hover:bg-gray-50/80 text-gray-600 hover:border-purple-200")}>
+                            <Calendar size={20} className={itemType === 'lesson' ? "text-purple-500" : "text-gray-400"} /> Hodina
+                          </button>
+                          <button type="button" onClick={() => setItemType('test')} className={cn("p-4 rounded-2xl border-2 font-bold flex items-center justify-start gap-3 transition-all text-left", itemType === 'test' ? "border-orange-500 bg-orange-50 text-orange-600 shadow-sm" : "border-gray-200 bg-white hover:bg-gray-50/80 text-gray-600 hover:border-orange-200")}>
+                            <FileQuestion size={20} className={itemType === 'test' ? "text-orange-500" : "text-gray-400"} /> Test / Úkol
+                          </button>
                         </div>
-                        {files.length > 0 && (
-                          <p className="text-sm font-medium text-blue-600 px-2 mt-2">
-                              Vybráno {files.length} PDF souborů k nahrání
-                          </p>
-                        )}
-                        <p className="text-[10px] text-gray-400 px-1 italic">Povoleny jsou pouze PDF soubory do 5 MB (omezení serveru).</p>
                       </div>
-                    )}
-
-                    <div className="space-y-3">
-                      <Label className="font-bold text-gray-700">{itemType === 'lesson' ? 'Čas schůzky' : 'Termín splnění (nepovinné)'}</Label>
-                      <Input type="datetime-local" value={itemDate} onChange={e => setItemDate(e.target.value)} required={itemType === 'lesson'} className="h-14 rounded-2xl bg-gray-50 border-gray-200 w-full flex" />
                     </div>
 
-                    <DialogFooter>
-                      <div className="flex justify-end gap-3 w-full">
-                        <Button type="button" variant="ghost" onClick={() => setIsAddItemOpen(false)} className="rounded-xl font-bold h-12">Zrušit</Button>
-                        <Button 
-                          type="submit" 
-                          disabled={!itemTitle || (itemType !== 'test' && !itemContent && files.length === 0) || (itemType === 'test' && !selectedTestId) || isUploading} 
-                          className="rounded-xl font-bold h-12 px-8 btn-brand relative overflow-hidden"
-                        >
-                          {isUploading ? (
-                            <>
-                              <div 
-                                className="absolute left-0 top-0 bottom-0 bg-white/20 transition-all duration-300" 
-                                style={{ width: `${uploadProgress}%` }} 
-                              />
-                              <Loader2 size={18} className="animate-spin mr-2 relative z-10"/>
-                              <span className="relative z-10">
-                                {files.length > 0 ? `Nahrávám... ${Math.round(uploadProgress)}%` : 'Ukládám...'}
-                              </span>
-                            </>
-                          ) : 'Uložit položku'}
-                        </Button>
-                      </div>
-                    </DialogFooter>
-                  </form>
+                    {/* Right pane: Form content */}
+                    <div className="bg-white p-8 px-6 md:px-10 md:w-full flex-1 overflow-y-auto">
+                      <form onSubmit={handleAddItem} className="flex flex-col min-h-full">
+                        <div className="space-y-6 flex-1">
+                          <div className="space-y-3">
+                            <Label className="font-bold text-gray-700">Název / Nadpis</Label>
+                            <Input value={itemTitle} onChange={e => setItemTitle(e.target.value)} required className="h-14 rounded-2xl bg-gray-50 border-gray-200" placeholder="Např. 4. lekce: Rovnice" />
+                          </div>
+
+                          {itemType === 'test' ? (
+                            <div className="space-y-3">
+                              <Label className="font-bold text-gray-700">Vybrat existující test</Label>
+                              <Select value={selectedTestId} onValueChange={setSelectedTestId}>
+                                <SelectTrigger className="h-14 rounded-2xl bg-gray-50 border-gray-200">
+                                  <SelectValue placeholder="Vyberte test..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {teacherTests.length === 0 ? (
+                                    <div className="p-4 text-center text-sm text-gray-500">
+                                      Nemáte žádné vytvořené testy.
+                                    </div>
+                                  ) : (
+                                    teacherTests.map((t) => (
+                                      <SelectItem key={t.id} value={t.id}>
+                                        {t.title}
+                                      </SelectItem>
+                                    ))
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              <p className="text-xs text-gray-500">Testy můžete vytvářet na hlavní nástěnce.</p>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              <Label className="font-bold text-gray-700">Popis nebo Odkaz</Label>
+                              <Textarea value={itemContent} onChange={e => setItemContent(e.target.value)} required={itemType !== 'material' || files.length === 0} className="min-h-[120px] rounded-2xl bg-gray-50 border-gray-200 resize-none" placeholder={itemType === 'lesson' ? "Instrukce k hodině, odkaz na Meet..." : "Základní instrukce či odkaz (nepovinné, pokud nahráváte PDF)..."} />
+                            </div>
+                          )}
+
+                          {itemType === 'material' && (
+                            <div className="space-y-3">
+                              <Label className="font-bold text-gray-700">Připojit PDF soubory (pouze pro materiály)</Label>
+                              <div className="flex items-center gap-4 p-4 border-2 border-dashed border-gray-200 rounded-2xl bg-gray-50 hover:bg-gray-100 transition-colors">
+                                <Paperclip size={24} className="text-gray-400 shrink-0" />
+                                <Input 
+                                  type="file" 
+                                  multiple 
+                                  accept="application/pdf"
+                                  onChange={(e) => setFiles(e.target.files ? Array.from(e.target.files) : [])} 
+                                  className="bg-transparent border-none file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-brand-blue hover:file:bg-blue-100 shadow-none p-0 cursor-pointer text-gray-600 block w-full"
+                                />
+                              </div>
+                              {files.length > 0 && (
+                                <p className="text-sm font-medium text-blue-600 px-2 mt-2">
+                                    Vybráno {files.length} PDF souborů k nahrání
+                                </p>
+                              )}
+                              <p className="text-[10px] text-gray-400 px-1 italic">Povoleny jsou pouze PDF soubory do 5 MB (omezení serveru).</p>
+                            </div>
+                          )}
+
+                          <div className="space-y-3">
+                            <Label className="font-bold text-gray-700">{itemType === 'lesson' ? 'Čas schůzky' : 'Termín splnění (nepovinné)'}</Label>
+                            <Input type="datetime-local" value={itemDate} onChange={e => setItemDate(e.target.value)} required={itemType === 'lesson'} className="h-14 rounded-2xl bg-gray-50 border-gray-200 w-full flex" />
+                          </div>
+                        </div>
+
+                        <div className="mt-8 pt-6 border-t border-gray-100 flex justify-end gap-3 shrink-0">
+                          <Button type="button" variant="ghost" onClick={() => setIsAddItemOpen(false)} className="rounded-xl font-bold h-12">Zrušit</Button>
+                          <Button 
+                            type="submit" 
+                            disabled={!itemTitle || (itemType !== 'test' && !itemContent && files.length === 0) || (itemType === 'test' && !selectedTestId) || isUploading} 
+                            className="rounded-xl font-bold h-12 px-8 btn-brand relative overflow-hidden"
+                          >
+                            {isUploading ? (
+                              <>
+                                <div 
+                                  className="absolute left-0 top-0 bottom-0 bg-white/20 transition-all duration-300" 
+                                  style={{ width: `${uploadProgress}%` }} 
+                                />
+                                <Loader2 size={18} className="animate-spin mr-2 relative z-10"/>
+                                <span className="relative z-10">
+                                  {files.length > 0 ? `Nahrávám... ${Math.round(uploadProgress)}%` : 'Ukládám...'}
+                                </span>
+                              </>
+                            ) : (itemType === 'material' ? 'Přidat materiál' : itemType === 'lesson' ? 'Přidat hodinu' : 'Přidat test')}
+                          </Button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
                 </DialogContent>
               </Dialog>
             </div>
@@ -902,39 +873,7 @@ export default function CourseDetail() {
             </div>
           </div>
           <div className="flex-1 bg-white/5 flex items-center justify-center p-0 overflow-hidden relative">
-            {pdfPreviewUrl ? (
-              <iframe 
-                key={pdfPreviewUrl}
-                src={pdfPreviewUrl} 
-                className="w-full h-full border-none bg-white font-sans"
-                title={pdfPreview?.name}
-              />
-            ) : (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-900">
-                <div className="w-24 h-24 bg-white/5 rounded-3xl flex items-center justify-center text-brand-purple mb-8">
-                  <FileText size={48} />
-                </div>
-                <h3 className="text-2xl font-display font-black text-white mb-4">Není k dispozici náhled</h3>
-                <p className="text-gray-400 max-w-sm mb-10 font-medium tracking-wide">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu z důvodu zabezpečení. Můžete jej otevřít přímo.</p>
-                
-                <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
-                   <Button 
-                    variant="default"
-                    className="flex-1 h-16 btn-orange rounded-2xl font-black text-lg shadow-xl shadow-orange-500/10 gap-3"
-                    onClick={() => window.open(pdfPreview?.url, '_blank')}
-                  >
-                    <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít dokument
-                  </Button>
-                  <a 
-                    href={pdfPreview?.url} 
-                    download={pdfPreview?.name}
-                    className="flex-1 h-16 rounded-2xl border-2 border-white/10 font-black text-white hover:bg-white/5 flex items-center justify-center gap-3"
-                  >
-                    <Download size={22} /> Stáhnout PDF
-                  </a>
-                </div>
-              </div>
-            )}
+            <PDFViewer url={pdfPreview?.url || ''} title={pdfPreview?.name} />
           </div>
         </DialogContent>
       </Dialog>

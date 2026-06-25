@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { addDoc, collection, getDocs, Timestamp } from 'firebase/firestore';
+import { addDoc, collection, getDocs, Timestamp, onSnapshot } from 'firebase/firestore';
 import { ArrowRight, BookOpen, FileText, GraduationCap, Loader2, Lock, Sparkles, Star, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { db } from '../lib/firebase';
@@ -80,21 +80,17 @@ export default function Practice() {
   const [addingTodoCourseId, setAddingTodoCourseId] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchCourses = async () => {
-      try {
-        const snapshot = await getDocs(collection(db, 'practiceCourses'));
-        const loadedCourses = snapshot.docs
-          .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as PracticeCourse))
-          .filter((course) => course.isVisible !== false);
+    const unsub = onSnapshot(collection(db, 'practiceCourses'), (snapshot) => {
+      const loadedCourses = snapshot.docs
+        .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as PracticeCourse))
+        .filter((course) => course.isVisible !== false);
+      setCourses(loadedCourses);
+    }, (error) => {
+      console.error(error);
+      setCourses([]);
+    });
 
-        setCourses(loadedCourses.length > 0 ? loadedCourses : FALLBACK_COURSES);
-      } catch (error) {
-        console.error(error);
-        setCourses(FALLBACK_COURSES);
-      }
-    };
-
-    fetchCourses();
+    return () => unsub();
   }, []);
 
   const filteredCourses = useMemo(() => {

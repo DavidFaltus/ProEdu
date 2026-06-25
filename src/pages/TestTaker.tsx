@@ -15,6 +15,8 @@ import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
 import { Textarea } from '../components/ui/textarea';
 import { postApi } from '../services/apiClient';
 
+import { submitAppletTest } from '../services/courseService';
+
 interface SubmitResponse {
   status: 'submitted' | 'graded';
   grade?: string;
@@ -89,9 +91,7 @@ export default function TestTaker() {
     setIsSubmitting(true);
 
     try {
-      const response = await postApi<SubmitResponse>(`/assigned-tests/${id}/submit`, {
-        answers,
-      });
+      const response = await submitAppletTest(id, answers) as any;
 
       if (response.status === 'graded') {
         setResultStats(response.resultStats);

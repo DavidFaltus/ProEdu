@@ -111,18 +111,24 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
     }
 
     try {
-      const todoData: Omit<TodoItem, 'id'> = {
+      const todoData: Record<string, any> = {
         studentId: targetStudentId,
         title: finalTitle,
         type: newTodo.type,
-        referenceId: newTodo.referenceId || undefined,
         completed: false,
         addedBy: profile?.uid || '',
-        createdAt: Timestamp.now(),
-        dueDate: newTodo.dueDate ? Timestamp.fromDate(new Date(newTodo.dueDate)) : undefined
+        createdAt: Timestamp.now()
       };
 
-      await addDoc(collection(db, 'todos'), todoData);
+      if (newTodo.referenceId) {
+        todoData.referenceId = newTodo.referenceId;
+      }
+      
+      if (newTodo.dueDate) {
+        todoData.dueDate = Timestamp.fromDate(new Date(newTodo.dueDate));
+      }
+
+      await addDoc(collection(db, 'todos'), todoData as Omit<TodoItem, 'id'>);
       toast.success('Úkol přidán');
       setIsAdding(false);
       setNewTodo({ title: '', type: 'practice', referenceId: '', dueDate: '' });
@@ -420,8 +426,14 @@ export default function TodoManager({ targetStudentId, isTeacherView = false }: 
                 <div className="space-y-2">
                   <Label className="font-bold text-gray-700">Vybrat ze seznamu</Label>
                   <Select value={newTodo.referenceId} onValueChange={(val) => setNewTodo({ ...newTodo, referenceId: val })}>
-                    <SelectTrigger className="rounded-xl h-12 border-gray-100 bg-gray-50/50">
-                      <SelectValue placeholder="Vyberte..." />
+                    <SelectTrigger className="rounded-xl h-12 border-gray-100 bg-gray-50/50 text-left flex items-center justify-between">
+                      <span className="truncate flex-1">
+                        {newTodo.referenceId ? (
+                          newTodo.type === 'practice' ? courses.find(c => c.id === newTodo.referenceId)?.title 
+                          : newTodo.type === 'test' ? tests.find(t => t.id === newTodo.referenceId)?.title 
+                          : sheets.find(s => s.id === newTodo.referenceId)?.title
+                        ) || 'Vyberte...' : 'Vyberte...'}
+                      </span>
                     </SelectTrigger>
                     <SelectContent>
                       {newTodo.type === 'practice' && courses.map(c => <SelectItem key={c.id} value={c.id}>{c.title}</SelectItem>)}

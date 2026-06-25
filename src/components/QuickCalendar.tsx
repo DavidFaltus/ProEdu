@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths, isToday, startOfWeek, endOfWeek } from 'date-fns';
+import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay, addMonths, subMonths, isToday, startOfWeek, endOfWeek, addHours } from 'date-fns';
 import { cs } from 'date-fns/locale';
-import { ChevronLeft, ChevronRight, Circle, Calendar as CalendarIcon, CheckCircle2, Clock, ArrowRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Circle, Calendar as CalendarIcon, CheckCircle2, Clock, ArrowRight, RefreshCcw } from 'lucide-react';
 import { TodoItem } from '../types';
 import { safeToDate, cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { motion, AnimatePresence } from 'motion/react';
+import { getGoogleAccessToken, syncEventToGoogleCalendar } from '../services/calendarService';
+import { toast } from 'sonner';
 
 interface QuickCalendarProps {
   todos: TodoItem[];
@@ -14,6 +16,63 @@ interface QuickCalendarProps {
 export default function QuickCalendar({ todos }: QuickCalendarProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(new Date());
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [googleAccessToken, setGoogleAccessToken] = useState<string | null>(null);
+
+  const handleSyncToGoogle = async () => {
+    try {
+      setIsSyncing(true);
+      
+      let token = googleAccessToken;
+      if (!token) {
+        token = await getGoogleAccessToken();
+        setGoogleAccessToken(token);
+      }
+
+      const activeTodos = getTodosForDay(selectedDay).filter(t => !t.completed);
+
+      if (activeTodos.length === 0) {
+        toast.info("Žádné aktivní události k synchronizaci pro tento den.");
+        setIsSyncing(false);
+        return;
+      }
+
+      let syncedCount = 0;
+      for (const todo of activeTodos) {
+        const dueDate = safeToDate(todo.dueDate);
+        if (!dueDate) continue;
+
+        // Default to a 1 hour duration.
+        const endData = addHours(dueDate, 1);
+
+        const event = {
+          summary: `ProEdu: ${todo.title}`,
+          description: `Z aplikace ProEdu. ${todo.type === 'practice' ? 'Procvičování' : 'Úkol'}`,
+          start: {
+            dateTime: dueDate.toISOString(),
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+          end: {
+            dateTime: endData.toISOString(),
+            timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          },
+        };
+
+        await syncEventToGoogleCalendar(token, event);
+        syncedCount++;
+      }
+
+      toast.success(syncedCount > 0 ? `Úspěšně synchronizováno ${syncedCount} událostí do Google Kalendáře.` : "Nebylo možné nic synchronizovat.");
+    } catch (error: any) {
+      console.error(error);
+      toast.error(error.message || "Chyba při synchronizaci s Google Kalendářem.");
+      if (error.message && error.message.includes("401")) {
+         setGoogleAccessToken(null); // Force re-auth next time
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -198,7 +257,15 @@ export default function QuickCalendar({ todos }: QuickCalendarProps) {
         </div>
 
         {selectedDayTodos.length > 0 && (
-          <div className="p-4 mt-auto border-t border-gray-100">
+          <div className="p-4 mt-auto border-t border-gray-100 flex flex-col gap-2">
+            <Button
+              className="w-full bg-white border border-gray-200 text-gray-700 hover:bg-gray-50 hover:text-brand-blue rounded-xl h-10 font-bold gap-2 text-sm shadow-sm"
+              onClick={handleSyncToGoogle}
+              disabled={isSyncing}
+            >
+              <RefreshCcw size={16} className={isSyncing ? "animate-spin" : ""} />
+              {isSyncing ? "Synchronizuje se..." : "Uložit do Google Kalendáře"}
+            </Button>
             <Button className="w-full bg-brand-blue hover:bg-brand-blue/90 text-white rounded-xl h-12 font-bold gap-2 text-sm shadow-lg shadow-blue-100">
               Spravovat události
               <ArrowRight size={16} />

@@ -10,9 +10,9 @@ export default function Home() {
       <main className="hero">
         <div className="content">
           <div className="logo-wrapper">
-            <img src="/foto/logo.png" alt="ProEdu" className="logo-img" />
+            <img src="/foto/logo.png" alt="ProEdu" className="logo-img" referrerPolicy="no-referrer" />
             <span className="cator">-cator</span>
-            <img src="/foto/trophy.png" alt="Trofej" className="trophy-img" />
+            <img src="/foto/trophy.png" alt="Trofej" className="trophy-img" referrerPolicy="no-referrer" />
           </div>
 
           <h2 className="slogan">Výuková aplikace, která se Ti přizpůsobí.</h2>
@@ -34,7 +34,7 @@ export default function Home() {
         </div>
 
         <div className="illustration">
-          <img src="/foto/knihy_title.png" alt="Ilustrace knih" />
+          <img src="/foto/knihy_title.png" alt="Ilustrace knih" referrerPolicy="no-referrer" />
         </div>
       </main>
 

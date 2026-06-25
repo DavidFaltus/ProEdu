@@ -42,11 +42,11 @@ export default function Navbar() {
               src="/foto/logo.png" 
               alt="ProEdu" 
               className="h-10 md:h-12 w-auto group-hover:scale-105 transition-transform"
+              referrerPolicy="no-referrer"
             />
           </Link>
           
           <div className="hidden lg:flex items-center gap-8">
-            <Link to="/" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">O nás</Link>
             {user && (
               <>
                 <Link to="/courses" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Kurzy</Link>
@@ -54,10 +54,14 @@ export default function Navbar() {
               </>
             )}
             <Link to="/practice" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Procvičování</Link>
-            <Link to="/contact" className="text-gray-600 font-bold hover:text-brand-blue transition-colors">Kontakt</Link>
             {profile?.role === 'teacher' && (
               <Link to="/teacher" className="text-brand-orange font-bold hover:opacity-80 transition-opacity flex items-center gap-2">
                 <GraduationCap size={18} /> Správa výuky
+              </Link>
+            )}
+            {profile?.role === 'student' && (
+              <Link to="/student" className="text-brand-blue font-bold hover:opacity-80 transition-opacity flex items-center gap-2">
+                <LayoutDashboard size={18} /> Nástěnka studenta
               </Link>
             )}
           </div>

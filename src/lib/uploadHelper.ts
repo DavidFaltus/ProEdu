@@ -52,10 +52,9 @@ export async function uploadFileWithProgress(
         },
         async (error) => {
           console.warn('Storage upload attempt failed.', error.code);
-          // Pokud by náhodou selhal i velký soubor, dáme vědět
           const msg = error.code === 'storage/retry-limit-exceeded' 
-            ? 'Storage není aktivován. Pro soubory nad 750 KB ho musíte zapnout v konzoli.'
-            : 'Soubor je příliš velký (nad 750 KB) a nahrávání do Storage selhalo.';
+            ? 'Storage není aktivován. Pro soubory nad 750 KB ho musíte zapnout ve Firebase konzoli.'
+            : 'Soubor je příliš velký (nad 750 KB) a nahrávání do Storage selhalo. Zkuste soubor zmenšit nebo zkontrolujte připojení k internetu.';
           reject(new Error(msg));
         },
         async () => {

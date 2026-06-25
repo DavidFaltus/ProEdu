@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { LearningSheet, MathTopic } from '../types';
@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { BookOpen, Search, FileText, Filter, GraduationCap, ArrowRight, Download, Loader2 } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { motion, AnimatePresence } from 'motion/react';
+import { PDFViewer } from '../components/PDFViewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
@@ -24,62 +25,8 @@ export default function LearningSheets() {
   const [sheets, setSheets] = useState<LearningSheet[]>([]);
   const [search, setSearch] = useState('');
   const [selectedTopic, setSelectedTopic] = useState<MathTopic | 'Vše'>('Vše');
+  const [selectedSubject, setSelectedSubject] = useState<string | 'Vše'>('Vše');
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedSheet?.fileUrl) {
-      setPdfBlobUrl(null);
-      return;
-    }
-
-    let currentUrl = selectedSheet.fileUrl;
-    let revokeUrl: string | null = null;
-
-    const loadPdf = async () => {
-      if (currentUrl.startsWith('data:')) {
-        try {
-          const dataURI = currentUrl;
-          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-          const byteString = atob(dataURI.split(',')[1]);
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let i = 0; i < byteString.length; i++) {
-            ia[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([ab], { type: mimeString });
-          const url = URL.createObjectURL(blob);
-          revokeUrl = url;
-          setPdfBlobUrl(url);
-        } catch (e) {
-          console.error('Failed to create blob from data URI', e);
-          setPdfBlobUrl(null); // Force failsafe UI
-        }
-      } else {
-        // Try fetching to create a blob URL
-        try {
-          const response = await fetch(currentUrl, { mode: 'cors' });
-          if (response.ok) {
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            revokeUrl = url;
-            setPdfBlobUrl(url);
-          } else {
-            setPdfBlobUrl(null); // Force failsafe UI
-          }
-        } catch (e) {
-          console.warn('CORS fetch failed, using failsafe button', e);
-          setPdfBlobUrl(null); // Force failsafe UI
-        }
-      }
-    };
-
-    loadPdf();
-
-    return () => {
-      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
-    };
-  }, [selectedSheet]);
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'learningSheets'), (snap) => {
@@ -88,10 +35,17 @@ export default function LearningSheets() {
     return unsub;
   }, []);
 
+  const allSubjects = useMemo(() => Array.from(new Set(sheets.map(s => s.subject).filter(Boolean))), [sheets]);
+  const allTopics = useMemo(() => {
+    const rawTopics = Array.from(new Set(sheets.map(s => s.topic).filter(Boolean)));
+    return Array.from(new Set([...MATH_TOPICS.filter(t => t !== 'Vše'), ...rawTopics])).filter(Boolean);
+  }, [sheets]);
+
   const filteredSheets = sheets.filter(s => {
     const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase());
     const matchesTopic = selectedTopic === 'Vše' || s.topic === selectedTopic;
-    return matchesSearch && matchesTopic;
+    const matchesSubject = selectedSubject === 'Vše' || s.subject === selectedSubject;
+    return matchesSearch && matchesTopic && matchesSubject;
   });
 
   return (
@@ -120,6 +74,22 @@ export default function LearningSheets() {
             />
           </div>
           <div className="w-full md:w-64">
+            <Select value={selectedSubject} onValueChange={(val: any) => setSelectedSubject(val)}>
+              <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
+                <div className="flex items-center gap-2">
+                  <GraduationCap size={18} className="text-brand-purple" />
+                  <SelectValue placeholder="Filtrovat předmět" />
+                </div>
+              </SelectTrigger>
+              <SelectContent className="rounded-2xl">
+                <SelectItem value="Vše" className="font-bold">Všechny předměty</SelectItem>
+                {allSubjects.map(subject => (
+                  <SelectItem key={subject} value={subject} className="font-bold">{subject}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="w-full md:w-64">
             <Select value={selectedTopic} onValueChange={(val: any) => setSelectedTopic(val)}>
               <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
                 <div className="flex items-center gap-2">
@@ -128,7 +98,8 @@ export default function LearningSheets() {
                 </div>
               </SelectTrigger>
               <SelectContent className="rounded-2xl">
-                {MATH_TOPICS.map(topic => (
+                <SelectItem value="Vše" className="font-bold">Všechna témata</SelectItem>
+                {allTopics.map(topic => (
                   <SelectItem key={topic} value={topic} className="font-bold">{topic}</SelectItem>
                 ))}
               </SelectContent>
@@ -194,7 +165,7 @@ export default function LearningSheets() {
       )}
 
       <Dialog open={!!selectedSheet} onOpenChange={() => setSelectedSheet(null)}>
-        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[98vh] h-[98vh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
+        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
           {selectedSheet && (
             <div className="flex flex-col h-full w-full bg-white">
               {/* Header Bar */}
@@ -242,44 +213,7 @@ export default function LearningSheets() {
               <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
                 {selectedSheet.fileUrl ? (
                   <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
-                    {pdfBlobUrl ? (
-                      <iframe 
-                        key={pdfBlobUrl}
-                        src={pdfBlobUrl} 
-                        className="w-full h-full border-none" 
-                        title={selectedSheet.title}
-                      />
-                    ) : (
-                      <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
-                        <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
-                          <FileText size={48} />
-                        </div>
-                        <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
-                        <p className="text-gray-500 max-w-sm mb-10 font-medium tracking-wide">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej otevřít v novém panelu nebo stáhnout.</p>
-                        
-                        <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
-                          <Button 
-                            variant="default"
-                            className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
-                            onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
-                          >
-                            <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
-                          </Button>
-                          <Button 
-                            variant="outline"
-                            className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
-                            onClick={() => {
-                              const a = document.createElement('a');
-                              a.href = selectedSheet.fileUrl || '';
-                              a.download = `${selectedSheet.title || 'material'}.pdf`;
-                              a.click();
-                            }}
-                          >
-                            <Download size={22} /> Stáhnout PDF
-                          </Button>
-                        </div>
-                      </div>
-                    )}
+                    <PDFViewer url={selectedSheet.fileUrl} title={selectedSheet.title} />
                   </div>
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center">

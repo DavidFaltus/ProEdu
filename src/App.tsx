@@ -52,7 +52,7 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle,_#ffffff_0%,_#e1f1ff_100%)] text-[#555] font-sans flex flex-col">
       <Navbar />
-      <main className="flex-grow flex flex-col overflow-hidden">
+      <main className="flex-grow flex flex-col">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login />} />

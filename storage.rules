@@ -2,7 +2,7 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Pomocné funkce pro bezpečnost v souladu s proedu.md
+    // Helper function for user authentication status
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -11,22 +11,27 @@ service firebase.storage {
       return request.auth.uid == userId;
     }
 
-    // Zjednodušená pravidla pro nahrávání PDF a materiálů
+    // Rule 12: Namespaced paths, authentication, content type whitelist, and file size limits
     match /learningSheets/{userId}/{fileId} {
       allow read: if isAuthenticated();
-      // Povoleno nahrávání pokud je to uloženo pod vlastním ID
-      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    request.resource.size < 15 * 1024 * 1024 &&
+                    (request.resource.contentType == 'application/pdf' || request.resource.contentType.startsWith('image/'));
     }
 
     match /users/{userId}/{allPaths=**} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow write: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    request.resource.size < 5 * 1024 * 1024 && 
+                    request.resource.contentType.startsWith('image/');
     }
     
-    // Pro jakékoli jiné složky ve storage
+    // Strict least privilege principle on unmanaged paths
     match /{allPaths=**} {
       allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      allow write: if false;
     }
   }
 }

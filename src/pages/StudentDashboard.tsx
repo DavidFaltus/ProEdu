@@ -1,20 +1,23 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, onSnapshot, getDocs, addDoc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { safeToDate } from '../lib/utils';
+import { PDFViewer } from '../components/PDFViewer';
 import { useAuth } from '../context/AuthContext';
 import { AssignedTest, LearningSheet, TodoItem } from '../types/index';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, Settings, User as UserIcon, Loader2 } from 'lucide-react';
+import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, Settings, User as UserIcon, Loader2, Download, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Link, useNavigate } from 'react-router-dom';
 import TodoManager from '../components/TodoManager';
 import QuickCalendar from '../components/QuickCalendar';
 import { CountdownTimer } from '../components/CountdownTimer';
+import { Input } from '../components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
 export default function StudentDashboard() {
   const { user, profile, setIsProfileSettingsOpen } = useAuth();
@@ -22,9 +25,24 @@ export default function StudentDashboard() {
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
-  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isAddingTodo, setIsAddingTodo] = useState<string | null>(null);
+
+  const [sheetSearchQuery, setSheetSearchQuery] = useState('');
+  const [sheetTopicFilter, setSheetTopicFilter] = useState('');
+  const [sheetSubjectFilter, setSheetSubjectFilter] = useState('');
+
+  const allSubjects = useMemo(() => Array.from(new Set(learningSheets.map(s => s.subject))), [learningSheets]);
+  const allTopics = useMemo(() => Array.from(new Set(learningSheets.map(s => s.topic))), [learningSheets]);
+
+  const filteredLearningSheets = useMemo(() => {
+    return learningSheets.filter(sheet => {
+      const matchesSearch = sheet.title.toLowerCase().includes(sheetSearchQuery.toLowerCase());
+      const matchesTopic = sheetTopicFilter && sheetTopicFilter !== 'all' ? sheet.topic === sheetTopicFilter || sheet.topic?.includes(sheetTopicFilter) : true;
+      const matchesSubject = sheetSubjectFilter && sheetSubjectFilter !== 'all' ? sheet.subject === sheetSubjectFilter : true;
+      return matchesSearch && matchesTopic && matchesSubject;
+    });
+  }, [learningSheets, sheetSearchQuery, sheetTopicFilter, sheetSubjectFilter]);
 
   const handleAddToTodo = async (title: string, type: TodoItem['type'] = 'practice') => {
     if (!user) return;
@@ -55,11 +73,9 @@ export default function StudentDashboard() {
       setAssignedTests(snap.docs.map(d => ({ id: d.id, ...d.data() } as AssignedTest)));
     });
 
-    const fetchSheets = async () => {
-      const snap = await getDocs(collection(db, 'learningSheets'));
+    const unsubSheets = onSnapshot(collection(db, 'learningSheets'), (snap) => {
       setLearningSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
-    };
-    fetchSheets();
+    });
 
     const unsubTodos = onSnapshot(
       query(collection(db, 'todos'), where('studentId', '==', profile.uid)),
@@ -76,63 +92,10 @@ export default function StudentDashboard() {
 
     return () => {
       unsubAssigned();
+      unsubSheets();
       unsubTodos();
     };
   }, [profile]);
-
-  useEffect(() => {
-    if (!selectedSheet?.fileUrl) {
-      setPdfBlobUrl(null);
-      return;
-    }
-
-    let currentUrl = selectedSheet.fileUrl;
-    let revokeUrl: string | null = null;
-
-    const loadPdf = async () => {
-      if (currentUrl.startsWith('data:')) {
-        try {
-          const dataURI = currentUrl;
-          const mimeString = dataURI.split(',')[0].split(':')[1].split(';')[0];
-          const byteString = atob(dataURI.split(',')[1]);
-          const ab = new ArrayBuffer(byteString.length);
-          const ia = new Uint8Array(ab);
-          for (let i = 0; i < byteString.length; i++) {
-            ia[i] = byteString.charCodeAt(i);
-          }
-          const blob = new Blob([ab], { type: mimeString });
-          const url = URL.createObjectURL(blob);
-          revokeUrl = url;
-          setPdfBlobUrl(url);
-        } catch (e) {
-          console.error('Failed to create blob from data URI', e);
-          setPdfBlobUrl(null);
-        }
-      } else {
-        // Try fetching to create a blob URL
-        try {
-          const response = await fetch(currentUrl, { mode: 'cors' });
-          if (response.ok) {
-            const blob = await response.blob();
-            const url = URL.createObjectURL(blob);
-            revokeUrl = url;
-            setPdfBlobUrl(url);
-          } else {
-            setPdfBlobUrl(currentUrl); // Fallback to raw URL
-          }
-        } catch (e) {
-          console.warn('CORS fetch failed, falling back to raw URL', e);
-          setPdfBlobUrl(currentUrl);
-        }
-      }
-    };
-
-    loadPdf();
-
-    return () => {
-      if (revokeUrl) URL.revokeObjectURL(revokeUrl);
-    };
-  }, [selectedSheet]);
 
   const pendingTests = assignedTests.filter(t => t.status === 'pending');
   const completedTests = assignedTests.filter(t => t.status !== 'pending');
@@ -425,8 +388,58 @@ export default function StudentDashboard() {
         </TabsContent>
 
         <TabsContent value="sheets">
+          <div className="flex flex-col md:flex-row gap-4 mb-8">
+            <div className="relative flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <Input 
+                placeholder="Hledat materiál podle názvu..." 
+                className="pl-12 h-14 rounded-2xl border-gray-200 focus:border-brand-purple focus:ring-brand-purple/20 text-lg"
+                value={sheetSearchQuery}
+                onChange={(e) => setSheetSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="w-full md:w-64">
+              <Select value={sheetSubjectFilter} onValueChange={setSheetSubjectFilter}>
+                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
+                  <SelectValue placeholder="Všechny předměty" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">Všechny předměty</SelectItem>
+                  {allSubjects.map(subject => (
+                    <SelectItem key={subject} value={subject}>{subject}</SelectItem>
+                  ))}
+                  {!allSubjects.includes('Matematika') && (
+                    <SelectItem value="Matematika">Matematika</SelectItem>
+                  )}
+                  {!allSubjects.includes('Angličtina') && (
+                    <SelectItem value="Angličtina">Angličtina</SelectItem>
+                  )}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="w-full md:w-64">
+              <Select value={sheetTopicFilter} onValueChange={setSheetTopicFilter}>
+                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
+                  <SelectValue placeholder="Všechna témata" />
+                </SelectTrigger>
+                <SelectContent className="rounded-xl">
+                  <SelectItem value="all">Všechna témata</SelectItem>
+                  {allTopics.map(topic => (
+                    <SelectItem key={topic} value={topic}>{topic}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
           <div className="grid md:grid-cols-3 gap-8">
-            {learningSheets.map(sheet => (
+            {filteredLearningSheets.length === 0 ? (
+              <div className="col-span-full py-12 text-center bg-white/50 rounded-3xl border-2 border-dashed border-gray-200">
+                <BookOpen size={48} className="mx-auto text-gray-300 mb-4" />
+                <h3 className="text-xl font-bold text-gray-600 mb-2">Žádné materiály nebyly nalezeny</h3>
+                <p className="text-gray-500">Zkuste upravit filtry hledání.</p>
+              </div>
+            ) : filteredLearningSheets.map(sheet => (
               <Card
                 key={sheet.id}
                 className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all cursor-pointer group bg-white overflow-hidden"
@@ -455,7 +468,7 @@ export default function StudentDashboard() {
 
       {/* Sheet Viewer Dialog */}
       <Dialog open={!!selectedSheet} onOpenChange={(open) => !open && setSelectedSheet(null)}>
-        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[98vh] h-[98vh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
+        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
           {selectedSheet && (
             <div className="flex flex-col h-full w-full bg-white">
               <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
@@ -492,44 +505,7 @@ export default function StudentDashboard() {
 
               <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
                 <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
-                  {pdfBlobUrl ? (
-                    <iframe
-                      key={pdfBlobUrl}
-                      src={pdfBlobUrl}
-                      className="w-full h-full border-none"
-                      title={selectedSheet.title}
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center bg-gray-50/50">
-                      <div className="w-24 h-24 bg-white rounded-3xl flex items-center justify-center text-brand-purple shadow-xl mb-8 border border-gray-100">
-                        <FileText size={48} />
-                      </div>
-                      <h3 className="text-2xl font-display font-black text-gray-900 mb-4">Není k dispozici náhled</h3>
-                      <p className="text-gray-500 max-w-sm mb-10 font-medium pb-2">Prohlížeč zablokoval přímé zobrazení tohoto dokumentu. Můžete jej otevřít v novém panelu nebo stáhnout.</p>
-                      
-                      <div className="flex flex-col sm:flex-row gap-4 w-full max-w-md">
-                        <Button 
-                          variant="default"
-                          className="flex-1 h-16 btn-purple rounded-2xl font-black text-lg shadow-xl shadow-purple-100 gap-3"
-                          onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
-                        >
-                          <ArrowRight size={22} className="rotate-[-45deg]" /> Otevřít materiál
-                        </Button>
-                        <Button 
-                          variant="outline"
-                          className="flex-1 h-16 rounded-2xl border-2 border-gray-200 font-bold text-gray-700 hover:bg-gray-100 gap-3"
-                          onClick={() => {
-                            const a = document.createElement('a');
-                            a.href = selectedSheet.fileUrl || '';
-                            a.download = `${selectedSheet.title || 'material'}.pdf`;
-                            a.click();
-                          }}
-                        >
-                          <Download size={22} /> Stáhnout PDF
-                        </Button>
-                      </div>
-                    </div>
-                  )}
+                  <PDFViewer url={selectedSheet.fileUrl} title={selectedSheet.title} />
                 </div>
               </div>
             </div>
