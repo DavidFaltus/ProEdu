@@ -1,39 +1,193 @@
-import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, onSnapshot, getDocs, addDoc, Timestamp } from 'firebase/firestore';
+import React, { useState, useEffect, useMemo } from 'react';
+import { collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, Timestamp } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
-import { safeToDate } from '../lib/utils';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '../components/ui/dialog';
+import { safeToDate, cn } from '../lib/utils';
 import { PDFViewer } from '../components/PDFViewer';
 import { useAuth } from '../context/AuthContext';
-import { AssignedTest, LearningSheet, TodoItem } from '../types/index';
+import { AssignedTest, LearningSheet, TodoItem, Course } from '../types/index';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { toast } from 'sonner';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, Settings, User as UserIcon, Loader2, Download, Search } from 'lucide-react';
+import { FileText, CheckCircle, BookOpen, Clock, Trophy, ArrowRight, Sparkles, Target, Lightbulb, Settings, User as UserIcon, Loader2, Search, CheckCircle2, Circle, Trash2, ExternalLink, Plus, CheckSquare, Bell } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import TodoManager from '../components/TodoManager';
 import QuickCalendar from '../components/QuickCalendar';
 import { CountdownTimer } from '../components/CountdownTimer';
 import { Input } from '../components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 
+const MOTIVATIONAL_QUOTES = [
+  { text: "Učení je jediná věc, kterou se mysl nikdy nevyčerpá, nikdy se jí nebojí a nikdy nelituje.", author: "Leonardo da Vinci" },
+  { text: "Úspěch je součet malých snah opakovaných den co den.", author: "Robert Collier" },
+  { text: "Kořeny vzdělání jsou hořké, ale ovoce je sladké.", author: "Aristoteles" },
+  { text: "Trpělivost je hořká, ale její plody jsou sladké.", author: "Jean-Jacques Rousseau" },
+  { text: "Vzdělání není plněním nádoby, ale zažehnutím ohně.", author: "Sokrates" },
+  { text: "Dělej to nejlepší, co můžeš, dokud nevíš víc. Až budeš vědět víc, dělej to lépe.", author: "Maya Angelou" },
+  { text: "Vaše dnešní úsilí určuje vaše zítřejší úspěchy. Každý krok se počítá.", author: "ProEdu" }
+];
+
+const GREETINGS = [
+  "pojďme pracovat!",
+  "hurá do učení!",
+  "čas se posunout dál!",
+  "jde se na to!",
+  "pojďme na to šlápnout!"
+];
+
+function ProgressCircle({ percentage, color, label, subtitle, icon }: { percentage: number, color: string, label: string, subtitle: string, icon: string }) {
+  const radius = 30;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (percentage / 100) * circumference;
+  
+  return (
+    <div className="flex flex-col items-center bg-[#FAF7F0] p-6 rounded-3xl w-full shadow-sm hover:shadow-md transition-shadow relative">
+      <div className="relative w-20 h-20 flex items-center justify-center">
+        <svg className="w-full h-full transform -rotate-90">
+          <circle
+            cx="40"
+            cy="40"
+            r={radius}
+            className="stroke-gray-200 fill-transparent"
+            strokeWidth="6"
+          />
+          <circle
+            cx="40"
+            cy="40"
+            r={radius}
+            className="fill-transparent transition-all duration-700 ease-out"
+            strokeWidth="6"
+            stroke={color}
+            strokeDasharray={circumference}
+            strokeDashoffset={strokeDashoffset}
+            strokeLinecap="round"
+          />
+        </svg>
+        <span className="absolute text-base font-black text-gray-800">{percentage}%</span>
+        <span className="absolute -top-1 -right-1 text-lg" title={label}>{icon}</span>
+      </div>
+      <span className="font-sans font-black text-xs text-gray-700 mt-4 tracking-wider uppercase">{label}</span>
+      <span className="text-gray-400 text-xs mt-1 font-bold">{subtitle}</span>
+    </div>
+  );
+}
+
 export default function StudentDashboard() {
-  const { user, profile, setIsProfileSettingsOpen } = useAuth();
+  const { user, profile, setIsProfileSettingsOpen, updateProfileData } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [assignedTests, setAssignedTests] = useState<AssignedTest[]>([]);
   const [learningSheets, setLearningSheets] = useState<LearningSheet[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [isAddingTodo, setIsAddingTodo] = useState<string | null>(null);
+  
+  const [isNewTodoOpen, setIsNewTodoOpen] = useState(false);
+  const [newTodoTitle, setNewTodoTitle] = useState('');
+
+  const handleToggleTodo = async (todo: TodoItem) => {
+    try {
+      await updateDoc(doc(db, 'todos', todo.id), {
+        completed: !todo.completed,
+        completedAt: !todo.completed ? Timestamp.now() : null
+      });
+      toast.success(todo.completed ? 'Úkol označen jako nedokončený' : 'Úkol dokončen!');
+    } catch (error) {
+      toast.error('Chyba při aktualizaci úkolu.');
+    }
+  };
+
+  const handleDeleteTodo = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'todos', id));
+      toast.success('Úkol smazán.');
+    } catch (error) {
+      toast.error('Chyba při mazání úkolu.');
+    }
+  };
+
+  const handleCreateTodo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !newTodoTitle.trim()) return;
+    try {
+      await addDoc(collection(db, 'todos'), {
+        studentId: user.uid,
+        title: newTodoTitle.trim(),
+        type: 'custom',
+        completed: false,
+        addedBy: user.uid,
+        createdAt: Timestamp.now()
+      });
+      setNewTodoTitle('');
+      setIsNewTodoOpen(false);
+      toast.success('Úkol byl úspěšně vytvořen!');
+    } catch (error) {
+      toast.error('Chyba při vytváření úkolu.');
+    }
+  };
+
+  const renderTodoItem = (todo: TodoItem) => {
+    return (
+      <div 
+        key={todo.id}
+        className={cn(
+          "p-3 rounded-2xl flex items-center justify-between gap-3 transition-all",
+          todo.completed ? "bg-gray-50 opacity-60" : "bg-white shadow-sm border border-gray-100/50"
+        )}
+      >
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <button
+            onClick={() => handleToggleTodo(todo)}
+            className={cn(
+              "w-6 h-6 rounded-full flex items-center justify-center shrink-0 border-2 cursor-pointer transition-all",
+              todo.completed 
+                ? "bg-[#B80053] border-none text-white" 
+                : "border-gray-300 text-gray-300 hover:border-[#B80053] hover:text-[#B80053]"
+            )}
+          >
+            {todo.completed ? <CheckCircle2 size={14} /> : <Circle size={14} />}
+          </button>
+          
+          <span className={cn(
+            "text-sm font-bold text-gray-800 truncate leading-tight",
+            todo.completed && "line-through text-gray-400"
+          )}>
+            {todo.title}
+          </span>
+        </div>
+
+        {todo.addedBy === profile?.uid && (
+          <button
+            onClick={() => handleDeleteTodo(todo.id)}
+            className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all shrink-0 cursor-pointer"
+            title="Smazat úkol"
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   const [sheetSearchQuery, setSheetSearchQuery] = useState('');
   const [sheetTopicFilter, setSheetTopicFilter] = useState('');
   const [sheetSubjectFilter, setSheetSubjectFilter] = useState('');
+  const [courses, setCourses] = useState<Course[]>([]);
 
   const allSubjects = useMemo(() => Array.from(new Set(learningSheets.map(s => s.subject))), [learningSheets]);
   const allTopics = useMemo(() => Array.from(new Set(learningSheets.map(s => s.topic))), [learningSheets]);
+
+  const quote = useMemo(() => {
+    const today = new Date().getDate();
+    return MOTIVATIONAL_QUOTES[today % MOTIVATIONAL_QUOTES.length];
+  }, []);
+
+  const greeting = useMemo(() => {
+    return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
+  }, []);
 
   const filteredLearningSheets = useMemo(() => {
     return learningSheets.filter(sheet => {
@@ -57,7 +211,7 @@ export default function StudentDashboard() {
         createdAt: Timestamp.now(),
       };
       await addDoc(collection(db, 'todos'), todoData);
-      toast.success(`Úkol "${title}" byl přidán do tvého TODO listu!`);
+      toast.success(`Úkol "${title}" byl přidán do tvých úkolů!`);
     } catch (error) {
       console.error("Todo error:", error);
       toast.error('Chyba při přidávání úkolu.');
@@ -90,394 +244,652 @@ export default function StudentDashboard() {
       }
     );
 
+    const unsubCourses = onSnapshot(
+      query(collection(db, 'courses'), where('studentIds', 'array-contains', profile.uid)),
+      (snap) => {
+        setCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Course)));
+      }
+    );
+
     return () => {
       unsubAssigned();
       unsubSheets();
       unsubTodos();
+      unsubCourses();
     };
   }, [profile]);
+
+  // Handle hash scrolling on page load/change
+  useEffect(() => {
+    if (location.hash === '#garden') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('garden-card');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [location]);
+
+  useEffect(() => {
+    const currentTab = searchParams.get('tab');
+    if (currentTab === 'tests' || currentTab === 'activity' || currentTab === 'history') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById('student-tabs');
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth' });
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [searchParams]);
 
   const pendingTests = assignedTests.filter(t => t.status === 'pending');
   const completedTests = assignedTests.filter(t => t.status !== 'pending');
 
+  const activityItems = useMemo(() => {
+    const items: {
+      id: string;
+      type: 'test' | 'material' | 'todo';
+      title: string;
+      date: Date;
+      status?: string;
+      description?: string;
+    }[] = [];
+    
+    // Add pending/submitted/graded tests
+    assignedTests.forEach(test => {
+      items.push({
+        id: test.id,
+        type: 'test',
+        title: `Přiřazen test: ${test.testTitle || 'Test'}`,
+        date: safeToDate(test.assignedAt) || new Date(),
+        status: test.status,
+        description: test.testDescription || ''
+      });
+    });
+
+    // Add teacher-assigned todos
+    todos.forEach(todo => {
+      if (todo.addedBy !== profile?.uid) {
+        items.push({
+          id: todo.id,
+          type: 'todo',
+          title: `Zadán úkol: ${todo.title}`,
+          date: safeToDate(todo.createdAt) || new Date(),
+          status: todo.completed ? 'completed' : 'pending'
+        });
+      }
+    });
+
+    // Add learning materials
+    learningSheets.forEach(sheet => {
+      items.push({
+        id: sheet.id,
+        type: 'material',
+        title: `Nový studijní materiál: ${sheet.title}`,
+        date: safeToDate(sheet.createdAt) || new Date(),
+        description: `${sheet.subject} - ${sheet.topic}`
+      });
+    });
+
+    return items.sort((a, b) => b.date.getTime() - a.date.getTime());
+  }, [assignedTests, todos, learningSheets, profile]);
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'activity' && profile && updateProfileData) {
+      const lastViewed = profile.lastViewedActivityAt ? safeToDate(profile.lastViewedActivityAt) : new Date(0);
+      const hasNewItems = activityItems.some(item => item.date > lastViewed);
+      if (hasNewItems) {
+        updateProfileData({ lastViewedActivityAt: Timestamp.now() });
+      }
+    }
+  }, [searchParams, activityItems, profile, updateProfileData]);
+
   return (
-    <div className="page-container">
-      <header className="flex flex-col lg:flex-row lg:items-start justify-between gap-6">
-        <div className="flex items-center gap-6 shrink-0">
-          <div className="w-20 h-20 md:w-24 md:h-24 rounded-[2rem] bg-white shadow-xl flex items-center justify-center overflow-hidden border-4 border-white">
+    <div className="space-y-10 md:space-y-12">
+      {/* HEADER SECTION */}
+      <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
+        <div className="space-y-1">
+          <h1 className="text-5xl font-display font-black text-[#1E1B18] tracking-tight leading-tight">
+            Ahoj {profile?.name?.split(' ')[0] || 'Alexi'}, {greeting}
+          </h1>
+        </div>
+
+        {/* Top Right Streak Badge */}
+        <div className="bg-white px-5 py-3 rounded-full shadow-md flex items-center gap-4 border border-gray-100/50 shrink-0 self-start sm:self-center">
+          <div className="text-right">
+            <div className="text-[10px] uppercase font-bold text-gray-400 tracking-[0.15em] leading-none">STREAK</div>
+            <div className="text-lg font-black text-[#625500] leading-none mt-1">
+              {profile?.streak || 0} DNÍ 🔥
+            </div>
+          </div>
+          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white bg-white shrink-0 shadow-sm">
             {profile?.photoURL ? (
               <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
             ) : (
-              <UserIcon size={40} className="text-brand-blue" />
+              <div className="w-full h-full flex items-center justify-center bg-yellow-100 text-yellow-600 font-black">🎓</div>
             )}
           </div>
-          <div className="space-y-1">
-            <h1 className="text-4xl md:text-5xl font-display font-bold text-brand-blue">
-              Ahoj, {profile?.name}! 👋
-            </h1>
-            <p className="text-gray-500 text-lg">Tady je tvůj přehled studia a úkolů.</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="bg-white px-6 py-4 rounded-[1.5rem] shadow-xl flex items-center gap-3 border-2 border-blue-50">
-            <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-brand-blue">
-              <Trophy size={20} />
-            </div>
-            <div>
-              <div className="text-xl font-black text-brand-blue leading-none">
-                {completedTests.filter(t => t.status === 'graded').length}
-              </div>
-              <div className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">Hotovo</div>
-            </div>
-          </div>
-          <Button
-            onClick={() => setIsProfileSettingsOpen(true)}
-            className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
-          >
-            <Settings size={22} className="text-brand-orange" />
-            <span>Nastavení profilu</span>
-          </Button>
         </div>
       </header>
 
-      {/* AI Recommendations Section */}
-      <AnimatePresence>
-        {profile?.focusAreas && profile.focusAreas.length > 0 && (
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="relative"
-          >
-            <div className="absolute -top-4 -left-4 w-12 h-12 bg-purple-500 rounded-2xl flex items-center justify-center text-white shadow-lg z-10 animate-bounce">
-              <Sparkles size={24} />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* MOTIVATIONAL QUOTE CARD */}
+        <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-8 flex flex-col justify-center gap-4 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-24 h-24 bg-[#FAF7F0] rounded-full blur-xl -mr-10 -mt-10" />
+          <span className="text-4xl shrink-0">💡</span>
+          <div className="space-y-1 z-10">
+            <p className="font-sans italic text-lg md:text-xl text-[#1E1B18] leading-relaxed">
+              "{quote.text}"
+            </p>
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-1">
+              — {quote.author}
+            </p>
+          </div>
+        </Card>
+
+        {/* Dnešní Pokrok */}
+        <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-8 flex flex-col justify-between">
+          <div>
+            <h3 className="font-sans font-black text-2xl text-[#1E1B18] mb-6">Dnešní Pokrok</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <ProgressCircle 
+                percentage={75} 
+                color="#F5C400" 
+                label="MATEMATIKA" 
+                subtitle="15 / 20 úloh" 
+                icon="🧮" 
+              />
+              <ProgressCircle 
+                percentage={40} 
+                color="#B80053" 
+                label="ČEŠTINA" 
+                subtitle="4 / 10 kapitol" 
+                icon="📖" 
+              />
+              <ProgressCircle 
+                percentage={90} 
+                color="#2B44B8" 
+                label="ANGLIČTINA" 
+                subtitle="Dokončeno!" 
+                icon="🇬🇧" 
+              />
             </div>
-            <Card className="rounded-[2.5rem] border-none shadow-2xl bg-gradient-to-br from-brand-purple to-purple-600 text-white overflow-hidden">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full -mr-32 -mt-32 blur-3xl" />
-              <CardHeader className="relative z-10">
-                <CardTitle className="text-2xl font-display flex items-center gap-2">
-                  Doporučení pro tebe <Lightbulb className="text-yellow-300" />
-                </CardTitle>
-                <CardDescription className="text-purple-100 text-lg">
-                  Na základě tvých výsledků ti AI doporučuje zaměřit se na tyto oblasti:
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="relative z-10 grid md:grid-cols-3 gap-4">
-                {profile.focusAreas?.map((area, i) => (
-                  <div key={i} className="bg-white/20 backdrop-blur-md p-6 rounded-3xl border border-white/20 flex flex-col gap-4 group hover:bg-white/30 transition-all cursor-default">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-brand-purple font-bold">
-                        {i + 1}
-                      </div>
-                      <span className="font-bold text-lg">{area}</span>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={!!isAddingTodo}
-                      onClick={() => handleAddToTodo(area)}
-                      className="mt-auto w-full bg-white/10 hover:bg-white text-white hover:text-brand-purple rounded-xl font-bold gap-2 transition-all"
-                    >
-                      {isAddingTodo === area ? <Loader2 size={16} className="animate-spin" /> : <><Clock size={16} /> Naplánovat</>}
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-
-              {/* Suggested Practice based on focus areas */}
-              <div className="px-10 pb-10 relative z-10">
-                <div className="bg-white/10 backdrop-blur-sm rounded-[2rem] p-6 border border-white/10">
-                  <h4 className="text-sm font-bold uppercase tracking-widest mb-4 text-purple-200">Doporučená procvičování pro zlepšení:</h4>
-                  <div className="flex flex-wrap gap-3">
-                    {profile.focusAreas.some(a => a.toLowerCase().includes('geometrie')) && (
-                      <Link to="/practice" className="bg-white text-brand-purple px-6 py-2 rounded-xl font-bold text-sm hover:scale-105 transition-transform">
-                        Geometrie hravě
-                      </Link>
-                    )}
-                    <Link to="/practice" className="bg-white/20 text-white px-6 py-2 rounded-xl font-bold text-sm hover:bg-white/30 transition-all">
-                      Příprava na přijímačky
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <div className="grid md:grid-cols-3 gap-8">
-        <Card className="rounded-[2rem] border-none shadow-xl bg-white p-8 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
-          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center text-brand-blue mb-4 group-hover:scale-110 transition-transform">
-            <Clock size={32} />
           </div>
-          <div className="text-4xl font-black text-brand-blue mb-1">{pendingTests.length}</div>
-          <h3 className="font-bold text-gray-900">Čekající testy</h3>
-          <p className="text-gray-400 text-sm">Dokonči je co nejdříve!</p>
-        </Card>
-
-        <Card className="rounded-[2rem] border-none shadow-xl bg-white p-8 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
-          <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-brand-orange mb-4 group-hover:scale-110 transition-transform">
-            <CheckCircle size={32} />
-          </div>
-          <div className="text-4xl font-black text-brand-orange mb-1">{completedTests.length}</div>
-          <h3 className="font-bold text-gray-900">Hotové testy</h3>
-          <p className="text-gray-400 text-sm">Skvělá práce!</p>
-        </Card>
-
-        <Card className="rounded-[2rem] border-none shadow-xl bg-white p-8 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
-          <div className="w-16 h-16 bg-green-50 rounded-2xl flex items-center justify-center text-green-500 mb-4 group-hover:scale-110 transition-transform">
-            <Target size={32} />
-          </div>
-          <div className="text-4xl font-black text-green-500 mb-1">
-            {completedTests.filter(t => t.status === 'graded').length}
-          </div>
-          <h3 className="font-bold text-gray-900">Opravené testy</h3>
-          <p className="text-gray-400 text-sm">Podívej se na výsledky.</p>
         </Card>
       </div>
 
-      <Tabs defaultValue="todos" className="space-y-10">
-        <TabsList className="bg-white/50 backdrop-blur-md border-2 border-gray-100/50 p-1.5 rounded-3xl h-20 shadow-sm flex items-center mb-10 overflow-x-auto justify-start md:justify-center w-full">
-          <TabsTrigger value="todos" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-blue data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-brand-blue group-data-[state=active]:bg-brand-blue group-data-[state=active]:text-white transition-colors">
-              <Clock size={20} />
+      {/* GARDEN CALL-TO-ACTION BANNER */}
+      <motion.div 
+        whileHover={{ scale: 1.01 }}
+        onClick={() => navigate('/garden')}
+        className="w-full bg-gradient-to-r from-[#D5F7E5] to-[#BCEECF] p-8 rounded-[2.5rem] cursor-pointer shadow-md hover:shadow-lg transition-all border border-green-200/30 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden text-green-900 group"
+      >
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-2xl -mr-20 -mt-20 pointer-events-none" />
+        <div className="flex items-center gap-4 z-10">
+          <div className="w-14 h-14 bg-white/60 rounded-2xl flex items-center justify-center text-3xl shadow-sm shrink-0">
+            🌱
+          </div>
+          <div>
+            <h3 className="font-playful text-2xl text-[#0F5238] font-bold">Moje Zahrádka</h3>
+            <p className="text-sm font-semibold text-[#19724F]">
+              Potřebuješ se soustředit na učení? Spusť Focus Timer, odlož telefon a vypěstuj si další kytičku!
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 shrink-0 z-10 w-full md:w-auto">
+          <span className="text-xs font-black uppercase tracking-wider bg-white/80 px-4 py-2 rounded-full border border-green-200/50">
+            Úroda: {profile?.gardenPlants || 0} kytiček 🌻
+          </span>
+          <Button className="bg-[#19724F] hover:bg-[#0F5238] text-white font-bold h-12 px-6 rounded-xl flex-1 md:flex-initial flex items-center gap-2 shadow-md">
+            Začít se soustředit
+            <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
+          </Button>
+        </div>
+      </motion.div>
+
+      {/* ROW 2: Kalendář & Plánovač úkolů */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
+        {/* Kalendář */}
+        <QuickCalendar todos={todos} />
+
+        {/* Pink-themed Todo Card */}
+        <Card className="rounded-[2.5rem] border-2 border-pink-100 bg-[#FAF7F0] p-8 shadow-xl flex flex-col justify-between relative overflow-hidden min-h-[500px]">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-pink-100/50 rounded-full blur-2xl -mr-10 -mt-10" />
+          
+          <div className="flex-grow z-10 flex flex-col h-full">
+            <div className="flex justify-between items-center mb-6">
+              <div className="flex items-center gap-3">
+                <span className="w-10 h-10 rounded-xl bg-pink-100 text-[#B80053] flex items-center justify-center shadow-inner">
+                  <CheckSquare size={20} />
+                </span>
+                <h3 className="font-sans font-black text-2xl text-[#1E1B18]">Plánovač úkolů</h3>
+              </div>
+              
+              <Dialog open={isNewTodoOpen} onOpenChange={setIsNewTodoOpen}>
+                <Button 
+                  onClick={() => setIsNewTodoOpen(true)}
+                  className="rounded-xl bg-[#B80053] hover:bg-[#B80053]/90 text-white font-bold h-10 px-4 flex items-center gap-2 shadow-md shadow-pink-100 transition-all cursor-pointer"
+                >
+                  <Plus size={16} />
+                  <span>Nový úkol</span>
+                </Button>
+                <DialogContent className="rounded-[2.5rem] p-8 border-none shadow-2xl max-w-md bg-white">
+                  <DialogHeader>
+                    <DialogTitle className="text-2xl font-display font-bold text-[#1E1B18]">Vytvořit vlastní úkol</DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={handleCreateTodo} className="space-y-6 py-4">
+                    <div className="space-y-2">
+                      <label className="font-bold text-gray-700 text-sm">Název úkolu</label>
+                      <Input
+                        value={newTodoTitle}
+                        onChange={e => setNewTodoTitle(e.target.value)}
+                        placeholder="Např. Naučit se slovíčka"
+                        required
+                        className="rounded-xl h-12 border-gray-200 bg-gray-50 focus:border-[#B80053] font-medium"
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button type="submit" className="w-full bg-[#B80053] hover:bg-[#B80053]/90 text-white rounded-xl h-12 font-bold text-lg">
+                        Přidat úkol
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </div>
-            TODO & Kalendář
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-grow">
+              {/* Section 1: Od učitele */}
+              <div className="flex flex-col bg-white/80 p-5 rounded-3xl border border-pink-100/50 shadow-sm min-h-[300px]">
+                <h4 className="font-sans font-black text-sm text-[#B80053] uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-pink-100 pb-2 shrink-0">
+                  👩‍🏫 Od učitele
+                </h4>
+                <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3 custom-scrollbar pr-1">
+                  {todos.filter(t => t.addedBy !== profile?.uid).length === 0 ? (
+                    <p className="text-gray-400 text-xs italic text-center py-12">Žádné úkoly od učitele.</p>
+                  ) : (
+                    todos.filter(t => t.addedBy !== profile?.uid).map(todo => renderTodoItem(todo))
+                  )}
+                </div>
+              </div>
+
+              {/* Section 2: Moje úkoly */}
+              <div className="flex flex-col bg-white/80 p-5 rounded-3xl border border-pink-100/50 shadow-sm min-h-[300px]">
+                <h4 className="font-sans font-black text-sm text-gray-800 uppercase tracking-wider mb-4 flex items-center gap-2 border-b border-gray-100 pb-2 shrink-0">
+                  ✏️ Moje úkoly
+                </h4>
+                <div className="flex-1 overflow-y-auto max-h-[300px] space-y-3 custom-scrollbar pr-1">
+                  {todos.filter(t => t.addedBy === profile?.uid).length === 0 ? (
+                    <p className="text-gray-400 text-xs italic text-center py-12">Žádné vlastní úkoly.</p>
+                  ) : (
+                    todos.filter(t => t.addedBy === profile?.uid).map(todo => renderTodoItem(todo))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* STATS PANEL */}
+      <div className="grid md:grid-cols-3 gap-6 pt-6">
+        <Card className="rounded-3xl border-none shadow-md bg-white p-6 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
+          <div className="w-12 h-12 bg-blue-50 rounded-2xl flex items-center justify-center text-brand-blue mb-3 group-hover:scale-110 transition-transform">
+            <Clock size={24} />
+          </div>
+          <div className="text-3xl font-black text-[#2B44B8] mb-1">{pendingTests.length}</div>
+          <h4 className="font-bold text-gray-800 text-sm">Čekající testy</h4>
+          <p className="text-gray-400 text-xs mt-0.5">Dokonči je co nejdříve!</p>
+        </Card>
+
+        <Card className="rounded-3xl border-none shadow-md bg-white p-6 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
+          <div className="w-12 h-12 bg-purple-50 rounded-2xl flex items-center justify-center text-[#B80053] mb-3 group-hover:scale-110 transition-transform">
+            <CheckCircle size={24} />
+          </div>
+          <div className="text-3xl font-black text-[#B80053] mb-1">{completedTests.length}</div>
+          <h4 className="font-bold text-gray-800 text-sm">Odevzdané úkoly</h4>
+          <p className="text-gray-400 text-xs mt-0.5">Skvělá práce!</p>
+        </Card>
+
+        <Card className="rounded-3xl border-none shadow-md bg-white p-6 flex flex-col items-center text-center group hover:-translate-y-1 transition-all">
+          <div className="w-12 h-12 bg-green-50 rounded-2xl flex items-center justify-center text-green-500 mb-3 group-hover:scale-110 transition-transform">
+            <Target size={24} />
+          </div>
+          <div className="text-3xl font-black text-green-600 mb-1">
+            {completedTests.filter(t => t.status === 'graded').length}
+          </div>
+          <h4 className="font-bold text-gray-800 text-sm">Opravené testy</h4>
+          <p className="text-gray-400 text-xs mt-0.5">Podívej se na zpětnou vazbu.</p>
+        </Card>
+      </div>
+
+      {/* LOWER TABS: MOJE TESTY, HISTORIE */}
+      <Tabs 
+        value={searchParams.get('tab') || 'tests'} 
+        onValueChange={(val) => setSearchParams({ tab: val })} 
+        className="space-y-8 pt-6 scroll-mt-10"
+        id="student-tabs"
+      >
+        <TabsList className="bg-white/60 backdrop-blur-md border border-gray-100 p-1.5 rounded-2xl h-16 shadow-sm flex items-center mb-8 overflow-x-auto justify-start md:justify-center w-full max-w-2xl mx-auto">
+          <TabsTrigger value="tests" className="rounded-xl px-6 h-full data-[state=active]:bg-[#F5C400] data-[state=active]:text-[#1E1B18] data-[state=active]:font-black data-[state=active]:shadow-md font-bold transition-all flex items-center gap-2 cursor-pointer">
+            <FileText size={18} />
+            <span>Moje testy ({pendingTests.length})</span>
           </TabsTrigger>
-          <TabsTrigger value="pending" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-orange data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-brand-orange">
-              <FileText size={20} />
-            </div>
-            Moje testy
+          <TabsTrigger value="activity" className="rounded-xl px-6 h-full data-[state=active]:bg-[#F5C400] data-[state=active]:text-[#1E1B18] data-[state=active]:font-black data-[state=active]:shadow-md font-bold transition-all flex items-center gap-2 cursor-pointer">
+            <Bell size={18} />
+            <span>Poslední aktivita</span>
           </TabsTrigger>
-          <TabsTrigger value="completed" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-brand-blue data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
-              <Trophy size={20} />
-            </div>
-            Historie
-          </TabsTrigger>
-          <TabsTrigger value="sheets" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-purple-600 data-[state=active]:shadow-lg font-bold transition-all flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600">
-              <BookOpen size={20} />
-            </div>
-            Materiály
+          <TabsTrigger value="history" className="rounded-xl px-6 h-full data-[state=active]:bg-[#F5C400] data-[state=active]:text-[#1E1B18] data-[state=active]:font-black data-[state=active]:shadow-md font-bold transition-all flex items-center gap-2 cursor-pointer">
+            <Trophy size={18} />
+            <span>Historie</span>
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="todos" className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="space-y-10">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              <div className="lg:col-span-2 space-y-8">
-                <div className="bg-white/50 p-8 rounded-[2.5rem] border border-white/50 shadow-sm">
-                  <TodoManager targetStudentId={profile?.uid || ''} />
+        {/* TABS CONTENT: POSLEDNÍ AKTIVITA */}
+        <TabsContent value="activity" className="animate-in fade-in-50 duration-300 space-y-6">
+          <div className="max-w-3xl mx-auto space-y-4">
+            {activityItems.length === 0 ? (
+              <div className="text-center py-16 bg-white/40 rounded-[2.5rem] border-2 border-dashed border-gray-200">
+                <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4 text-gray-400">
+                  <Bell size={32} />
                 </div>
+                <h3 className="text-xl font-sans font-black text-gray-800 mb-1">Žádná aktivita</h3>
+                <p className="text-gray-400 text-sm">Zatím nebyly zaznamenány žádné aktivity.</p>
               </div>
-              <div className="space-y-8">
-                <CountdownTimer todos={todos} compact />
+            ) : (
+              activityItems.map((item) => {
+                const isPending = item.status === 'pending';
+                const isTest = item.type === 'test';
+                const isTodo = item.type === 'todo';
+                const isMaterial = item.type === 'material';
 
-                <div className="bg-gradient-to-br from-brand-blue to-blue-700 rounded-[2.5rem] p-8 text-white shadow-xl shadow-blue-100 relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-8 opacity-10">
-                    <Lightbulb size={120} />
-                  </div>
-                  <h3 className="text-xl font-display font-bold mb-2">Tip pro tebe</h3>
-                  <p className="text-blue-100 text-sm leading-relaxed">
-                    Pravidelné procvičování alespoň 15 minut denně výrazně zlepšuje dlouhodobou paměť. Naplánuj si úkoly do kalendáře!
-                  </p>
-                </div>
-              </div>
-            </div>
+                let iconColorClass = '';
+                let iconBgClass = '';
+                let iconElement = null;
 
-            <QuickCalendar todos={todos} />
+                if (isTest) {
+                  iconColorClass = 'text-[#2B44B8]';
+                  iconBgClass = 'bg-blue-50';
+                  iconElement = <FileText size={20} />;
+                } else if (isTodo) {
+                  iconColorClass = 'text-[#B80053]';
+                  iconBgClass = 'bg-pink-50';
+                  iconElement = <CheckSquare size={20} />;
+                } else {
+                  iconColorClass = 'text-purple-500';
+                  iconBgClass = 'bg-purple-50';
+                  iconElement = <BookOpen size={20} />;
+                }
+
+                return (
+                  <Card key={`${item.type}-${item.id}`} className="rounded-3xl border-none shadow-md bg-white overflow-hidden hover:shadow-lg transition-all p-5 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-4 min-w-0 flex-1">
+                      <div className={cn("w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0", iconBgClass, iconColorClass)}>
+                        {iconElement}
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="font-sans font-black text-base text-gray-800 truncate">
+                          {item.title}
+                        </h4>
+                        <p className="text-gray-400 font-semibold text-xs mt-1 flex items-center gap-2">
+                          <Clock size={12} /> {item.date.toLocaleDateString('cs-CZ')} {item.date.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
+                          {item.description && <span className="text-gray-300">|</span>}
+                          {item.description && <span className="truncate">{item.description}</span>}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="shrink-0">
+                      {isTest && (
+                        <Button
+                          onClick={() => navigate(isPending ? `/test/${item.id}` : `/review/${item.id}`)}
+                          className={cn(
+                            "rounded-xl h-10 px-4 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm cursor-pointer",
+                            isPending 
+                              ? "bg-[#2B44B8] hover:bg-[#1e339a] text-white" 
+                              : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                          )}
+                        >
+                          {isPending ? 'Spustit test' : 'Detaily'}
+                          <ArrowRight size={12} />
+                        </Button>
+                      )}
+                      {isTodo && (
+                        <Button
+                          onClick={() => navigate('/todo')}
+                          className="rounded-xl h-10 px-4 font-bold text-xs bg-pink-50 hover:bg-pink-100 text-[#B80053] transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          Přejít na úkoly
+                          <ArrowRight size={12} />
+                        </Button>
+                      )}
+                      {isMaterial && (
+                        <Button
+                          onClick={() => navigate('/learning')}
+                          className="rounded-xl h-10 px-4 font-bold text-xs bg-purple-50 hover:bg-purple-100 text-purple-600 transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          Přejít na materiály
+                          <ArrowRight size={12} />
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })
+            )}
           </div>
         </TabsContent>
 
-        <TabsContent value="pending">
-          <div className="grid md:grid-cols-2 gap-8">
+        {/* TABS CONTENT: MOJE TESTY */}
+        <TabsContent value="tests" className="animate-in fade-in-50 duration-300">
+          <div className="grid md:grid-cols-2 gap-6">
             {pendingTests.map(test => (
               <motion.div key={test.id} layout initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
-                <Card className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all overflow-hidden group bg-white">
-                  <div className="h-3 bg-brand-blue/10 group-hover:bg-brand-blue/20 transition-colors" />
-                  <CardHeader className="pb-6">
+                <Card className="rounded-[2rem] border-none shadow-md hover:shadow-lg transition-all overflow-hidden group bg-white">
+                  <div className="h-2.5 bg-brand-blue/15 group-hover:bg-[#2B44B8] transition-colors" />
+                  <CardHeader className="pb-4">
                     <div className="flex justify-between items-start mb-2">
-                      <CardTitle className="text-2xl font-display group-hover:text-brand-blue transition-colors">
+                      <CardTitle className="text-xl font-sans font-black text-gray-800 group-hover:text-[#2B44B8] transition-colors">
                         {test.testTitle}
                       </CardTitle>
-                      <span className="px-3 py-1 bg-blue-50 text-brand-blue rounded-full text-[10px] font-bold uppercase tracking-wider">
-                        Matematika
+                      <span className="px-2.5 py-1 bg-blue-50 text-[#2B44B8] rounded-full text-[10px] font-black uppercase tracking-wider">
+                        Test
                       </span>
                     </div>
-                    <CardDescription className="flex items-center gap-2 text-gray-400 font-bold">
-                      <Clock size={16} /> Přiřazeno: {safeToDate(test.assignedAt)?.toLocaleDateString('cs-CZ')}
+                    <CardDescription className="flex items-center gap-2 text-gray-400 font-semibold text-xs">
+                      <Clock size={14} /> Přiřazeno: {safeToDate(test.assignedAt)?.toLocaleDateString('cs-CZ')}
                     </CardDescription>
                   </CardHeader>
-                  <CardContent className="pt-0">
+                  <CardContent className="pt-2">
                     <Button
                       onClick={() => navigate(`/test/${test.id}`)}
-                      className="btn-blue w-full h-14 rounded-2xl text-lg font-bold shadow-xl shadow-blue-100 group-hover:scale-[1.02] transition-transform"
+                      className="btn-blue w-full h-12 rounded-xl text-sm font-bold group-hover:scale-[1.01] transition-transform"
                     >
-                      Spustit test <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" size={20} />
+                      Spustit test <ArrowRight className="ml-2 group-hover:translate-x-1 transition-transform" size={16} />
                     </Button>
                   </CardContent>
                 </Card>
               </motion.div>
             ))}
             {pendingTests.length === 0 && (
-              <div className="col-span-full text-center py-24 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
-                <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-6 text-brand-blue">
-                  <CheckCircle size={40} />
+              <div className="col-span-full text-center py-16 bg-white/40 rounded-[2.5rem] border-2 border-dashed border-gray-200">
+                <div className="w-16 h-16 bg-green-50 rounded-full flex items-center justify-center mx-auto mb-4 text-green-500">
+                  <CheckCircle size={32} />
                 </div>
-                <h3 className="text-2xl font-display font-bold text-gray-900 mb-2">Vše hotovo!</h3>
-                <p className="text-gray-400 text-lg">Momentálně nemáš žádné čekající testy. 🎉</p>
+                <h3 className="text-xl font-sans font-black text-gray-800 mb-1">Vše hotovo!</h3>
+                <p className="text-gray-400 text-sm">Momentálně nemáš žádné čekající testy. 🎉</p>
               </div>
             )}
           </div>
         </TabsContent>
 
-        <TabsContent value="completed">
-          <div className="space-y-6">
-            {completedTests.map(test => (
-              <Card key={test.id} className="rounded-3xl border-none shadow-lg bg-white overflow-hidden hover:shadow-xl transition-all">
-                <div className="flex flex-col md:flex-row md:items-center justify-between p-8 gap-6">
-                  <div className="flex items-center gap-6">
-                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-sm ${test.status === 'graded' ? 'bg-green-50 text-green-500' : 'bg-orange-50 text-brand-orange'}`}>
-                      {test.status === 'graded' ? <Trophy size={32} /> : <Clock size={32} />}
-                    </div>
-                    <div>
-                      <h3 className="font-display font-bold text-2xl text-gray-900">{test.testTitle}</h3>
-                      <p className="text-gray-400 font-bold">
-                        {test.status === 'graded'
-                          ? `Oznámkováno: ${safeToDate(test.gradedAt)?.toLocaleDateString('cs-CZ')}`
-                          : `Odevzdáno: ${safeToDate(test.submittedAt)?.toLocaleDateString('cs-CZ')}`}
-                      </p>
-                    </div>
+        {/* TABS CONTENT: HISTORIE */}
+        <TabsContent value="history" className="animate-in fade-in-50 duration-300 space-y-4">
+          {completedTests.map(test => (
+            <Card key={test.id} className="rounded-3xl border-none shadow-md bg-white overflow-hidden hover:shadow-lg transition-all">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between p-6 gap-6">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm shrink-0 ${test.status === 'graded' ? 'bg-green-50 text-green-500' : 'bg-orange-50 text-brand-orange'}`}>
+                    {test.status === 'graded' ? <Trophy size={24} /> : <Clock size={24} />}
                   </div>
-
-                  <div className="flex items-center gap-6">
-                    {test.status === 'graded' && (
-                      <div className="text-center md:text-right">
-                        <div className="text-4xl font-black text-brand-blue leading-none mb-1">
-                          {test.grade}
-                        </div>
-                        <div className="text-[10px] uppercase font-bold text-gray-400 tracking-widest">Známka</div>
-                      </div>
-                    )}
-                    {test.status === 'submitted' && (
-                      <span className="px-6 py-2 bg-orange-50 text-brand-orange rounded-full text-xs font-bold uppercase tracking-widest border border-orange-100">
-                        Čeká na opravu
-                      </span>
-                    )}
-                    <Button
-                      variant="ghost"
-                      className="rounded-xl hover:bg-gray-50"
-                      onClick={() => navigate(`/review/${test.id}`)}
-                    >
-                      Detaily <ArrowRight size={16} className="ml-2" />
-                    </Button>
+                  <div>
+                    <h3 className="font-sans font-black text-xl text-gray-800">{test.testTitle}</h3>
+                    <p className="text-gray-400 font-semibold text-xs mt-0.5">
+                      {test.status === 'graded'
+                        ? `Oznámkováno: ${safeToDate(test.gradedAt)?.toLocaleDateString('cs-CZ')}`
+                        : `Odevzdáno: ${safeToDate(test.submittedAt)?.toLocaleDateString('cs-CZ')}`}
+                    </p>
                   </div>
                 </div>
-                {test.feedback && (
-                  <div className="px-8 pb-8 pt-0">
-                    <div className="p-6 bg-blue-50/50 rounded-2xl text-brand-blue italic relative">
-                      <div className="absolute top-0 left-0 transform -translate-x-1/2 -translate-y-1/2 text-4xl text-brand-blue/10 font-serif">"</div>
-                      {test.feedback}
+
+                <div className="flex items-center justify-between sm:justify-end gap-6 shrink-0">
+                  {test.status === 'graded' && (
+                    <div className="text-center sm:text-right">
+                      <div className="text-3xl font-black text-[#2B44B8] leading-none mb-1">
+                        {test.grade}
+                      </div>
+                      <div className="text-[9px] uppercase font-bold text-gray-400 tracking-wider">Známka</div>
                     </div>
+                  )}
+                  {test.status === 'submitted' && (
+                    <span className="px-4 py-1.5 bg-orange-50 text-brand-orange rounded-full text-[10px] font-black uppercase tracking-wider border border-orange-100">
+                      Čeká na opravu
+                    </span>
+                  )}
+                  <Button
+                    variant="ghost"
+                    className="rounded-xl hover:bg-gray-50 font-bold"
+                    onClick={() => navigate(`/review/${test.id}`)}
+                  >
+                    Detaily <ArrowRight size={14} className="ml-1.5" />
+                  </Button>
+                </div>
+              </div>
+              {test.feedback && (
+                <div className="px-6 pb-6 pt-0">
+                  <div className="p-4 bg-[#FAF7F0] rounded-2xl text-gray-600 text-sm italic relative">
+                    {test.feedback}
                   </div>
-                )}
-              </Card>
-            ))}
-          </div>
+                </div>
+              )}
+            </Card>
+          ))}
+          {completedTests.length === 0 && (
+            <div className="text-center py-16 bg-white/40 rounded-[2.5rem] border-2 border-dashed border-gray-200">
+              <p className="text-gray-400 font-semibold text-sm">Zatím jsi neodevzdal žádné testy.</p>
+            </div>
+          )}
         </TabsContent>
 
-        <TabsContent value="sheets">
-          <div className="flex flex-col md:flex-row gap-4 mb-8">
-            <div className="relative flex-1">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-              <Input 
-                placeholder="Hledat materiál podle názvu..." 
-                className="pl-12 h-14 rounded-2xl border-gray-200 focus:border-brand-purple focus:ring-brand-purple/20 text-lg"
-                value={sheetSearchQuery}
-                onChange={(e) => setSheetSearchQuery(e.target.value)}
-              />
-            </div>
-            <div className="w-full md:w-64">
-              <Select value={sheetSubjectFilter} onValueChange={setSheetSubjectFilter}>
-                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
-                  <SelectValue placeholder="Všechny předměty" />
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  <SelectItem value="all">Všechny předměty</SelectItem>
-                  {allSubjects.map(subject => (
-                    <SelectItem key={subject} value={subject}>{subject}</SelectItem>
-                  ))}
-                  {!allSubjects.includes('Matematika') && (
-                    <SelectItem value="Matematika">Matematika</SelectItem>
-                  )}
-                  {!allSubjects.includes('Angličtina') && (
-                    <SelectItem value="Angličtina">Angličtina</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="w-full md:w-64">
-              <Select value={sheetTopicFilter} onValueChange={setSheetTopicFilter}>
-                <SelectTrigger className="h-14 rounded-2xl border-gray-200 text-lg">
-                  <SelectValue placeholder="Všechna témata" />
-                </SelectTrigger>
-                <SelectContent className="rounded-xl">
-                  <SelectItem value="all">Všechna témata</SelectItem>
-                  {allTopics.map(topic => (
-                    <SelectItem key={topic} value={topic}>{topic}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-3 gap-8">
-            {filteredLearningSheets.length === 0 ? (
-              <div className="col-span-full py-12 text-center bg-white/50 rounded-3xl border-2 border-dashed border-gray-200">
-                <BookOpen size={48} className="mx-auto text-gray-300 mb-4" />
-                <h3 className="text-xl font-bold text-gray-600 mb-2">Žádné materiály nebyly nalezeny</h3>
-                <p className="text-gray-500">Zkuste upravit filtry hledání.</p>
-              </div>
-            ) : filteredLearningSheets.map(sheet => (
-              <Card
-                key={sheet.id}
-                className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all cursor-pointer group bg-white overflow-hidden"
-                onClick={() => setSelectedSheet(sheet)}
-              >
-                <div className="h-2 bg-brand-purple/10 group-hover:bg-brand-purple/20 transition-colors" />
-                <CardHeader>
-                  <div className="w-14 h-14 bg-purple-50 rounded-2xl flex items-center justify-center text-brand-purple mb-4 group-hover:scale-110 transition-transform shadow-sm">
-                    <BookOpen size={28} />
-                  </div>
-                  <CardTitle className="text-xl font-display group-hover:text-brand-purple transition-colors">
-                    {sheet.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-gray-500 line-clamp-3 leading-relaxed">{sheet.content}</p>
-                  <Button variant="link" className="p-0 mt-4 text-brand-purple font-bold">
-                    Otevřít materiál <ArrowRight size={16} className="ml-1" />
-                  </Button>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+        {/* TABS CONTENT: KALENDÁŘ */}
+        <TabsContent value="calendar" className="animate-in fade-in-50 duration-300">
+          <QuickCalendar todos={todos} />
         </TabsContent>
       </Tabs>
 
-      {/* Sheet Viewer Dialog */}
+      {/* AI RECOMMENDATIONS SECTION */}
+      <AnimatePresence>
+        {profile?.focusAreas && profile.focusAreas.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="relative pt-6"
+          >
+            <div className="absolute top-2 -left-3 w-10 h-10 bg-purple-500 rounded-2xl flex items-center justify-center text-white shadow-md z-10 animate-bounce">
+              <Sparkles size={20} />
+            </div>
+            <Card className="rounded-[2.5rem] border-none shadow-lg bg-gradient-to-br from-[#B80053] to-[#80003A] text-white overflow-hidden">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-32 -mt-32 blur-3xl pointer-events-none" />
+              <CardHeader className="relative z-10 p-8">
+                <CardTitle className="text-2xl font-sans font-black flex items-center gap-2 text-white">
+                  Doporučení pro tebe <Lightbulb className="text-yellow-300 shrink-0" />
+                </CardTitle>
+                <CardDescription className="text-purple-100 text-base font-semibold mt-1">
+                  Na základě tvých výsledků ti AI doporučuje zaměřit se na tyto oblasti:
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="relative z-10 grid md:grid-cols-3 gap-6 p-8 pt-0">
+                {profile.focusAreas?.map((area, i) => (
+                  <div key={i} className="bg-white/10 backdrop-blur-md p-6 rounded-3xl border border-white/10 flex flex-col gap-4 group hover:bg-white/20 transition-all cursor-default">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center text-[#B80053] font-black text-sm shrink-0">
+                        {i + 1}
+                      </div>
+                      <span className="font-bold text-base leading-snug">{area}</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={!!isAddingTodo}
+                      onClick={() => handleAddToTodo(area)}
+                      className="mt-auto w-full bg-white/10 hover:bg-white text-white hover:text-[#B80053] rounded-xl font-bold gap-2 transition-all h-10 cursor-pointer"
+                    >
+                      {isAddingTodo === area ? <Loader2 size={14} className="animate-spin" /> : <><Clock size={14} /> Naplánovat</>}
+                    </Button>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* BOTTOM SECTION: LIVE MEETINGS */}
+      <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-8">
+        <div className="flex justify-between items-center mb-6">
+          <div className="flex items-center gap-3">
+            <span className="w-3 h-3 bg-red-500 rounded-full animate-ping shrink-0" />
+            <h3 className="font-sans font-black text-2xl text-[#1E1B18]">Připojit se na hodinu</h3>
+          </div>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {courses.filter(c => c.meetLink).length === 0 ? (
+            <div className="col-span-full text-center py-8 text-gray-400 bg-gray-50/50 rounded-2xl border border-dashed border-gray-100">
+              Momentálně nejsou naplánované žádné živé lekce.
+            </div>
+          ) : (
+            courses.filter(c => c.meetLink).map(course => (
+              <div key={course.id} className="flex flex-col justify-between p-6 bg-[#FAF7F0] rounded-3xl border border-gray-100 hover:shadow-sm transition-all h-full gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm text-white shrink-0 bg-[#B80053]">
+                    <span className="font-bold">{course.title.charAt(0).toUpperCase()}</span>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-gray-800 leading-tight mb-1">{course.title}</h4>
+                    <p className="text-xs text-gray-400 font-bold line-clamp-2">{course.description || "Živá výuka s učitelem"}</p>
+                  </div>
+                </div>
+                <a 
+                  href={course.meetLink?.startsWith('http') ? course.meetLink : `https://${course.meetLink}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full bg-[#B80053] hover:bg-[#B80053]/90 text-white font-bold h-12 rounded-xl flex items-center justify-center gap-2 shadow-md shadow-pink-100 cursor-pointer"
+                >
+                  Připojit se na Google Meet
+                  <ExternalLink size={16} />
+                </a>
+              </div>
+            ))
+          )}
+        </div>
+      </Card>
+
+      {/* Sheet Viewer Dialog (preserved for materials if opened here) */}
       <Dialog open={!!selectedSheet} onOpenChange={(open) => !open && setSelectedSheet(null)}>
         <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
           {selectedSheet && (
             <div className="flex flex-col h-full w-full bg-white">
               <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
                 <div className="flex items-center gap-4">
-                  <span className="px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-xs font-bold uppercase tracking-widest">
+                  <span className="px-3 py-1 bg-purple-50 text-[#B80053] rounded-full text-xs font-black uppercase tracking-widest">
                     {selectedSheet.topic || 'Matematika'}
                   </span>
                   <DialogHeader>
-                    <DialogTitle className="text-xl font-display font-bold m-0">
+                    <DialogTitle className="text-xl font-sans font-black m-0">
                       {selectedSheet.title}
                     </DialogTitle>
                   </DialogHeader>

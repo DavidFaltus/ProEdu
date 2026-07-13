@@ -13,6 +13,12 @@ export interface UserProfile {
   createdAt: Timestamp;
   focusAreas?: string[];
   photoURL?: string;
+  streak?: number;
+  lastPracticeDate?: Timestamp;
+  gardenPlants?: number;
+  avatarEmoji?: string;
+  avatarBgColor?: string;
+  focusSessionsHistory?: any[];
 }
 
 export type MathTopic = string;
@@ -95,6 +101,7 @@ export interface PracticeCourse {
   id: string;
   title: string;
   description: string;
+  subject?: string;
   topic: MathTopic | string;
   topics?: string[];
   customTopics?: string[];
@@ -123,6 +130,8 @@ export interface TodoItem {
   addedBy: string;
   completedAt?: Timestamp | null;
   feedback?: string;
+  topic?: string;
+  questionCount?: number;
 }
 
 export interface Course {
@@ -135,6 +144,7 @@ export interface Course {
   createdAt: Timestamp;
   isPaid?: boolean;
   price?: number;
+  meetLink?: string;
 }
 
 export interface CourseItemAttachment {

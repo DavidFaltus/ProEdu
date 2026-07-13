@@ -19,7 +19,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import ProfileSettings from './ProfileSettings';
+
 
 export default function Navbar() {
   const { user, profile, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen } = useAuth();
@@ -39,9 +39,9 @@ export default function Navbar() {
         <div className="flex items-center gap-10">
           <Link to="/" className="flex items-center gap-2 group">
             <img 
-              src="/foto/logo.png" 
+              src="/photo/logo.png" 
               alt="ProEdu" 
-              className="h-10 md:h-12 w-auto group-hover:scale-105 transition-transform"
+              className="h-14 md:h-16 w-auto group-hover:scale-105 transition-transform"
               referrerPolicy="no-referrer"
             />
           </Link>
@@ -132,16 +132,13 @@ export default function Navbar() {
                     </DropdownMenuItem>
                   )}
 
-                  <DropdownMenuItem 
-                    onClick={() => setIsProfileSettingsOpen(true)}
-                    className="rounded-2xl cursor-pointer focus:bg-gray-50 focus:text-brand-blue p-3 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 font-bold w-full">
+                  <DropdownMenuItem className="rounded-2xl cursor-pointer focus:bg-gray-50 focus:text-brand-blue p-3 transition-colors">
+                    <Link to="/settings" className="flex items-center gap-3 font-bold w-full">
                       <div className="w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center text-gray-400">
                         <Settings size={20} />
                       </div>
                       Nastavení profilu
-                    </div>
+                    </Link>
                   </DropdownMenuItem>
 
                   <DropdownMenuSeparator className="bg-gray-50 mx-2" />
@@ -172,10 +169,6 @@ export default function Navbar() {
           )}
         </div>
       </div>
-      <ProfileSettings 
-        open={isProfileSettingsOpen} 
-        onOpenChange={setIsProfileSettingsOpen} 
-      />
     </nav>
   );
 }

@@ -1,6 +1,7 @@
 import { collection, addDoc, getDocs, query, where, serverTimestamp, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { GEOMETRY_QUESTIONS } from '../data/geometryQuestions';
+import { FALLBACK_QUESTIONS } from '../data/fallbackQuestions';
 import { postApi } from './apiClient';
 
 interface StartPracticePayload {
@@ -127,14 +128,62 @@ export async function createPracticeAttempt(payload: StartPracticePayload, targe
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error("Nepřihlášen");
 
-  const questionPool = await loadQuestionsForCourse(payload);
-  const questionCount = Math.min(questionPool.length, Number(payload.questionCount || 10));
-  const selectedQuestions = shuffle(questionPool).slice(0, questionCount);
+  let questionPool = await loadQuestionsForCourse(payload);
+  const needed = Number(payload.questionCount || 10);
 
-  // If no questions found, use static geometry if topic matches
-  if (selectedQuestions.length === 0 && payload.topic === 'Geometrie') {
-    selectedQuestions.push(...shuffle(GEOMETRY_QUESTIONS).slice(0, questionCount || 10));
+  // If not enough questions are found in DB, mix in matching fallback questions
+  if (questionPool.length < needed) {
+    const matchingFallbacks = FALLBACK_QUESTIONS.filter(q => 
+      q.topic === payload.topic || 
+      (payload.topics && payload.topics.includes(q.topic))
+    );
+
+    let fallbackPool = [...matchingFallbacks];
+    
+    // Special handling for Geometrie: also allow original geometry fallback questions
+    if (payload.topic === 'Geometrie' || (payload.topics && payload.topics.includes('Geometrie'))) {
+      fallbackPool.push(...GEOMETRY_QUESTIONS.filter(gq => !fallbackPool.some(fq => fq.id === gq.id)));
+    }
+
+    // If still not enough, mix in any fallback questions from the same subject category
+    if (fallbackPool.length < needed) {
+      const MATH_TOPICS = ['Počítání a čísla', 'Rovnice a výrazy', 'Procenta poměry a data', 'Geometrie', 'Rýsování', 'Slovní úlohy', 'Logické chytáky'];
+      const CZECH_TOPICS = ['Pravopis a chytáky', 'Gramatika (stavba slov, vět)', 'Spisovnost a významy slov', 'Práce s textem a sloh', 'Literatura a poezie'];
+      const ENGLISH_TOPICS = ['Poslech a porozumění', 'Slovní zásoba', 'Časy a pomocná slovesa', 'Předložky', 'Ustálené vazby', 'Stavba věty'];
+
+      const getSubject = (t: string) => {
+        if (MATH_TOPICS.includes(t)) return 'math';
+        if (CZECH_TOPICS.includes(t)) return 'czech';
+        if (ENGLISH_TOPICS.includes(t)) return 'english';
+        return 'other';
+      };
+
+      const targetSubject = getSubject(payload.topic);
+      const subjectFallbacks = FALLBACK_QUESTIONS.filter(q => getSubject(q.topic) === targetSubject);
+      
+      // Also mix in geometry if it's math
+      if (targetSubject === 'math') {
+        subjectFallbacks.push(...GEOMETRY_QUESTIONS);
+      }
+
+      subjectFallbacks.forEach(q => {
+        if (!fallbackPool.some(existing => existing.id === q.id)) {
+          fallbackPool.push(q);
+        }
+      });
+    }
+
+    const shuffledFallbacks = shuffle(fallbackPool);
+    for (const q of shuffledFallbacks) {
+      if (questionPool.length >= needed) break;
+      if (!questionPool.some(existing => existing.id === q.id)) {
+        questionPool.push(q);
+      }
+    }
   }
+
+  const questionCount = Math.min(questionPool.length, needed);
+  const selectedQuestions = shuffle(questionPool).slice(0, questionCount);
 
   const testPayload = {
     title: payload.title,

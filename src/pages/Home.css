@@ -1,3 +1,10 @@
+@font-face {
+    font-family: 'LePetitCochon';
+    src: url('../assets/Petit Cochon.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+}
+
 :root {
     --bg-gradient: radial-gradient(circle, #ffffff 0%, #e1f1ff 100%);
     --orange-btn: linear-gradient(90deg, #ff4133 0%, #ff8c4b 100%);
@@ -51,24 +58,24 @@
 }
 
 .logo-img {
-    height: 100px;
+    height: 80px;
     width: auto;
 }
 
 .cator {
-    font-family: 'Le Petit Cochon', cursive;
-    font-size: 80px;
+    font-family: 'LePetitCochon', sans-serif !important;
+    font-size: 60px;
     color: #3273dc;
     margin-left: 10px;
-    margin-top: 20px;
+    margin-top: 45px;
     line-height: 1;
 }
 
 .trophy-img {
     position: absolute;
-    width: 130px;
-    top: -25px;
-    right: -105px;
+    width: 145px;
+    top: -55px;
+    right: -100px;
     transform: rotate(-5deg);
     z-index: 10;
 }
@@ -87,7 +94,7 @@
 }
 
 .cta-text {
-    font-family: 'Le Petit Cochon', cursive;
+    font-family: 'LePetitCochon', sans-serif !important;
     font-size: 38px;
     color: #555;
     margin-bottom: 15px;
@@ -199,15 +206,16 @@ footer.home-footer a {
     }
 
     .cator {
-        font-size: 50px;
-        margin-bottom: 20px;
+        font-size: 30px;
+        margin-top: 20px;
+        margin-bottom: 0;
         margin-right: -5px;
     }
 
     .trophy-img {
         width: 80px;
-        right: -70px;
-        top: 10px;
+        right: -60px;
+        top: -25px;
     }
 
     .illustration {

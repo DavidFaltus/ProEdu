@@ -4,7 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { ArrowLeft, CheckCircle2, Info, XCircle } from 'lucide-react';
 import { db } from '../lib/firebase';
-import { AssignedTest, ReviewQuestion } from '../types';
+import { AssignedTest } from '../types';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { GeometryDiagram } from '../components/GeometryDiagram';
@@ -14,6 +14,7 @@ export default function TestReview() {
   const navigate = useNavigate();
   const [assignedTest, setAssignedTest] = useState<AssignedTest | null>(null);
   const [loading, setLoading] = useState(true);
+  const [correctAnswers, setCorrectAnswers] = useState<Record<string, { correctAnswer: string, explanation?: string }>>({});
 
   useEffect(() => {
     const fetchReview = async () => {
@@ -26,7 +27,30 @@ export default function TestReview() {
         const assignedSnap = await getDoc(doc(db, 'assignedTests', id));
 
         if (assignedSnap.exists()) {
-          setAssignedTest({ id: assignedSnap.id, ...assignedSnap.data() } as AssignedTest);
+          const data = { id: assignedSnap.id, ...assignedSnap.data() } as AssignedTest;
+          setAssignedTest(data);
+
+          // Fetch correct answers for client-graded review calculations
+          if (data.testId) {
+            try {
+              const testSnap = await getDoc(doc(db, 'tests', data.testId));
+              if (testSnap.exists()) {
+                const testData = testSnap.data();
+                const answersMap: Record<string, { correctAnswer: string, explanation?: string }> = {};
+                if (testData.questions) {
+                  testData.questions.forEach((q: any) => {
+                    answersMap[q.id] = {
+                      correctAnswer: q.correctAnswer,
+                      explanation: q.explanation || ''
+                    };
+                  });
+                }
+                setCorrectAnswers(answersMap);
+              }
+            } catch (err) {
+              console.warn("Could not load correct answers for review:", err);
+            }
+          }
         }
       } finally {
         setLoading(false);
@@ -47,7 +71,16 @@ export default function TestReview() {
 
   const reviewQuestions = assignedTest?.reviewQuestions || [];
   const displayQuestions = reviewQuestions.length > 0 ? reviewQuestions : (assignedTest?.questions || []);
-  const correctCount = reviewQuestions.filter((question) => question.isCorrect).length;
+  
+  const correctCount = reviewQuestions.length > 0
+    ? reviewQuestions.filter((question) => question.isCorrect).length
+    : displayQuestions.filter((q) => {
+        const uAns = assignedTest?.answers?.[q.id];
+        const cAns = correctAnswers[q.id]?.correctAnswer;
+        return cAns !== undefined && uAns === cAns;
+      }).length;
+
+  const totalQuestionsCount = reviewQuestions.length > 0 ? reviewQuestions.length : displayQuestions.length;
 
   if (!assignedTest || (reviewQuestions.length === 0 && (assignedTest.questions || []).length === 0)) {
     return (
@@ -74,15 +107,15 @@ export default function TestReview() {
         </div>
         <div className="bg-white px-6 py-3 rounded-2xl shadow-sm border border-gray-50 flex items-center gap-4">
           <div className="text-right">
-            {assignedTest.autoGrade !== false && reviewQuestions.length > 0 ? (
+            {assignedTest.autoGrade !== false && (reviewQuestions.length > 0 || Object.keys(correctAnswers).length > 0) ? (
               <>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Tvé skóre</div>
                 <div className="text-2xl font-black text-brand-blue">
-                  {correctCount} <span className="text-gray-300 mx-1">/</span> {reviewQuestions.length}
+                  {correctCount} <span className="text-gray-300 mx-1">/</span> {totalQuestionsCount}
                 </div>
               </>
             ) : (
-                <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Stav testu</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Stav testu</div>
             )}
           </div>
           <div className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl shadow-sm ${
@@ -110,16 +143,32 @@ export default function TestReview() {
       )}
 
       <div className="space-y-8">
-        {displayQuestions.map((question, index) => (
-          <div key={question.id}>
-            <ReviewCard 
-              index={index} 
-              question={question as any} 
-              userAnswer={reviewQuestions.length > 0 ? (question as any).userAnswer : assignedTest.answers?.[question.id]}
-              autoGrade={assignedTest.autoGrade !== false}
-            />
-          </div>
-        ))}
+        {displayQuestions.map((question, index) => {
+          const uAns = reviewQuestions.length > 0 ? (question as any).userAnswer : assignedTest.answers?.[question.id];
+          const cAns = reviewQuestions.length > 0 ? (question as any).correctAnswer : correctAnswers[question.id]?.correctAnswer;
+          const explanationText = reviewQuestions.length > 0 ? (question as any).explanation : correctAnswers[question.id]?.explanation;
+          const isQuestionCorrect = reviewQuestions.length > 0
+            ? (question as any).isCorrect
+            : (cAns !== undefined ? uAns === cAns : undefined);
+
+          const questionToPass = {
+            ...question,
+            correctAnswer: cAns,
+            explanation: explanationText,
+            isCorrect: isQuestionCorrect
+          };
+
+          return (
+            <div key={question.id}>
+              <ReviewCard 
+                index={index} 
+                question={questionToPass} 
+                userAnswer={uAns}
+                autoGrade={assignedTest.autoGrade !== false}
+              />
+            </div>
+          );
+        })}
       </div>
 
       <div className="flex justify-center pt-10">
@@ -147,7 +196,7 @@ function ReviewCard({
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.05 }}>
       <Card className={`rounded-[2.5rem] border-none shadow-xl overflow-hidden ${isCorrect === true ? 'bg-white' : isCorrect === false ? 'bg-red-50/30' : 'bg-white'}`}>
-        {autoGrade && <div className={`h-2 ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`} />}
+        {autoGrade && isCorrect !== undefined && <div className={`h-2 ${isCorrect ? 'bg-green-500' : 'bg-red-500'}`} />}
         <CardHeader className="p-8">
           <div className="flex justify-between items-start gap-4">
             <div className="space-y-2">
@@ -166,7 +215,7 @@ function ReviewCard({
               </div>
               <CardTitle className="text-2xl font-display leading-tight">{question.question}</CardTitle>
             </div>
-            {autoGrade && (
+            {autoGrade && isCorrect !== undefined && (
               <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shadow-sm ${isCorrect ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                 {isCorrect ? <CheckCircle2 size={28} /> : <XCircle size={28} />}
               </div>

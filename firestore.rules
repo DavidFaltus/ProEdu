@@ -140,6 +140,18 @@ service cloud.firestore {
              (!('attachments' in data) || data.attachments == null || data.attachments is list);
     }
 
+    function isValidFocusSession(data) {
+      return data.studentId is string && data.studentId.size() <= 128 &&
+             data.studentName is string && data.studentName.size() <= 256 &&
+             data.plantType is string && data.plantType.size() <= 32 &&
+             data.plantName is string && data.plantName.size() <= 128 &&
+             (data.duration is int || data.duration is float) &&
+             (!('todoId' in data) || data.todoId == null || (data.todoId is string && data.todoId.size() <= 128)) &&
+             (!('todoTitle' in data) || data.todoTitle == null || (data.todoTitle is string && data.todoTitle.size() <= 256)) &&
+             (!('tag' in data) || data.tag == null || (data.tag is string && data.tag.size() <= 128)) &&
+             data.completedAt is timestamp;
+    }
+
     // --- ROUTE MATCHERS ---
 
     match /users/{uid} {
@@ -233,6 +245,13 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create, update: if isAdmin() && request.resource.data.addedBy == request.auth.uid && isValidCourseItem(request.resource.data);
       allow delete: if isAdmin() && resource.data.addedBy == request.auth.uid;
+    }
+
+    match /focusSessions/{sessionId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.studentId) && isValidFocusSession(request.resource.data);
+      allow update: if false;
+      allow delete: if isAdmin();
     }
   }
 }

@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { PDFViewer } from '../components/PDFViewer';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Link } from 'react-router-dom';
 
 const MATH_TOPICS: (MathTopic | 'Vše')[] = [
   'Vše',
@@ -50,34 +51,34 @@ export default function LearningSheets() {
 
   return (
     <div className="page-container">
-      <header className="space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 bg-purple-50 text-brand-purple rounded-3xl flex items-center justify-center shadow-sm">
-              <BookOpen size={32} />
-            </div>
-            <div>
-              <h1 className="text-4xl font-display font-bold text-brand-blue">Výukové materiály</h1>
-              <p className="text-gray-500 text-lg">Přehled všech dostupných studijních listů.</p>
-            </div>
-          </div>
-        </div>
+      <section className="text-center space-y-6 max-w-3xl mx-auto">
+        <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-5xl md:text-6xl font-display font-black text-[#1E1B18]">
+          Výukové materiály
+        </motion.h1>
+        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="text-xl text-gray-500 leading-relaxed">
+          Přehled všech dostupných studijních listů a výukových materiálů.
+        </motion.p>
 
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="flex flex-col lg:flex-row gap-4 justify-center mt-8 max-w-6xl mx-auto flex-wrap items-center relative z-10"
+        >
+          <div className="w-full lg:w-auto flex-1 flex gap-2 relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={20} />
             <Input 
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Hledat v materiálech..."
-              className="pl-12 h-14 rounded-2xl border-none bg-white shadow-xl focus:ring-brand-purple"
+              className="pl-12 h-14 rounded-2xl border-none bg-white shadow-xl focus:outline-none focus:ring-2 focus:ring-[#B80053]/20 transition-all font-bold placeholder:text-gray-400"
             />
           </div>
-          <div className="w-full md:w-64">
+          <div className="w-full lg:w-48 text-left">
             <Select value={selectedSubject} onValueChange={(val: any) => setSelectedSubject(val)}>
               <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
                 <div className="flex items-center gap-2">
-                  <GraduationCap size={18} className="text-brand-purple" />
+                  <GraduationCap size={18} className="text-[#B80053]" />
                   <SelectValue placeholder="Filtrovat předmět" />
                 </div>
               </SelectTrigger>
@@ -89,11 +90,11 @@ export default function LearningSheets() {
               </SelectContent>
             </Select>
           </div>
-          <div className="w-full md:w-64">
+          <div className="w-full lg:w-48 text-left">
             <Select value={selectedTopic} onValueChange={(val: any) => setSelectedTopic(val)}>
               <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
                 <div className="flex items-center gap-2">
-                  <Filter size={18} className="text-brand-purple" />
+                  <Filter size={18} className="text-[#B80053]" />
                   <SelectValue placeholder="Filtrovat téma" />
                 </div>
               </SelectTrigger>
@@ -105,10 +106,10 @@ export default function LearningSheets() {
               </SelectContent>
             </Select>
           </div>
-        </div>
-      </header>
+        </motion.div>
+      </section>
 
-      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 mt-12">
         <AnimatePresence mode="popLayout">
           {filteredSheets.map((sheet, i) => (
             <motion.div
@@ -123,19 +124,19 @@ export default function LearningSheets() {
                 onClick={() => setSelectedSheet(sheet)}
                 className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all cursor-pointer group h-full flex flex-col bg-white overflow-hidden"
               >
-                <div className="h-3 bg-brand-purple/10 group-hover:bg-brand-purple/20 transition-colors" />
+                <div className="h-3 bg-[#B80053]/10 group-hover:bg-[#B80053]/20 transition-colors" />
                 <CardHeader className="p-8 pb-4">
                   <div className="flex justify-between items-start mb-4">
-                    <div className="w-14 h-14 bg-purple-50 rounded-2xl flex items-center justify-center text-brand-purple group-hover:scale-110 transition-transform shadow-sm">
+                    <div className="w-14 h-14 bg-pink-50 rounded-2xl flex items-center justify-center text-[#B80053] group-hover:scale-110 transition-transform shadow-sm">
                       <FileText size={28} />
                     </div>
                     {sheet.topic && (
-                      <span className="px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-[10px] font-black uppercase tracking-widest">
+                      <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-[10px] font-black uppercase tracking-widest">
                         {sheet.topic}
                       </span>
                     )}
                   </div>
-                  <CardTitle className="text-2xl font-display group-hover:text-brand-purple transition-colors leading-tight">
+                  <CardTitle className="text-2xl font-display text-[#1E1B18] group-hover:text-[#B80053] transition-colors leading-tight">
                     {sheet.title}
                   </CardTitle>
                 </CardHeader>
@@ -144,7 +145,7 @@ export default function LearningSheets() {
                     Výukový materiál {sheet.subject} - {sheet.level}.
                   </p>
                 </CardContent>
-                <div className="px-8 py-6 bg-purple-50/30 border-t border-purple-50 text-sm font-black text-brand-purple uppercase tracking-widest flex items-center justify-between">
+                <div className="px-8 py-6 bg-[#FAF7F0] border-t border-gray-100 text-sm font-black text-[#B80053] uppercase tracking-widest flex items-center justify-between">
                   Zobrazit detail
                   <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
                 </div>
@@ -156,13 +157,26 @@ export default function LearningSheets() {
 
       {filteredSheets.length === 0 && (
         <div className="text-center py-32 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
-          <div className="w-20 h-20 bg-purple-50 rounded-full flex items-center justify-center mx-auto mb-6 text-brand-purple">
+          <div className="w-20 h-20 bg-pink-50 rounded-full flex items-center justify-center mx-auto mb-6 text-[#B80053]">
             <Search size={40} />
           </div>
           <h3 className="text-2xl font-display font-bold text-gray-900 mb-2">Nic jsme nenašli</h3>
           <p className="text-gray-400 text-lg font-bold">Zkus upravit vyhledávání nebo filtr.</p>
         </div>
       )}
+
+      <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4]">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
+        <div className="relative z-10 space-y-4">
+          <h2 className="text-4xl font-display font-bold">Nevíš si rady s výběrem?</h2>
+          <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, které materiály jsou pro tebe ty pravé.</p>
+          <div className="pt-4">
+            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
+              Kontaktuj nás
+            </Link>
+          </div>
+        </div>
+      </section>
 
       <Dialog open={!!selectedSheet} onOpenChange={() => setSelectedSheet(null)}>
         <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
@@ -171,7 +185,7 @@ export default function LearningSheets() {
               {/* Header Bar */}
               <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
                 <div className="flex items-center gap-4">
-                  <span className="px-3 py-1 bg-purple-50 text-brand-purple rounded-full text-xs font-bold uppercase tracking-widest">
+                  <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase tracking-widest">
                     {selectedSheet.topic || 'Matematika'}
                   </span>
                   <DialogHeader>

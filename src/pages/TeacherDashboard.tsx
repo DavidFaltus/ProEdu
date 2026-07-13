@@ -67,6 +67,142 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+function StudentFocusHistory({ studentId }: { studentId: string }) {
+  const [sessions, setSessions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!studentId) return;
+    setLoading(true);
+    const unsub = onSnapshot(
+      doc(db, 'users', studentId),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const history = data.focusSessionsHistory || [];
+          
+          const mapped = history.map((sess: any) => {
+            const completedAtDate = sess.completedAt;
+            const safeCompletedAt = {
+              toDate: () => {
+                if (completedAtDate && typeof completedAtDate.toDate === 'function') {
+                  return completedAtDate.toDate();
+                }
+                if (completedAtDate && typeof completedAtDate.seconds === 'number') {
+                  return new Date(completedAtDate.seconds * 1000);
+                }
+                if (completedAtDate instanceof Date) {
+                  return completedAtDate;
+                }
+                if (typeof completedAtDate === 'string') {
+                  return new Date(completedAtDate);
+                }
+                return new Date();
+              }
+            };
+            return {
+              ...sess,
+              completedAt: safeCompletedAt
+            };
+          });
+          setSessions(mapped);
+        } else {
+          setSessions([]);
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Error loading student focus history from profile:", error);
+        setLoading(false);
+      }
+    );
+    return () => unsub();
+  }, [studentId]);
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-10 text-green-500">
+        <Loader2 size={32} className="animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-gradient-to-br from-[#D5F7E5] to-[#BCEECF] rounded-[2.5rem] p-6 relative overflow-hidden border border-green-200/30 shadow-sm flex flex-col min-h-[160px]">
+        <div className="flex justify-between items-center mb-4 z-10 relative">
+          <h4 className="font-playful text-2xl text-[#0F5238] m-0 leading-none">Úroda studenta</h4>
+          <span className="px-3 py-1 bg-white/60 backdrop-blur-sm rounded-full text-xs font-bold text-[#0F5238] border border-white/20">
+            {sessions.length} vypěstovaných rostlin
+          </span>
+        </div>
+        <div className="z-10 relative bg-white/40 backdrop-blur-sm rounded-2xl p-4 border border-white/40 flex-1 flex flex-wrap gap-4 items-end">
+          {sessions.length === 0 ? (
+            <p className="text-sm font-bold text-green-800/60 w-full text-center py-4">Student zatím nevypěstoval žádné rostlinky.</p>
+          ) : (
+            sessions.map((sess, idx) => (
+              <span key={sess.id || idx} className="text-4xl hover:scale-110 transition-transform cursor-pointer" title={`${sess.plantName} - ${Math.round(sess.duration / 60)} min`}>
+                {sess.plantType}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      <Card className="rounded-[2.5rem] border-none shadow-sm bg-white p-6">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm text-gray-600">
+            <thead>
+              <tr className="border-b border-gray-100 text-xs text-gray-400 font-bold uppercase tracking-wider pb-3">
+                <th className="pb-3 pl-2">Rostlina</th>
+                <th className="pb-3">Úkol / Projekt</th>
+                <th className="pb-3">Předmět / Tag</th>
+                <th className="pb-3">Délka</th>
+                <th className="pb-3 pr-2 text-right">Dokončeno</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sessions.map((sess, idx) => (
+                <tr key={sess.id || idx} className="border-b border-gray-50/50 hover:bg-gray-50/30 transition-colors">
+                  <td className="py-3 pl-2 font-bold flex items-center gap-2 text-gray-900">
+                    <span className="text-xl">{sess.plantType}</span>
+                    <span>{sess.plantName}</span>
+                  </td>
+                  <td className="py-3 text-xs font-semibold max-w-[150px] truncate">
+                    {sess.todoTitle || <span className="text-gray-300">- bez úkolu -</span>}
+                  </td>
+                  <td className="py-3">
+                    {sess.tag ? (
+                      <span className="px-2.5 py-1 bg-pink-50 text-[#B80053] rounded-full text-[10px] font-black uppercase tracking-wider">
+                        {sess.tag}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 font-bold text-xs">-</span>
+                    )}
+                  </td>
+                  <td className="py-3 font-bold text-green-600">
+                    {Math.round(sess.duration / 60)} min
+                  </td>
+                  <td className="py-3 pr-2 text-right text-xs font-bold text-gray-400">
+                    {sess.completedAt?.toDate().toLocaleDateString('cs-CZ')} v {sess.completedAt?.toDate().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
+                  </td>
+                </tr>
+              ))}
+              {sessions.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="py-8 text-center text-gray-400 font-bold">
+                    Žádné dokončené relace soustředění.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
 export default function TeacherDashboard() {
   const { profile, setIsProfileSettingsOpen } = useAuth();
   const navigate = useNavigate();
@@ -166,13 +302,13 @@ export default function TeacherDashboard() {
     });
   }, [learningSheets, sheetSearchQuery, sheetTopicFilter, sheetSubjectFilter]);
   const [pdfImport, setPdfImport] = useState<{ questionsFile: File | null, answersFile: File | null, topic: string, topics?: string[], courseId: string }>({ questionsFile: null, answersFile: null, topic: 'Aritmetika', topics: [], courseId: '' });
-  const [newCourse, setNewCourse] = useState<{ title: string, description: string, topics: string[], difficulty: string, questionCount: number, color: string }>({
-    title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff'
+  const [newCourse, setNewCourse] = useState<{ title: string, description: string, subject: string, topics: string[], difficulty: string, questionCount: number, color: string }>({
+    title: '', description: '', subject: 'Matematika', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff'
   });
   
   // New Course (from Courses.tsx logic)
-  const [newFullCourse, setNewFullCourse] = useState<{ title: string, description: string, color: string }>({
-    title: '', description: '', color: 'blue'
+  const [newFullCourse, setNewFullCourse] = useState<{ title: string, description: string, color: string, meetLink?: string }>({
+    title: '', description: '', color: 'blue', meetLink: ''
   });
   const [isSavingCourse, setIsSavingCourse] = useState(false);
 
@@ -443,6 +579,7 @@ export default function TeacherDashboard() {
       const updatePayload = {
         title: editingCourse.title,
         description: editingCourse.description,
+        subject: editingCourse.subject || 'Matematika',
         topics: editingCourse.topics,
         difficulty: editingCourse.difficulty,
         questionCount: editingCourse.questionCount
@@ -1052,7 +1189,7 @@ export default function TeacherDashboard() {
       setPracticeCourses(prev => [...prev, { id: docRef.id, ...courseData } as PracticeCourse]);
       toast.success('Nová sekce procvičování byla vytvořena.');
       setIsAddingCourse(false);
-      setNewCourse({ title: '', description: '', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff' });
+      setNewCourse({ title: '', description: '', subject: 'Matematika', topics: [], difficulty: 'Začátečník', questionCount: 10, color: '#eff6ff' });
     } catch (error) {
       console.error(error);
       toast.error('Chyba při vytváření sekce.');
@@ -1078,13 +1215,14 @@ export default function TeacherDashboard() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-          <Button
-            onClick={() => setIsProfileSettingsOpen(true)}
-            className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
-          >
-            <Settings size={22} className="text-brand-orange" />
-            <span>Nastavení profilu</span>
-          </Button>
+          <Link to="/settings">
+            <Button
+              className="h-16 px-8 rounded-[1.5rem] bg-white text-brand-blue border-none shadow-xl hover:bg-gray-50 font-bold flex items-center gap-3 active:scale-95 transition-all"
+            >
+              <Settings size={22} className="text-brand-orange" />
+              <span>Nastavení profilu</span>
+            </Button>
+          </Link>
         </div>
       </header>
 
@@ -1578,6 +1716,17 @@ export default function TeacherDashboard() {
                   />
                 </div>
                 
+                <div className="space-y-2">
+                  <Label htmlFor="course_meet" className="font-black text-gray-700 uppercase tracking-widest text-xs">Odkaz na Google Meet (volitelné)</Label>
+                  <Input 
+                    id="course_meet" 
+                    value={newFullCourse.meetLink || ''} 
+                    onChange={e => setNewFullCourse({...newFullCourse, meetLink: e.target.value})} 
+                    placeholder="https://meet.google.com/xxx-xxxx-xxx" 
+                    className="h-14 rounded-2xl border-gray-100 px-6 font-medium"
+                  />
+                </div>
+                
                 <div className="space-y-4">
                   <Label className="font-black text-gray-700 uppercase tracking-widest text-xs">Barva kurzu</Label>
                   <div className="flex flex-wrap gap-3">
@@ -1646,6 +1795,17 @@ export default function TeacherDashboard() {
                     onChange={e => editingFullCourse && setEditingFullCourse({...editingFullCourse, description: e.target.value})} 
                     placeholder="Popis kurzu"
                     className="rounded-2xl border-gray-100 p-6 min-h-[120px] font-medium"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit_course_meet" className="font-black text-gray-700 uppercase tracking-widest text-xs">Odkaz na Google Meet (volitelné)</Label>
+                  <Input 
+                    id="edit_course_meet" 
+                    value={editingFullCourse?.meetLink || ''} 
+                    onChange={e => editingFullCourse && setEditingFullCourse({...editingFullCourse, meetLink: e.target.value})} 
+                    placeholder="https://meet.google.com/xxx-xxxx-xxx" 
+                    className="h-14 rounded-2xl border-gray-100 px-6 font-medium"
                   />
                 </div>
                 
@@ -2844,9 +3004,10 @@ export default function TeacherDashboard() {
           </div>
           <div className="flex-1 overflow-y-auto p-4 md:p-8 bg-gray-50/50">
             <Tabs defaultValue="history" className="w-full">
-              <TabsList className="grid w-full grid-cols-3 mb-8 bg-white/50 p-1.5 rounded-[1.5rem] border border-gray-100">
+              <TabsList className="grid w-full grid-cols-4 mb-8 bg-white/50 p-1.5 rounded-[1.5rem] border border-gray-100">
                 <TabsTrigger value="history" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm py-3">Historie</TabsTrigger>
                 <TabsTrigger value="todos" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:shadow-sm py-3">Úkoly (TODO)</TabsTrigger>
+                <TabsTrigger value="focus" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:text-green-600 data-[state=active]:shadow-sm py-3">Soustředění</TabsTrigger>
                 <TabsTrigger value="assign" className="rounded-xl font-bold data-[state=active]:bg-white data-[state=active]:text-brand-orange data-[state=active]:shadow-sm py-3">Přiřadit test</TabsTrigger>
               </TabsList>
 
@@ -2933,6 +3094,12 @@ export default function TeacherDashboard() {
                     <TodoManager targetStudentId={selectedStudent.uid} isTeacherView={true} />
                   )}
                 </div>
+              </TabsContent>
+
+              <TabsContent value="focus" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {selectedStudent && (
+                  <StudentFocusHistory studentId={selectedStudent.uid} />
+                )}
               </TabsContent>
 
               <TabsContent value="assign" className="animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -3430,6 +3597,19 @@ export default function TeacherDashboard() {
                   className="rounded-xl min-h-[120px] border-gray-100 bg-white"
                 />
               </div>
+              <div className="space-y-2">
+                <Label className="font-bold text-gray-700">Hlavní předmět</Label>
+                <Select value={newCourse.subject} onValueChange={(val: string) => setNewCourse({ ...newCourse, subject: val })}>
+                  <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white">
+                    <SelectValue placeholder="Vyberte předmět" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Matematika">Matematika</SelectItem>
+                    <SelectItem value="Čeština">Čeština</SelectItem>
+                    <SelectItem value="Angličtina">Angličtina</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4 md:col-span-2">
                   <Label className="font-bold text-gray-700">Témata (vyberte nebo vytvořte) <span className="text-gray-400 font-normal">(jedno procvičování může mít více témat)</span></Label>
@@ -3578,6 +3758,19 @@ export default function TeacherDashboard() {
                   onChange={e => setEditingCourse(editingCourse ? { ...editingCourse, description: e.target.value } : null)}
                   className="rounded-xl min-h-[120px] border-gray-100 bg-white"
                 />
+              </div>
+              <div className="space-y-2">
+                <Label className="font-bold text-gray-700">Hlavní předmět</Label>
+                <Select value={editingCourse?.subject || 'Matematika'} onValueChange={(val: string) => editingCourse && setEditingCourse({ ...editingCourse, subject: val })}>
+                  <SelectTrigger className="rounded-xl h-14 border-gray-100 bg-white">
+                    <SelectValue placeholder="Vyberte předmět" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Matematika">Matematika</SelectItem>
+                    <SelectItem value="Čeština">Čeština</SelectItem>
+                    <SelectItem value="Angličtina">Angličtina</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4 md:col-span-2">

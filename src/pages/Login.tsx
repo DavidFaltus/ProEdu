@@ -80,13 +80,13 @@ export default function Login() {
         className="w-full max-w-md"
       >
         <Card className="border-none shadow-2xl rounded-[2.5rem] overflow-hidden bg-white">
-          <div className="h-4 bg-gradient-to-r from-orange-500 to-orange-400" />
+          <div className="h-4 bg-gradient-to-r from-[#F5C400] to-[#EAB308]" />
           <CardHeader className="text-center space-y-4 pt-10 pb-6">
-            <div className="mx-auto w-20 h-20 bg-blue-50 rounded-[1.5rem] flex items-center justify-center text-blue-600 shadow-inner">
+            <div className="mx-auto w-20 h-20 bg-[#FAF7F0] rounded-[1.5rem] flex items-center justify-center text-[#625500] shadow-sm">
               <GraduationCap size={40} />
             </div>
             <div className="space-y-1">
-              <CardTitle className="text-3xl font-bold text-blue-900">
+              <CardTitle className="text-3xl font-serif font-black text-[#1E1B18]">
                 {isLogin ? 'Vítejte zpět' : 'Vytvořit účet'}
               </CardTitle>
               <CardDescription className="text-gray-500 text-base">
@@ -151,7 +151,7 @@ export default function Login() {
               <Button 
                 type="submit"
                 disabled={loading}
-                className="w-full h-14 bg-orange-500 hover:bg-orange-600 text-white rounded-2xl text-lg font-bold shadow-lg shadow-orange-100 transition-all active:scale-[0.98]"
+                className="w-full h-14 bg-[#F5C400] text-[#1E1B18] border-b-4 border-[#C29B00] hover:bg-[#EAB308] rounded-2xl text-lg font-bold shadow-md transition-all active:translate-y-[2px] active:border-b-0 cursor-pointer"
               >
                 {loading ? 'Zpracovávám...' : (isLogin ? 'Přihlásit se' : 'Vytvořit účet')}
               </Button>
@@ -171,9 +171,9 @@ export default function Login() {
               onClick={handleGoogleLogin} 
               disabled={loading}
               variant="outline"
-              className="w-full h-14 border-2 border-gray-100 rounded-2xl flex gap-3 text-base font-semibold hover:bg-gray-50 transition-all"
+              className="w-full h-14 border-2 border-gray-100 rounded-2xl flex gap-3 text-base font-semibold hover:bg-[#FAF7F0] transition-all cursor-pointer"
             >
-              <Chrome size={20} className="text-blue-500" />
+              <Chrome size={20} className="text-[#2B44B8]" />
               Google účtem
             </Button>
 
@@ -181,7 +181,7 @@ export default function Login() {
               {isLogin ? 'Ještě nemáte účet?' : 'Již máte účet?'}
               <button 
                 onClick={() => setIsLogin(!isLogin)}
-                className="ml-2 text-blue-600 font-bold hover:underline"
+                className="ml-2 text-[#2B44B8] font-bold hover:underline cursor-pointer"
               >
                 {isLogin ? 'Zaregistrujte se' : 'Přihlaste se'}
               </button>

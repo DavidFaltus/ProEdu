@@ -1,45 +1,49 @@
-@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&family=Oswald:wght@200;300;400;500;600;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@300;400;500;600;700&family=Oswald:wght@200;300;400;500;600;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Lora:ital,wght@0,400..700;1,400..700&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Plus+Jakarta+Sans:ital,wght@0,200..800;1,200..800&family=Lexend:wght@100..900&display=swap');
 @import "tailwindcss";
 
 @font-face {
-    font-family: 'Le Petit Cochon';
-    src: url('/PetitCochon.ttf') format('truetype');
+    font-family: 'LePetitCochon';
+    src: url('./assets/Petit Cochon.ttf') format('truetype');
     font-weight: normal;
     font-style: normal;
 }
 @theme {
-  --font-sans: "PT Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Oswald", sans-serif;
-  --font-playful: "Le Petit Cochon", cursive;
+  --font-sans: "Plus Jakarta Sans", "PT Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Oswald", "Plus Jakarta Sans", sans-serif;
+  --font-playful: "LePetitCochon", sans-serif;
   --font-headline: "Plus Jakarta Sans", sans-serif;
-  --font-body: "Lexend", sans-serif;
-  --font-label: "Lexend", sans-serif;
+  --font-body: "Plus Jakarta Sans", sans-serif;
+  --font-label: "Plus Jakarta Sans", sans-serif;
   
-  --color-brand-blue: #3273dc;
+  --color-brand-blue: #2B44B8;
   --color-brand-orange: #ff4133;
   --color-brand-orange-light: #ff8c4b;
-  --color-brand-purple: #6c5ce7;
+  --color-brand-purple: #B80053;
   --color-brand-teal: #4ecdc4;
+  --color-brand-yellow: #F5C400;
+  --color-brand-olive: #625500;
+  --color-brand-mint: #D5F7E5;
+  --color-brand-cream: #FAF6EE;
 
-  --color-primary: #4c40df;
-  --color-primary-dim: #4030d3;
-  --color-primary-container: #9995ff;
-  --color-secondary: #b61321;
-  --color-secondary-dim: #a40018;
-  --color-secondary-container: #ffc3be;
-  --color-tertiary: #6c5a00;
-  --color-tertiary-container: #ffd709;
+  --color-primary: #2B44B8;
+  --color-primary-dim: #1e339a;
+  --color-primary-container: #93a5ff;
+  --color-secondary: #B80053;
+  --color-secondary-dim: #9b004f;
+  --color-secondary-container: #ffc2d8;
+  --color-tertiary: #625500;
+  --color-tertiary-container: #F5C400;
   
-  --color-surface: #eff7fe;
-  --color-surface-container: #dfeaf2;
-  --color-surface-container-low: #e9f2fa;
+  --color-surface: #ffffff;
+  --color-surface-container: #FAF6EE;
+  --color-surface-container-low: #FAF7F2;
   --color-surface-container-lowest: #ffffff;
-  --color-surface-variant: #d2dee8;
-  --color-on-surface: #283035;
-  --color-on-surface-variant: #545d62;
+  --color-surface-variant: #f2ede4;
+  --color-on-surface: #1E1B18;
+  --color-on-surface-variant: #5c554e;
 
-  --color-background-old: #fcfcfc;
-  --color-foreground-old: #2d3436;
+  --color-background-old: #FAF6EE;
+  --color-foreground-old: #1E1B18;
   
   --radius-xl: 1rem;
   --radius-2xl: 1.5rem;
@@ -48,7 +52,7 @@
 
 @layer base {
   body {
-    @apply font-sans;
+    @apply font-sans bg-[#FAF6EE] text-[#1E1B18];
   }
   
   h1, h2, h3, h4, h5, h6 {
@@ -71,15 +75,27 @@
 
 @layer components {
   .btn-orange {
-    @apply bg-gradient-to-r from-[#ff4133] to-[#ff8c4b] text-white shadow-lg shadow-orange-200 hover:scale-105 transition-transform;
+    @apply bg-gradient-to-r from-[#ff4133] to-[#ff8c4b] text-white shadow-lg shadow-orange-200 hover:scale-[1.02] transition-all;
   }
   
   .btn-purple {
-    @apply bg-gradient-to-r from-[#6c5ce7] to-[#4ecdc4] text-white shadow-lg shadow-purple-200 hover:scale-105 transition-transform;
+    @apply bg-[#B80053] hover:bg-[#9B004F] text-white shadow-lg shadow-purple-100 hover:scale-[1.02] transition-all;
   }
 
   .btn-blue {
-    @apply bg-gradient-to-r from-[#3273dc] to-[#48c0f0] text-white shadow-lg shadow-blue-200 hover:scale-105 transition-transform;
+    @apply bg-[#2B44B8] hover:bg-[#1e339a] text-white shadow-lg shadow-blue-100 hover:scale-[1.02] transition-all;
+  }
+
+  .btn-yellow {
+    @apply bg-[#F5C400] text-[#1E1B18] font-bold shadow-md hover:bg-[#EAB308] hover:scale-[1.02] transition-all border-b-4 border-[#C29B00] active:border-b-0 active:translate-y-[2px];
+  }
+
+  .btn-olive {
+    @apply bg-[#625500] hover:bg-[#524600] text-white font-bold shadow-md hover:scale-[1.02] transition-all;
+  }
+
+  .btn-magenta {
+    @apply bg-[#B80053] hover:bg-[#9B004F] text-white font-bold shadow-md hover:scale-[1.02] transition-all;
   }
   
   .playful-text {

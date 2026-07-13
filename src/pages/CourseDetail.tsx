@@ -317,28 +317,28 @@ export default function CourseDetail() {
         <ArrowLeft size={18} /> Zpět na kurzy
       </Button>
 
-      <div className={cn("rounded-[3rem] p-10 md:p-14 text-white relative overflow-hidden mb-12 shadow-2xl bg-gradient-to-br", colorClass)}>
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/10 rounded-full blur-3xl -mr-40 -mt-40 pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-black/10 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none" />
+      <div className="rounded-[3rem] p-10 md:p-14 text-[#1E1B18] relative overflow-hidden mb-12 shadow-2xl bg-[#F5C400]">
+        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-white/40 rounded-full blur-3xl -mr-40 -mt-40 pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-black/5 rounded-full blur-3xl -ml-20 -mb-20 pointer-events-none" />
         
         <div className="relative z-10 flex flex-col md:flex-row justify-between md:items-end gap-6">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-3 mb-6 bg-white/20 backdrop-blur-md w-fit px-4 py-2 rounded-2xl">
+            <div className="flex items-center gap-3 mb-6 bg-white/40 backdrop-blur-md w-fit px-4 py-2 rounded-2xl text-[#B80053]">
               <BookOpen size={20} />
               <span className="font-bold tracking-widest uppercase text-sm">Pracovní prostor kurzu</span>
             </div>
             <h1 className="text-4xl md:text-6xl font-display font-black mb-4 leading-tight">
               {course.title}
             </h1>
-            <p className="text-white/80 text-xl leading-relaxed">
+            <p className="text-[#1E1B18]/80 font-medium text-xl leading-relaxed">
               {course.description}
             </p>
           </div>
           
           <div className="flex flex-col items-end gap-4 shrink-0">
-            <div className="bg-white/10 backdrop-blur-md border border-white/20 px-8 py-4 rounded-3xl text-center">
+            <div className="bg-white/30 backdrop-blur-md border border-white/50 px-8 py-4 rounded-3xl text-center shadow-sm">
               <div className="text-4xl font-black mb-1">{students.length}</div>
-              <div className="text-[10px] font-bold uppercase tracking-widest text-white/70">Zapsaných<br/>Studentů</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-[#1E1B18]/70">Zapsaných<br/>Studentů</div>
             </div>
           </div>
         </div>
@@ -346,10 +346,10 @@ export default function CourseDetail() {
 
       <Tabs defaultValue="stream" className="space-y-8">
         <TabsList className="bg-white/50 backdrop-blur-md border border-white p-2 rounded-3xl h-16 shadow-sm flex items-center overflow-x-auto justify-start md:justify-center w-full max-w-2xl mx-auto">
-          <TabsTrigger value="stream" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-md font-bold transition-all flex items-center gap-3">
+          <TabsTrigger value="stream" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-md font-bold transition-all flex items-center gap-3">
             <LayoutDashboard size={18} /> Obsah a úkoly
           </TabsTrigger>
-          <TabsTrigger value="students" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-md font-bold transition-all flex items-center gap-3">
+          <TabsTrigger value="students" className="rounded-2xl px-8 h-full data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-md font-bold transition-all flex items-center gap-3">
             <Users size={18} /> Studenti
           </TabsTrigger>
         </TabsList>
@@ -360,7 +360,7 @@ export default function CourseDetail() {
               <Dialog open={isAddItemOpen} onOpenChange={setIsAddItemOpen}>
                 <DialogTrigger className={cn(
                   "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md font-medium transition-all focus-visible:outline-none focus-visible:ring-1 disabled:pointer-events-none disabled:opacity-50",
-                  "btn-brand h-14 px-8 rounded-2xl font-bold shadow-xl shadow-blue-200 text-lg cursor-pointer"
+                  "bg-[#F5C400] text-[#1E1B18] h-14 px-8 rounded-2xl font-black shadow-xl shadow-yellow-100/50 hover:bg-[#F5C400]/90 text-lg cursor-pointer hover:scale-105"
                 )}>
                   <Plus size={24} /> Přidat položku do kurzu
                 </DialogTrigger>
@@ -369,9 +369,9 @@ export default function CourseDetail() {
                     {/* Left pane: Type selection */}
                     <div className="bg-gray-50 p-8 md:w-[300px] shrink-0 border-b md:border-b-0 md:border-r border-gray-100 flex flex-col space-y-6">
                       <DialogHeader className="mb-2 text-left">
-                        <DialogTitle className="text-2xl font-display font-black text-brand-blue flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-blue-50 flex flex-shrink-0 items-center justify-center">
-                            <Plus size={20} className="text-brand-blue" />
+                        <DialogTitle className="text-2xl font-display font-black text-[#1E1B18] flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-pink-50 flex flex-shrink-0 items-center justify-center">
+                            <Plus size={20} className="text-[#B80053]" />
                           </div>
                           Nová položka
                         </DialogTitle>
