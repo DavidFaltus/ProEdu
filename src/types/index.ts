@@ -1,4 +1,3 @@
-import { ReactNode } from 'react';
 import { Timestamp } from 'firebase/firestore';
 
 export type UserRole = 'student' | 'teacher';
@@ -19,150 +18,116 @@ export interface UserProfile {
   avatarEmoji?: string;
   avatarBgColor?: string;
   focusSessionsHistory?: any[];
+  lastViewedActivityAt?: Timestamp;
 }
 
-export type MathTopic = string;
+export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď
 
-export interface PublicQuestion {
+export interface PracticeQuestion {
   id: string;
+  subjectId: string; // e.g. 'Matematika' | 'Čeština'
+  topicId: string;
+  subtopicId: string;
+  type: QuestionType;
   question: string;
-  options: string[];
-  topic: string;
-  topics?: string[];
+  options?: string[]; // 4 možnosti při výběru
+  correctAnswer: string;
+  hint?: string;
   explanation?: string;
-  diagram?: 'square' | 'triangle' | 'circle' | 'coordinate';
-  courseId?: string;
+  difficulty?: 'Lehká' | 'Střední' | 'Těžká';
+  order?: number;
+  createdAt?: any;
+  createdBy?: string;
   imageUrl?: string;
-  type?: 'multiple-choice' | 'open';
+  svgContent?: string;
 }
 
-export interface Question extends PublicQuestion {
+export interface StudyStep {
+  title: string;
+  content: string;
+  testQuestion?: string;
+  testOptions?: string[];
+  correctAnswer?: string;
+  tutorTip?: string;
+}
+
+export interface SampleProblem {
+  problem: string;
+  options?: string[];
   correctAnswer: string;
-  createdBy?: string;
-  createdAt?: Timestamp;
+  explanation?: string;
 }
 
-export interface ReviewQuestion extends PublicQuestion {
-  correctAnswer: string;
-  userAnswer?: string;
-  isCorrect: boolean;
-}
-
-export interface Test {
+export interface PracticeSubtopic {
   id: string;
+  topicId: string;
+  subjectId: string;
   title: string;
-  description: string;
-  questions: Question[];
-  createdBy: string;
-  createdAt: Timestamp;
-  topic?: MathTopic;
-  autoGrade?: boolean;
-  courseId?: string;
-  studentId?: string;
-}
-
-export interface AssignedTest {
-  id: string;
-  testId?: string;
-  courseId?: string;
-  studentId: string;
-  status: 'pending' | 'submitted' | 'graded';
-  answers?: Record<string, string>;
-  grade?: string;
-  feedback?: string;
-  assignedAt: Timestamp;
-  dueDate?: Timestamp;
-  submittedAt?: Timestamp;
-  gradedAt?: Timestamp;
-  testTitle?: string;
-  testDescription?: string;
-  topic?: MathTopic;
-  autoGrade?: boolean;
-  questions?: PublicQuestion[];
-  reviewQuestions?: ReviewQuestion[];
-  topicPerformance?: Record<string, { correct: number; total: number }>;
-  createdBy?: string;
-}
-
-export interface LearningSheet {
-  id: string;
-  title: string;
-  subject: string;
-  level: string;
-  topic: MathTopic;
-  createdBy: string;
-  createdAt: Timestamp;
-  fileUrl?: string;
-  fileType?: string;
-  content?: string;
-}
-
-export interface PracticeCourse {
-  id: string;
-  title: string;
-  description: string;
-  subject?: string;
-  topic: MathTopic | string;
-  topics?: string[];
-  customTopics?: string[];
-  difficulty: Difficulty | string;
-  questionCount: number;
-  color: string;
-  createdBy?: string;
-  createdAt?: Timestamp;
-  isVisible?: boolean;
-  students?: number | string;
-  rating?: number;
-  icon?: ReactNode;
-  previewQuestion?: PublicQuestion;
-}
-
-export interface TodoItem {
-  id: string;
-  studentId: string;
-  title: string;
-  type: 'practice' | 'custom' | 'test' | 'material' | 'course_lesson' | 'course_material' | 'course_practice';
-  referenceId?: string;
-  courseId?: string; // Optional link to a course
-  completed: boolean;
-  dueDate?: Timestamp;
-  createdAt: Timestamp;
-  addedBy: string;
-  completedAt?: Timestamp | null;
-  feedback?: string;
-  topic?: string;
+  description?: string;
+  order?: number;
+  hasStudyMaterial?: boolean;
+  svgUrl?: string; // např. '/materials/cz-shoda.svg' nebo externí link
+  svgContent?: string; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
+  studyTheory?: string;
+  sampleProblem?: SampleProblem;
+  studySteps?: StudyStep[];
+  studyTips?: string; // Tip lektora & časté chyby
   questionCount?: number;
+  createdAt?: any;
+  createdBy?: string;
 }
 
-export interface Course {
+export interface PracticeTopic {
+  id: string;
+  subjectId: string;
+  title: string;
+  description?: string;
+  order?: number;
+  subtopicCount?: number;
+  createdAt?: any;
+  createdBy?: string;
+}
+
+export interface PracticeSubject {
   id: string;
   title: string;
   description: string;
-  teacherId: string;
-  color: string;
-  studentIds: string[];
-  createdAt: Timestamp;
-  isPaid?: boolean;
-  price?: number;
-  meetLink?: string;
+  icon?: string;
+  gradient?: string;
+  order?: number;
 }
 
-export interface CourseItemAttachment {
+export interface PracticeAttempt {
   id: string;
-  name: string;
-  url: string;
-  type: string;
-  size: number;
+  studentId: string;
+  subtopicId: string;
+  topicId: string;
+  subjectId: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  answers: Record<string, string>;
+  completedAt: any;
 }
 
-export interface CourseItem {
-  id: string;
-  courseId: string;
+export type LiveLessonStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
+export type VideoProvider = 'google_meet' | 'jitsi' | 'custom';
+export type TargetAudience = 'all' | 'individual';
+
+export interface LiveLesson {
+  id?: string;
   title: string;
-  type: 'material' | 'test' | 'practice' | 'lesson';
-  content: string; // URL, or description, or testId
-  date: Timestamp | null; // For lessons or deadlines
+  description?: string;
+  subject?: string;
+  teacherId: string;
+  teacherName: string;
+  provider: VideoProvider;
+  meetUrl: string;
+  scheduledAt: Timestamp;
+  durationMinutes: number;
+  status: LiveLessonStatus;
+  targetAudience: TargetAudience;
+  studentIds?: string[];
   createdAt: Timestamp;
-  addedBy: string;
-  attachments?: CourseItemAttachment[];
+  updatedAt?: Timestamp;
 }

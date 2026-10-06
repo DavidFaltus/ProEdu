@@ -1,5 +1,7 @@
 {
-  "projects": {},
+  "projects": {
+    "default": "gen-lang-client-0972842509"
+  },
   "targets": {},
   "etags": {}
 }

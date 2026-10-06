@@ -29,6 +29,11 @@ service cloud.firestore {
         unchanged('testId');
     }
 
+    function keepsLessonImmutableFields() {
+      return unchanged('teacherId') &&
+        unchanged('createdAt');
+    }
+
     // --- SCHEMAS VALIDATIONS ---
 
     function isValidUser(data) {
@@ -52,11 +57,54 @@ service cloud.firestore {
     }
 
     function isValidQuestion(data) {
-      return data.question is string && data.question.size() <= 1000 &&
-             data.options is list && data.options.size() <= 10 &&
-             data.correctAnswer is string && data.correctAnswer.size() <= 256 &&
+      return data.question is string && data.question.size() <= 2000 &&
+             (!('options' in data) || data.options == null || (data.options is list && data.options.size() <= 10)) &&
+             data.correctAnswer is string && data.correctAnswer.size() <= 500 &&
+             (!('type' in data) || data.type == null || (data.type is string && (data.type == 'choice' || data.type == 'open'))) &&
+             (!('subjectId' in data) || data.subjectId == null || (data.subjectId is string && data.subjectId.size() <= 128)) &&
+             (!('topicId' in data) || data.topicId == null || (data.topicId is string && data.topicId.size() <= 128)) &&
+             (!('subtopicId' in data) || data.subtopicId == null || (data.subtopicId is string && data.subtopicId.size() <= 128)) &&
+             (!('hint' in data) || data.hint == null || (data.hint is string && data.hint.size() <= 1000)) &&
+             (!('explanation' in data) || data.explanation == null || (data.explanation is string && data.explanation.size() <= 2000)) &&
+             (!('difficulty' in data) || data.difficulty == null || (data.difficulty is string && data.difficulty.size() <= 64)) &&
              (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
+             (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 600000)) &&
+             (!('svgContent' in data) || data.svgContent == null || (data.svgContent is string && data.svgContent.size() <= 500000)) &&
              data.createdBy is string && data.createdBy.size() <= 128;
+    }
+
+    function isValidPracticeTopic(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.subjectId is string && data.subjectId.size() <= 128 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('order' in data) || data.order is number) &&
+             data.createdBy is string && data.createdBy.size() <= 128;
+    }
+
+    function isValidPracticeSubtopic(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.subjectId is string && data.subjectId.size() <= 128 &&
+             data.topicId is string && data.topicId.size() <= 128 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 1000)) &&
+             (!('svgContent' in data) || data.svgContent == null || (data.svgContent is string && data.svgContent.size() <= 500000)) &&
+             (!('hasStudyMaterial' in data) || data.hasStudyMaterial == null || data.hasStudyMaterial is bool) &&
+             (!('studyTheory' in data) || data.studyTheory == null || (data.studyTheory is string && data.studyTheory.size() <= 20000)) &&
+             (!('studyTips' in data) || data.studyTips == null || (data.studyTips is string && data.studyTips.size() <= 5000)) &&
+             (!('studySteps' in data) || data.studySteps == null || data.studySteps is list) &&
+             (!('sampleProblem' in data) || data.sampleProblem == null || data.sampleProblem is map) &&
+             (!('order' in data) || data.order is number) &&
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             data.createdBy is string && data.createdBy.size() <= 128;
+    }
+
+    function isValidPracticeAttempt(data) {
+      return data.studentId is string && data.studentId == request.auth.uid &&
+             data.subtopicId is string &&
+             data.score is number &&
+             data.totalQuestions is number &&
+             data.percentage is number &&
+             data.completedAt is timestamp;
     }
 
     function isValidAssignedTest(data) {
@@ -122,6 +170,17 @@ service cloud.firestore {
       return data.name is string && data.name.size() <= 256;
     }
 
+    function isValidStudyMaterial(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.markdownContent is string && data.markdownContent.size() <= 50000 &&
+             (!('subtopicId' in data) || data.subtopicId == null || (data.subtopicId is string && data.subtopicId.size() <= 128)) &&
+             (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
+             (!('topicName' in data) || data.topicName == null || (data.topicName is string && data.topicName.size() <= 128)) &&
+             (!('pdfUrl' in data) || data.pdfUrl == null || (data.pdfUrl is string && data.pdfUrl.size() <= 2048)) &&
+             (!('interactiveSteps' in data) || data.interactiveSteps == null || (data.interactiveSteps is list && data.interactiveSteps.size() <= 50));
+    }
+
+
     function isValidCourse(data) {
       return data.title is string && data.title.size() <= 256 &&
              data.description is string && data.description.size() <= 1000 &&
@@ -152,6 +211,40 @@ service cloud.firestore {
              data.completedAt is timestamp;
     }
 
+    function isValidQuestionInquiry(data) {
+      return data.studentId is string && data.studentId.size() <= 128 &&
+             data.studentName is string && data.studentName.size() <= 128 &&
+             data.questionId is string && data.questionId.size() <= 128 &&
+             data.questionText is string && data.questionText.size() <= 5000 &&
+             data.topic is string && data.topic.size() <= 128 &&
+             data.comment is string && data.comment.size() <= 3000 &&
+             data.status is string && (data.status == 'pending' || data.status == 'answered') &&
+             data.createdAt is timestamp &&
+             (!('senderRole' in data) || data.senderRole == null || (data.senderRole is string && (data.senderRole == 'student' || data.senderRole == 'teacher'))) &&
+             (!('reply' in data) || data.reply == null || (data.reply is string && data.reply.size() <= 3000)) &&
+             (!('repliedAt' in data) || data.repliedAt == null || data.repliedAt is timestamp) &&
+             (!('repliedBy' in data) || data.repliedBy == null || (data.repliedBy is string && data.repliedBy.size() <= 128)) &&
+             (!('repliedByName' in data) || data.repliedByName == null || (data.repliedByName is string && data.repliedByName.size() <= 128)) &&
+             (!('isReadByStudent' in data) || data.isReadByStudent == null || data.isReadByStudent is bool);
+    }
+
+    function isValidLiveLesson(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
+             (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
+             data.teacherId is string && data.teacherId.size() <= 128 &&
+             data.teacherName is string && data.teacherName.size() <= 128 &&
+             data.provider is string && (data.provider == 'google_meet' || data.provider == 'jitsi' || data.provider == 'custom') &&
+             data.meetUrl is string && data.meetUrl.size() <= 1024 &&
+             data.scheduledAt is timestamp &&
+             (data.durationMinutes is int || data.durationMinutes is float) && data.durationMinutes > 0 && data.durationMinutes <= 480 &&
+             data.status is string && (data.status == 'scheduled' || data.status == 'live' || data.status == 'completed' || data.status == 'cancelled') &&
+             data.targetAudience is string && (data.targetAudience == 'all' || data.targetAudience == 'individual') &&
+             (!('studentIds' in data) || data.studentIds == null || (data.studentIds is list && data.studentIds.size() <= 100)) &&
+             data.createdAt is timestamp &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
+    }
+
     // --- ROUTE MATCHERS ---
 
     match /users/{uid} {
@@ -178,13 +271,32 @@ service cloud.firestore {
       allow delete: if isAdmin() && resource.data.createdBy == request.auth.uid;
     }
 
+    match /practiceTopics/{topicId} {
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidPracticeTopic(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /practiceSubtopics/{subtopicId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidPracticeSubtopic(request.resource.data);
+      allow update: if isAdmin() && keepsImmutableFields() && isValidPracticeSubtopic(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     match /questions/{questionId} {
-      allow read: if isAuthenticated();
+      allow read: if true;
       allow create: if isAdmin() &&
         request.resource.data.createdBy == request.auth.uid &&
         isValidQuestion(request.resource.data);
       allow update: if isAdmin() && keepsImmutableFields() && isValidQuestion(request.resource.data);
       allow delete: if isAdmin();
+    }
+
+    match /practiceAttempts/{attemptId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.studentId) && isValidPracticeAttempt(request.resource.data);
+      allow update, delete: if false;
     }
 
     match /assignedTests/{assignedTestId} {
@@ -207,6 +319,14 @@ service cloud.firestore {
       allow update: if isAdmin() && keepsImmutableFields() && isValidPracticeCourse(request.resource.data);
       allow delete: if isAdmin();
     }
+
+    match /studyMaterials/{materialId} {
+      allow read: if true;
+      allow create: if isAdmin() && isValidStudyMaterial(request.resource.data);
+      allow update: if isAdmin() && keepsImmutableFields() && isValidStudyMaterial(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
 
     match /todos/{todoId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
@@ -253,5 +373,35 @@ service cloud.firestore {
       allow update: if false;
       allow delete: if isAdmin();
     }
+
+    match /questionInquiries/{inquiryId} {
+      allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && isOwner(request.resource.data.studentId) && isValidQuestionInquiry(request.resource.data);
+      allow update: if isAuthenticated() && (
+        (isAdmin() && isValidQuestionInquiry(request.resource.data)) ||
+        (isOwner(resource.data.studentId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isReadByStudent']) &&
+          request.resource.data.isReadByStudent is bool)
+      );
+      allow delete: if isAdmin() || (isAuthenticated() && isOwner(resource.data.studentId));
+    }
+
+    match /liveLessons/{lessonId} {
+      allow read: if resource.data.targetAudience == 'all' ||
+                  (isAuthenticated() && (
+                    isAdmin() ||
+                    (resource.data.studentIds != null && request.auth.uid in resource.data.studentIds)
+                  ));
+      allow create: if isAdmin() &&
+                    request.resource.data.teacherId == request.auth.uid &&
+                    isValidLiveLesson(request.resource.data);
+      allow update: if isAdmin() &&
+                    resource.data.teacherId == request.auth.uid &&
+                    keepsLessonImmutableFields() &&
+                    isValidLiveLesson(request.resource.data);
+      allow delete: if isAdmin() &&
+                    resource.data.teacherId == request.auth.uid;
+    }
   }
 }
+

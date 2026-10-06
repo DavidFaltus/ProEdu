@@ -10,7 +10,8 @@ import {
   Settings, 
   LogOut,
   CheckSquare,
-  Mail
+  Mail,
+  LogIn
 } from 'lucide-react';
 import { cn, safeToDate } from '../lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -21,8 +22,13 @@ import { collection, query, where, onSnapshot } from 'firebase/firestore';
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
 
-export default function StudentSidebar() {
-  const { profile, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData } = useAuth();
+interface StudentSidebarProps {
+  onNavigate?: () => void;
+  className?: string;
+}
+
+export default function StudentSidebar({ onNavigate, className }: StudentSidebarProps = {}) {
+  const { user, profile, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
   const [isAvatarModalOpen, setIsAvatarModalOpen] = React.useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -91,18 +97,14 @@ export default function StudentSidebar() {
 
 
 
+  const isTeacher = profile?.role === 'teacher';
+
   const menuItems: { name: string; path: string; icon: any; active: boolean; onClick?: () => void }[] = [
     {
-      name: 'Studijní cesta',
-      path: '/student',
+      name: 'Hlavní stránka',
+      path: '/',
       icon: LayoutDashboard,
-      active: (location.pathname === '/student' || location.pathname === '/dashboard') && location.hash !== '#garden'
-    },
-    {
-      name: 'Kurzy',
-      path: '/courses',
-      icon: GraduationCap,
-      active: location.pathname.startsWith('/courses')
+      active: location.pathname === '/' || location.pathname === '/student' || location.pathname === '/dashboard'
     },
     {
       name: 'Procvičování',
@@ -116,25 +118,19 @@ export default function StudentSidebar() {
       icon: BookOpen,
       active: location.pathname.startsWith('/learning')
     },
-    {
-      name: 'Úkoly',
-      path: '/todo',
-      icon: CheckSquare,
-      active: location.pathname.startsWith('/todo')
-    },
-    {
-      name: 'Zahrádka',
-      path: '/garden',
-      icon: Sprout,
-      active: location.pathname === '/garden'
-    }
+    ...(isTeacher ? [{
+      name: 'Administrace',
+      path: '/teacher',
+      icon: GraduationCap,
+      active: location.pathname.startsWith('/teacher')
+    }] : [])
   ];
 
   return (
-    <aside className="w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-6 h-screen sticky top-0 shadow-sm z-30">
+    <aside className={cn("w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-6 h-screen sticky top-0 shadow-sm z-30", className)}>
       <div className="space-y-8 flex-1 flex flex-col">
         {/* Logo and Brand */}
-        <Link to="/" className="flex flex-row items-center gap-2 group py-2 pl-2">
+        <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2">
           <img 
             src="/photo/logo2.svg" 
             alt="ProEdu" 
@@ -156,7 +152,10 @@ export default function StudentSidebar() {
               <Link
                 key={item.name}
                 to={item.path}
-                onClick={item.onClick}
+                onClick={() => {
+                  if (item.onClick) item.onClick();
+                  if (onNavigate) onNavigate();
+                }}
                 className={cn(
                   "flex items-center gap-4 px-4 py-3.5 rounded-[1.25rem] text-sm tracking-wide transition-all select-none",
                   activeStyle
@@ -173,69 +172,86 @@ export default function StudentSidebar() {
 
       {/* User Profile Card Footer */}
       <div className="border-t border-gray-100 pt-6 mt-auto flex flex-col gap-2">
-        <Link
-          to="/settings"
-          className={cn(
-            "w-full flex items-center gap-4 px-4 py-3 rounded-[1.25rem] text-sm tracking-wide transition-all select-none cursor-pointer",
-            location.pathname === '/settings'
-              ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]'
-              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold'
-          )}
-        >
-          <Settings size={20} className={cn("shrink-0", location.pathname === '/settings' ? "text-[#1E1B18]" : "text-gray-400")} />
-          <span>Nastavení</span>
-        </Link>
-
-        <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] flex items-center gap-3 border border-gray-200/50">
-          <button
-            onClick={() => setIsAvatarModalOpen(true)}
-            className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shrink-0 shadow-sm cursor-pointer hover:scale-105 transition-transform flex items-center justify-center"
-            style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
-            title="Změnit avatar"
-          >
-            {profile?.avatarEmoji ? (
-              <span className="text-xl leading-none">{profile.avatarEmoji}</span>
-            ) : profile?.photoURL ? (
-              <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
-            ) : (
-              <span className="text-xl leading-none">🎓</span>
-            )}
-          </button>
-          <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-bold text-gray-800 truncate leading-tight flex items-center gap-1.5">
-              {profile?.name || 'Můj profil'}
-              {totalNotifications > 0 && (
-                <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" title="Máš nové aktivity!" />
+        {user ? (
+          <>
+            <Link
+              to="/settings"
+              onClick={onNavigate}
+              className={cn(
+                "w-full flex items-center gap-4 px-4 py-3 rounded-[1.25rem] text-sm tracking-wide transition-all select-none cursor-pointer",
+                location.pathname === '/settings'
+                  ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold'
               )}
-            </h4>
-          </div>
-          
-          <button
-            onClick={() => navigate('/student?tab=activity')}
-            className={cn(
-              "p-2 rounded-xl transition-all shrink-0 cursor-pointer relative",
-              totalNotifications > 0 
-                ? "text-red-500 bg-red-50 hover:bg-red-100" 
-                : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
-            )}
-            title={totalNotifications > 0 ? `Máš ${totalNotifications} nových aktivit!` : "Žádné nové aktivity"}
-          >
-            <Mail size={16} />
-            {totalNotifications > 0 && (
-              <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center">
-                {totalNotifications}
-              </span>
-            )}
-          </button>
+            >
+              <Settings size={20} className={cn("shrink-0", location.pathname === '/settings' ? "text-[#1E1B18]" : "text-gray-400")} />
+              <span>Nastavení</span>
+            </Link>
 
-          <button 
-            onClick={handleSignOut} 
-            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 cursor-pointer"
-            title="Odhlásit se"
-          >
-            <LogOut size={16} />
-          </button>
-        </div>
+            <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] flex items-center gap-3 border border-gray-200/50">
+              <button
+                onClick={() => setIsAvatarModalOpen(true)}
+                className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shrink-0 shadow-sm cursor-pointer hover:scale-105 transition-transform flex items-center justify-center"
+                style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
+                title="Změnit avatar"
+              >
+                {profile?.avatarEmoji ? (
+                  <span className="text-xl leading-none">{profile.avatarEmoji}</span>
+                ) : profile?.photoURL ? (
+                  <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-xl leading-none">🎓</span>
+                )}
+              </button>
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-bold text-gray-800 truncate leading-tight flex items-center gap-1.5">
+                  {profile?.name || 'Můj profil'}
+                  {totalNotifications > 0 && (
+                    <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" title="Máš nové aktivity!" />
+                  )}
+                </h4>
+              </div>
+              
+              <button
+                onClick={() => navigate('/?tab=activity')}
+                className={cn(
+                  "p-2 rounded-xl transition-all shrink-0 cursor-pointer relative",
+                  totalNotifications > 0 
+                    ? "text-red-500 bg-red-50 hover:bg-red-100" 
+                    : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+                )}
+                title={totalNotifications > 0 ? `Máš ${totalNotifications} nových aktivit!` : "Žádné nové aktivity"}
+              >
+                <Mail size={16} />
+                {totalNotifications > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center">
+                    {totalNotifications}
+                  </span>
+                )}
+              </button>
+
+              <button 
+                onClick={handleSignOut} 
+                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 cursor-pointer"
+                title="Odhlásit se"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] border border-gray-200/50 space-y-2.5 text-center">
+            <p className="text-xs text-gray-500 font-bold">Pro plný přístup se přihlas</p>
+            <button
+              type="button"
+              onClick={openAuthModal}
+              className="w-full h-11 rounded-xl bg-[#1E1B18] text-[#FAF7F0] hover:bg-[#332f2b] font-black text-xs flex items-center justify-center gap-2 shadow-sm transition-transform active:scale-95 cursor-pointer"
+            >
+              <LogIn size={16} />
+              Přihlásit se
+            </button>
+          </div>
+        )}
       </div>
 
 

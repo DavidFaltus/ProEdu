@@ -1,0 +1,1888 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
+  FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
+  Image as ImageIcon
+} from 'lucide-react';
+import { Button } from '../ui/button';
+import { Card } from '../ui/card';
+import { Input } from '../ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { toast } from 'sonner';
+import { 
+  getTopics, getSubtopics, getQuestionsForSubtopic, 
+  saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
+  saveQuestion, deleteQuestion, seedInitialPracticeData, PREDEFINED_SUBJECTS,
+  ExistingMaterialItem,
+  parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
+  parseStudyStepsExcelFile, importStudyStepsToFirestore,
+  PracticeExcelParseResult, StudyExcelParseResult,
+  PracticeImportStats, StudyImportStats
+} from '../../services/practiceService';
+import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyStep } from '../../types';
+import { auth } from '../../lib/firebase';
+import PdfSvgDropzone from './PdfSvgDropzone';
+import MaterialSelectorModal from './MaterialSelectorModal';
+import { convertFileToSvg, sanitizeSvg } from '../../utils/pdfToSvg';
+
+interface PracticeManagerProps {
+  userId: string;
+}
+
+export default function PracticeManager({ userId }: PracticeManagerProps) {
+  const effectiveUserId = userId || auth.currentUser?.uid || '';
+  const [activeSubject, setActiveSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
+  const [topics, setTopics] = useState<PracticeTopic[]>([]);
+  const [subtopics, setSubtopics] = useState<PracticeSubtopic[]>([]);
+  const [questionsMap, setQuestionsMap] = useState<Record<string, PracticeQuestion[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [expandedSubtopics, setExpandedSubtopics] = useState<Record<string, boolean>>({});
+
+  // Modals state
+  const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
+  const [editingTopic, setEditingTopic] = useState<Partial<PracticeTopic> | null>(null);
+
+  const [isSubtopicModalOpen, setIsSubtopicModalOpen] = useState(false);
+  const [editingSubtopic, setEditingSubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
+  const [subtopicParentTopicId, setSubtopicParentTopicId] = useState<string>('');
+  const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
+
+  const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState<Partial<PracticeQuestion> | null>(null);
+  const [questionParentSubtopic, setQuestionParentSubtopic] = useState<PracticeSubtopic | null>(null);
+
+  // Excel import state - Procvičování
+  const [isPracticeModalOpen, setIsPracticeModalOpen] = useState(false);
+  const [practiceFile, setPracticeFile] = useState<File | null>(null);
+  const [practiceParsed, setPracticeParsed] = useState<PracticeExcelParseResult | null>(null);
+  const [isImportingPractice, setIsImportingPractice] = useState(false);
+  const [practiceProgressMsg, setPracticeProgressMsg] = useState('');
+  const [practiceStats, setPracticeStats] = useState<PracticeImportStats | null>(null);
+
+  // Excel import state - Studovat
+  const [isStudyModalOpen, setIsStudyModalOpen] = useState(false);
+  const [studyFile, setStudyFile] = useState<File | null>(null);
+  const [studyParsed, setStudyParsed] = useState<StudyExcelParseResult | null>(null);
+  const [isImportingStudy, setIsImportingStudy] = useState(false);
+  const [studyProgressMsg, setStudyProgressMsg] = useState('');
+  const [studyStats, setStudyStats] = useState<StudyImportStats | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const tData = await getTopics(activeSubject);
+      const sData = await getSubtopics(undefined, activeSubject);
+      setTopics(tData);
+      setSubtopics(sData);
+
+      // Preload questions for all subtopics
+      const qMap: Record<string, PracticeQuestion[]> = {};
+      for (const s of sData) {
+        const qs = await getQuestionsForSubtopic(s.id);
+        qMap[s.id] = qs;
+      }
+      setQuestionsMap(qMap);
+    } catch (err: any) {
+      toast.error('Chyba při načítání témat: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [activeSubject]);
+
+  // Toggle subtopic questions expand
+  const toggleSubtopic = (subId: string) => {
+    setExpandedSubtopics(prev => ({ ...prev, [subId]: !prev[subId] }));
+  };
+
+  // --- TOPIC ACTIONS ---
+  const handleSaveTopic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTopic?.title?.trim()) return;
+
+    try {
+      await saveTopic({
+        ...editingTopic,
+        subjectId: activeSubject
+      }, effectiveUserId);
+      toast.success(editingTopic.id ? 'Téma upraveno' : 'Téma vytvořeno');
+      setIsTopicModalOpen(false);
+      setEditingTopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  const handleDeleteTopic = async (topicId: string, title: string) => {
+    if (!window.confirm(`Opravdu chcete smazat téma "${title}" včetně všech jeho podtémat a otázek?`)) return;
+    try {
+      await deleteTopic(topicId);
+      toast.success('Téma smazáno');
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při mazání: ' + err.message);
+    }
+  };
+
+  // --- SUBTOPIC ACTIONS ---
+  const handleSelectMaterial = (mat: ExistingMaterialItem) => {
+    setEditingSubtopic(prev => ({
+      ...prev,
+      svgContent: mat.svgContent || '',
+      svgUrl: mat.svgUrl || '',
+      hasStudyMaterial: true,
+      studyTheory: prev?.studyTheory || mat.studyTheory || '',
+      title: prev?.title || mat.title
+    }));
+    toast.success(`Materiál "${mat.title}" byl přiřazen k tomuto podtématu.`);
+  };
+
+  const addStep = () => {
+    const current = editingSubtopic?.studySteps || [];
+    setEditingSubtopic(prev => ({
+      ...prev,
+      studySteps: [
+        ...current,
+        {
+          title: `Krok ${current.length + 1}`,
+          content: '',
+          testQuestion: '',
+          testOptions: ['', '', '', ''],
+          correctAnswer: '',
+          tutorTip: ''
+        }
+      ]
+    }));
+  };
+
+  const removeStep = (idx: number) => {
+    setEditingSubtopic(prev => ({
+      ...prev,
+      studySteps: (prev?.studySteps || []).filter((_, i) => i !== idx)
+    }));
+  };
+
+  const updateStep = (idx: number, field: keyof StudyStep, value: any) => {
+    setEditingSubtopic(prev => {
+      const updated = [...(prev?.studySteps || [])];
+      updated[idx] = {
+        ...updated[idx],
+        [field]: value
+      };
+      return {
+        ...prev,
+        studySteps: updated
+      };
+    });
+  };
+
+  const updateStepOption = (stepIdx: number, optIdx: number, value: string) => {
+    setEditingSubtopic(prev => {
+      const updated = [...(prev?.studySteps || [])];
+      const step = { ...updated[stepIdx] };
+      const currentOpts = [...(step.testOptions || ['', '', '', ''])];
+      while (currentOpts.length < 4) {
+        currentOpts.push('');
+      }
+      currentOpts[optIdx] = value;
+      step.testOptions = currentOpts;
+      updated[stepIdx] = step;
+      return {
+        ...prev,
+        studySteps: updated
+      };
+    });
+  };
+
+  const handleOpenNewSubtopic = (topicId: string) => {
+    setSubtopicParentTopicId(topicId);
+    setEditingSubtopic({
+      title: '',
+      description: '',
+      topicId: topicId,
+      subjectId: activeSubject,
+      svgUrl: '',
+      svgContent: '',
+      studyTheory: '',
+      studySteps: [
+        {
+          title: 'Krok 1',
+          content: '',
+          testQuestion: '',
+          testOptions: ['', '', '', ''],
+          correctAnswer: '',
+          tutorTip: ''
+        }
+      ],
+      sampleProblem: {
+        problem: '',
+        correctAnswer: '',
+        options: ['', '', '', ''],
+        explanation: ''
+      }
+    });
+    setIsSubtopicModalOpen(true);
+  };
+
+  const handleOpenEditSubtopic = (sub: PracticeSubtopic) => {
+    setSubtopicParentTopicId(sub.topicId);
+    setEditingSubtopic({
+      ...sub,
+      studySteps: sub.studySteps?.length
+        ? sub.studySteps.map(s => ({
+            ...s,
+            testOptions: s.testOptions && s.testOptions.length > 0 ? s.testOptions : ['', '', '', '']
+          }))
+        : [{ title: 'Krok 1', content: '', testQuestion: '', testOptions: ['', '', '', ''], correctAnswer: '', tutorTip: '' }],
+      sampleProblem: sub.sampleProblem || { problem: '', correctAnswer: '', options: ['', '', '', ''], explanation: '' }
+    });
+    setIsSubtopicModalOpen(true);
+  };
+
+  const handleSaveSubtopic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSubtopic?.title?.trim()) {
+      toast.error('Zadejte prosím název podtémata.');
+      return;
+    }
+
+    try {
+      const cleanSteps: StudyStep[] = (editingSubtopic.studySteps || [])
+        .filter(s => s.title?.trim() || s.content?.trim())
+        .map(s => {
+          const rawOpts = (s.testOptions || []).map(o => o.trim());
+          const hasAnyOpt = rawOpts.some(Boolean);
+          const validOpts = hasAnyOpt ? rawOpts : undefined;
+          const correct = s.correctAnswer?.trim() || undefined;
+
+          return {
+            title: s.title?.trim() || 'Krok',
+            content: s.content?.trim() || '',
+            testQuestion: s.testQuestion?.trim() || undefined,
+            testOptions: validOpts,
+            correctAnswer: correct,
+            tutorTip: s.tutorTip?.trim() || undefined
+          };
+        });
+
+      await saveSubtopic({
+        ...editingSubtopic,
+        title: editingSubtopic.title.trim(),
+        description: editingSubtopic.description?.trim() || '',
+        topicId: subtopicParentTopicId,
+        subjectId: activeSubject,
+        studySteps: cleanSteps
+      }, effectiveUserId);
+      toast.success(editingSubtopic.id ? 'Podtéma bylo úspěšně upraveno' : 'Podtéma bylo úspěšně vytvořeno');
+      setIsSubtopicModalOpen(false);
+      setEditingSubtopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  const handleDeleteSubtopic = async (subId: string, title: string) => {
+    if (!window.confirm(`Opravdu chcete smazat podtéma "${title}" včetně otázek?`)) return;
+    try {
+      await deleteSubtopic(subId);
+      toast.success('Podtéma smazáno');
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při mazání: ' + err.message);
+    }
+  };
+
+  // --- QUESTION ACTIONS ---
+  const handleOpenNewQuestion = (sub: PracticeSubtopic) => {
+    setQuestionParentSubtopic(sub);
+    setEditingQuestion({
+      type: 'choice',
+      question: '',
+      options: ['', '', '', ''],
+      correctAnswer: '',
+      hint: '',
+      explanation: '',
+      difficulty: 'Střední',
+      subtopicId: sub.id,
+      topicId: sub.topicId,
+      subjectId: sub.subjectId
+    });
+    setIsQuestionModalOpen(true);
+  };
+
+  const handleSaveQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingQuestion?.question?.trim()) {
+      toast.error('Vyplňte zadání otázky.');
+      return;
+    }
+
+    if (editingQuestion.type === 'choice') {
+      const opts = (editingQuestion.options || []).map(o => o.trim()).filter(Boolean);
+      if (opts.length < 2) {
+        toast.error('Vyplňte možnosti odpovědí.');
+        return;
+      }
+      if (!editingQuestion.correctAnswer?.trim()) {
+        toast.error('Vyberte správnou odpověď z možností.');
+        return;
+      }
+    } else {
+      if (!editingQuestion?.correctAnswer?.trim()) {
+        toast.error('Vyplňte správnou odpověď.');
+        return;
+      }
+    }
+
+    try {
+      await saveQuestion({
+        ...editingQuestion,
+        difficulty: editingQuestion.difficulty || 'Střední',
+        subtopicId: questionParentSubtopic?.id || editingQuestion.subtopicId,
+        topicId: questionParentSubtopic?.topicId || editingQuestion.topicId,
+        subjectId: activeSubject
+      }, effectiveUserId);
+
+      toast.success(editingQuestion.id ? 'Otázka upravena' : 'Otázka vytvořena');
+      setIsQuestionModalOpen(false);
+      setEditingQuestion(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [conversionMsg, setConversionMsg] = useState('');
+
+  const handleQuestionImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const validExts = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'pdf'];
+    if (!ext || !validExts.includes(ext)) {
+      toast.error('Nahrajte prosím obrázek (PNG, JPG, WebP, SVG) nebo PDF.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Soubor je příliš velký (maximum 15 MB).');
+      return;
+    }
+
+    setIsUploadingImage(true);
+    setConversionMsg('Převádím soubor na vektorové SVG...');
+    try {
+      const res = await convertFileToSvg(file, (msg) => setConversionMsg(msg));
+      setEditingQuestion(prev => ({
+        ...prev,
+        svgContent: res.svgString,
+        imageUrl: res.thumbnailDataUrl || ''
+      }));
+      toast.success(
+        ext === 'svg'
+          ? 'SVG soubor úspěšně načten a přiřazen k otázce!'
+          : ext === 'pdf'
+            ? 'PDF úspěšně převedeno na vektorové SVG a vloženo k otázce!'
+            : 'Obrázek byl úspěšně převeden do formátu SVG a vložen k otázce!'
+      );
+    } catch (err: any) {
+      console.error('Error processing question image/svg:', err);
+      toast.error('Nepodařilo se zpracovat soubor: ' + (err.message || ''));
+    } finally {
+      setIsUploadingImage(false);
+      setConversionMsg('');
+      e.target.value = '';
+    }
+  };
+
+  const handleDeleteQuestion = async (questionId: string) => {
+    if (!window.confirm('Opravdu chcete tuto otázku smazat?')) return;
+    try {
+      await deleteQuestion(questionId);
+      toast.success('Otázka smazána');
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba: ' + err.message);
+    }
+  };
+
+  // --- 1. EXCEL IMPORT PROČVIČOVÁNÍ ---
+  const handlePracticeFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPracticeFile(file);
+    setPracticeStats(null);
+    try {
+      const parsed = await parsePracticeQuestionsExcelFile(file);
+      setPracticeParsed(parsed);
+      if (parsed.invalidRows.length > 0) {
+        toast.warning(`Soubor načten: ${parsed.validRows.length} platných otázek, ${parsed.invalidRows.length} řádků má chybu.`);
+      } else {
+        toast.success(`Soubor načten: ${parsed.validRows.length} platných otázek k importu.`);
+      }
+    } catch (err: any) {
+      setPracticeParsed(null);
+      toast.error('Chyba při čtení Excelu: ' + err.message);
+    }
+  };
+
+  const handleExecutePracticeImport = async () => {
+    if (!practiceParsed || practiceParsed.validRows.length === 0) return;
+    setIsImportingPractice(true);
+    setPracticeProgressMsg('Zahajuji import...');
+    try {
+      const stats = await importPracticeQuestionsToFirestore(
+        practiceParsed.validRows,
+        effectiveUserId,
+        (msg) => setPracticeProgressMsg(msg)
+      );
+      setPracticeStats(stats);
+      toast.success(`Import procvičování dokončen! Naimportováno: ${stats.importedQuestions} nových otázek.`);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba během importu: ' + err.message);
+    } finally {
+      setIsImportingPractice(false);
+      setPracticeProgressMsg('');
+    }
+  };
+
+  // --- 2. EXCEL IMPORT STUDIUM (KROKY) ---
+  const handleStudyFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setStudyFile(file);
+    setStudyStats(null);
+    try {
+      const parsed = await parseStudyStepsExcelFile(file);
+      setStudyParsed(parsed);
+      if (parsed.invalidRows.length > 0) {
+        toast.warning(`Soubor načten: ${parsed.validRows.length} platných kroků, ${parsed.invalidRows.length} řádků má chybu.`);
+      } else {
+        toast.success(`Soubor načten: ${parsed.validRows.length} platných kroků výkladu k importu.`);
+      }
+    } catch (err: any) {
+      setStudyParsed(null);
+      toast.error('Chyba při čtení Excelu: ' + err.message);
+    }
+  };
+
+  const handleExecuteStudyImport = async () => {
+    if (!studyParsed || studyParsed.validRows.length === 0) return;
+    setIsImportingStudy(true);
+    setStudyProgressMsg('Zahajuji import...');
+    try {
+      const stats = await importStudyStepsToFirestore(
+        studyParsed.validRows,
+        effectiveUserId,
+        (msg) => setStudyProgressMsg(msg)
+      );
+      setStudyStats(stats);
+      toast.success(`Import studia dokončen! Naimportováno: ${stats.importedSteps} kroků.`);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba během importu: ' + err.message);
+    } finally {
+      setIsImportingStudy(false);
+      setStudyProgressMsg('');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Top Action Bar & Subject Selector */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-3xl border border-gray-100 shadow-sm">
+        {/* Subject Pills */}
+        <div className="flex gap-2">
+          {PREDEFINED_SUBJECTS.map((sub) => (
+            <button
+              key={sub.id}
+              onClick={() => setActiveSubject(sub.id as any)}
+              className={`px-5 py-2.5 rounded-2xl font-black text-sm transition-all cursor-pointer ${
+                activeSubject === sub.id
+                  ? 'bg-[#1E1B18] text-white shadow-md'
+                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+              }`}
+            >
+              {sub.title}
+            </button>
+          ))}
+        </div>
+
+        {/* Buttons */}
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() => {
+              setEditingTopic({ title: '', description: '', subjectId: activeSubject });
+              setIsTopicModalOpen(true);
+            }}
+            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold h-10 px-4 flex items-center gap-2 cursor-pointer shadow-sm text-xs"
+          >
+            <Plus size={16} />
+            <span>Nové téma</span>
+          </Button>
+
+          <Button
+            onClick={() => {
+              setPracticeFile(null);
+              setPracticeParsed(null);
+              setPracticeStats(null);
+              setIsPracticeModalOpen(true);
+            }}
+            variant="outline"
+            className="rounded-xl border-gray-200 hover:border-black font-bold h-10 px-3.5 flex items-center gap-2 cursor-pointer text-xs bg-white shadow-xs"
+          >
+            <Upload size={15} className="text-[#B80053]" />
+            <span>Importovat procvičování</span>
+          </Button>
+
+          <Button
+            onClick={() => {
+              setStudyFile(null);
+              setStudyParsed(null);
+              setStudyStats(null);
+              setIsStudyModalOpen(true);
+            }}
+            variant="outline"
+            className="rounded-xl border-gray-200 hover:border-black font-bold h-10 px-3.5 flex items-center gap-2 cursor-pointer text-xs bg-white shadow-xs"
+          >
+            <BookOpen size={15} className="text-[#0F5238]" />
+            <span>Importovat studium</span>
+          </Button>
+        </div>
+      </div>
+
+      {/* Main Hierarchy List */}
+      {loading ? (
+        <div className="text-center py-16 bg-white rounded-3xl">
+          <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-gray-500 font-bold text-sm">Načítání témat pro {activeSubject}...</p>
+        </div>
+      ) : topics.length === 0 ? (
+        <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200 p-8 space-y-4">
+          <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-2xl">
+            📚
+          </div>
+          <h3 className="text-2xl font-display font-black text-gray-800">Žádná témata pro {activeSubject}</h3>
+          <p className="text-gray-400 text-sm max-w-md mx-auto">
+            Vytvořte své první hlavní téma nebo importujte hotový přehled z Excelu.
+          </p>
+          <div className="flex justify-center gap-3 pt-2">
+            <Button
+              onClick={() => {
+                setEditingTopic({ title: '', description: '', subjectId: activeSubject });
+                setIsTopicModalOpen(true);
+              }}
+              className="rounded-xl bg-[#1E1B18] text-white font-bold h-10 px-5 text-xs"
+            >
+              + Vytvořit první téma
+            </Button>
+            <Button
+              onClick={() => {
+                setPracticeFile(null);
+                setPracticeParsed(null);
+                setPracticeStats(null);
+                setIsPracticeModalOpen(true);
+              }}
+              variant="outline"
+              className="rounded-xl font-bold h-10 px-4 text-xs"
+            >
+              📥 Import procvičování
+            </Button>
+            <Button
+              onClick={() => {
+                setStudyFile(null);
+                setStudyParsed(null);
+                setStudyStats(null);
+                setIsStudyModalOpen(true);
+              }}
+              variant="outline"
+              className="rounded-xl font-bold h-10 px-4 text-xs"
+            >
+              📖 Import studia
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {topics.map((topic) => {
+            const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+
+            return (
+              <div 
+                key={topic.id}
+                className="bg-white rounded-3xl p-6 sm:p-7 border border-gray-100 shadow-sm space-y-5"
+              >
+                {/* Topic Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md">
+                        Hlavní téma
+                      </span>
+                      <h3 className="text-xl sm:text-2xl font-black text-[#1E1B18]">
+                        {topic.title}
+                      </h3>
+                    </div>
+                    {topic.description && (
+                      <p className="text-gray-400 text-xs mt-0.5 font-medium">{topic.description}</p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    <Button
+                      onClick={() => handleOpenNewSubtopic(topic.id)}
+                      size="sm"
+                      className="rounded-xl bg-gray-100 hover:bg-[#1E1B18] hover:text-white text-gray-800 font-bold text-xs h-9 px-3.5 transition-colors cursor-pointer"
+                    >
+                      <Plus size={14} className="mr-1" /> Přidat podtéma
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setEditingTopic(topic);
+                        setIsTopicModalOpen(true);
+                      }}
+                      className="rounded-xl h-9 w-9 p-0 text-gray-500 hover:text-black cursor-pointer"
+                      title="Upravit téma"
+                    >
+                      <Edit2 size={15} />
+                    </Button>
+
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteTopic(topic.id, topic.title)}
+                      className="rounded-xl h-9 w-9 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                      title="Smazat téma"
+                    >
+                      <Trash2 size={15} />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Subtopics List */}
+                {topicSubtopics.length === 0 ? (
+                  <p className="text-gray-400 text-xs italic py-2">
+                    Toto téma zatím nemá žádná podtémata. Klikněte na "+ Přidat podtéma".
+                  </p>
+                ) : (
+                  <div className="space-y-4">
+                    {topicSubtopics.map((sub) => {
+                      const questions = questionsMap[sub.id] || [];
+                      const isExpanded = !!expandedSubtopics[sub.id];
+
+                      return (
+                        <div 
+                          key={sub.id}
+                          className="rounded-2xl border border-gray-200/80 bg-[#FAF7F0] p-4 sm:p-5 space-y-4 transition-all"
+                        >
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                            <div className="space-y-1 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <button
+                                  onClick={() => toggleSubtopic(sub.id)}
+                                  className="font-bold text-base text-gray-900 hover:text-brand-blue flex items-center gap-1.5 cursor-pointer text-left"
+                                >
+                                  {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                  <span>{sub.title}</span>
+                                </button>
+
+                                <span className="text-[11px] font-bold text-gray-500 bg-white px-2.5 py-0.5 rounded-md border border-gray-200">
+                                  {questions.length} {questions.length === 1 ? 'otázka' : questions.length < 5 ? 'otázky' : 'otázek'}
+                                </span>
+                              </div>
+
+                              {sub.description && (
+                                <p className="text-gray-500 text-xs pl-6">{sub.description}</p>
+                              )}
+                            </div>
+
+                            {/* Subtopic Action Buttons */}
+                            <div className="flex items-center gap-2 shrink-0 self-end md:self-center pl-6 md:pl-0">
+                              <Button
+                                onClick={() => handleOpenNewQuestion(sub)}
+                                size="sm"
+                                className="rounded-xl bg-[#1E1B18] text-white hover:bg-[#332f2b] font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
+                              >
+                                <Plus size={13} />
+                                <span>Otázka</span>
+                              </Button>
+
+                              <Button
+                                onClick={() => handleOpenEditSubtopic(sub)}
+                                variant="outline"
+                                size="sm"
+                                className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
+                              >
+                                <BookOpen size={13} />
+                                <span>Studovat (Látka)</span>
+                              </Button>
+
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteSubtopic(sub.id, sub.title)}
+                                className="rounded-xl h-8 w-8 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                                title="Smazat podtéma"
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* Expanded Questions for this Subtopic */}
+                          {isExpanded && (
+                            <div className="pl-6 pt-3 border-t border-gray-200/60 space-y-2.5">
+                              <div className="flex items-center justify-between text-xs font-bold text-gray-500">
+                                <span>Seznam otázek k procvičování</span>
+                                <span className="text-gray-400">Typ: Volba ze 4 / Vepisovací</span>
+                              </div>
+
+                              {questions.length === 0 ? (
+                                <p className="text-gray-400 text-xs italic py-2">
+                                  Zatím žádné otázky. Klikněte na "+ Otázka" pro přidání otázky s volbou ze 4 nebo volnou odpovědí.
+                                </p>
+                              ) : (
+                                <div className="space-y-2">
+                                  {questions.map((q, qIdx) => (
+                                    <div 
+                                      key={q.id}
+                                      className="p-3 bg-white rounded-xl border border-gray-200/80 shadow-xs flex items-start justify-between gap-3 text-xs"
+                                    >
+                                      <div className="space-y-1 min-w-0 flex-1">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-bold text-gray-400">{qIdx + 1}.</span>
+                                          <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider ${
+                                            q.type === 'choice' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                                          }`}>
+                                            {q.type === 'choice' ? '4 možnosti' : 'Volná odpověď'}
+                                          </span>
+                                          {(q.svgContent || q.imageUrl) && (
+                                            <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0" title={q.svgContent ? 'Otázka má vložené vektorové SVG zadání' : 'Otázka má přiložený obrázek'}>
+                                              <ImageIcon size={10} />
+                                              <span>{q.svgContent ? 'SVG' : 'Obrázek'}</span>
+                                            </span>
+                                          )}
+                                          <span className="font-bold text-gray-800 truncate">{q.question}</span>
+                                        </div>
+                                        <div className="pl-5 text-gray-500">
+                                          Správná odpověď: <span className="font-bold text-emerald-700">{q.correctAnswer}</span>
+                                        </div>
+                                      </div>
+
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => {
+                                            setQuestionParentSubtopic(sub);
+                                            setEditingQuestion(q);
+                                            setIsQuestionModalOpen(true);
+                                          }}
+                                          className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-black cursor-pointer"
+                                        >
+                                          <Edit2 size={12} />
+                                        </Button>
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => handleDeleteQuestion(q.id)}
+                                          className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                                        >
+                                          <Trash2 size={12} />
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 1: CREATE / EDIT TOPIC                                  */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isTopicModalOpen} onOpenChange={setIsTopicModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
+              {editingTopic?.id ? 'Upravit hlavní téma' : 'Nové hlavní téma'}
+            </DialogTitle>
+          </DialogHeader>
+
+
+          <form onSubmit={handleSaveTopic} className="space-y-4 py-2">
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Předmět</label>
+              <Input
+                disabled
+                value={activeSubject}
+                className="rounded-xl h-11 bg-gray-100 font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Název tématu *</label>
+              <Input
+                required
+                value={editingTopic?.title || ''}
+                onChange={e => setEditingTopic(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="Např. Počítání a čísla, Pravopis"
+                className="rounded-xl h-11 font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Popis tématu</label>
+              <textarea
+                rows={2}
+                value={editingTopic?.description || ''}
+                onChange={e => setEditingTopic(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Stručný přehled okruhů v tomto tématu..."
+                className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsTopicModalOpen(false)} className="rounded-xl">
+                Zrušit
+              </Button>
+              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold">
+                Uložit téma
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 2: CREATE / EDIT SUBTOPIC & STUDY MATERIAL              */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isSubtopicModalOpen} onOpenChange={setIsSubtopicModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-10 w-full sm:max-w-5xl lg:max-w-6xl xl:max-w-7xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
+              {editingSubtopic?.id ? 'Upravit podtéma a látku' : 'Nové podtéma a látka'}
+            </DialogTitle>
+          </DialogHeader>
+
+
+          <form onSubmit={handleSaveSubtopic} className="space-y-5 py-2">
+            {/* Prominent Info Banner for Studovat Section */}
+            <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 text-amber-950 shadow-xs">
+              <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
+                <BookOpen size={20} />
+              </div>
+              <div className="space-y-1">
+                <h5 className="text-xs font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
+                  Vytváříte podtéma i interaktivní sekci "Studovat"
+                </h5>
+                <p className="text-xs text-amber-800 font-medium leading-relaxed">
+                  Tento formulář zakládá nejen téma pro procvičování, ale zároveň kompletní interaktivní modul <strong>Studovat</strong> pro žáky. V sekci níže můžete přiložit grafický list, popsat teorii a vytvořit jednotlivé kroky výkladu.
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-gray-50/70 p-4 sm:p-5 rounded-2xl border border-gray-200/70 space-y-4">
+              <h5 className="text-xs font-bold uppercase tracking-wider text-gray-700">Základní informace o podtématu</h5>
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1">Název podtémata *</label>
+                <Input
+                  required
+                  value={editingSubtopic?.title || ''}
+                  onChange={e => setEditingSubtopic(prev => ({ ...prev, title: e.target.value }))}
+                  placeholder="Např. Zlomky a smíšená čísla"
+                  className="rounded-xl h-11 font-medium bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1">Popis podtémata</label>
+                <Input
+                  value={editingSubtopic?.description || ''}
+                  onChange={e => setEditingSubtopic(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Krátké vysvětlení, co se zde student naučí..."
+                  className="rounded-xl h-11 font-medium bg-white"
+                />
+              </div>
+            </div>
+
+            {/* SEKCĚ STUDOVAT - ZVÝRAZNĚNÝ KONTEJNER */}
+            <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/30 p-5 sm:p-6 space-y-5 shadow-xs">
+              <div className="flex items-center justify-between pb-3 border-b border-amber-200/80">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs">
+                    <BookOpen size={16} />
+                  </div>
+                  <div>
+                    <h4 className="font-display font-black text-base text-[#1E1B18] flex items-center gap-2">
+                      <span>Sekce Studovat (Výklad látky & Grafický list)</span>
+                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md">
+                        Interaktivní výuka
+                      </span>
+                    </h4>
+                    <p className="text-xs text-gray-500 font-medium">
+                      Tento obsah se žákovi zobrazí po kliknutí na tlačítko "Studovat".
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+            {/* Grafický list: Drag & Drop PDF / SVG + Výběr z materiálů */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-700">
+                  Grafický výukový list (PDF / SVG)
+                </label>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsMaterialSelectorOpen(true)}
+                  className="h-7 text-xs font-bold text-amber-700 hover:bg-amber-50 cursor-pointer flex items-center gap-1.5"
+                >
+                  <BookOpen size={13} />
+                  <span>Vybrat z existujících materiálů</span>
+                </Button>
+              </div>
+
+              <PdfSvgDropzone
+                valueSvgString={editingSubtopic?.svgContent}
+                valueSvgUrl={editingSubtopic?.svgUrl}
+                onChange={(res) => {
+                  if (res) {
+                    setEditingSubtopic(prev => ({
+                      ...prev,
+                      svgContent: res.svgString,
+                      svgUrl: '',
+                      hasStudyMaterial: true,
+                      title: prev?.title || res.fileName.replace(/\.(pdf|svg)$/i, '')
+                    }));
+                  } else {
+                    setEditingSubtopic(prev => ({
+                      ...prev,
+                      svgContent: '',
+                      svgUrl: ''
+                    }));
+                  }
+                }}
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Teoretický výklad / Popis látky</label>
+              <textarea
+                rows={4}
+                value={editingSubtopic?.studyTheory || ''}
+                onChange={e => setEditingSubtopic(prev => ({ ...prev, studyTheory: e.target.value }))}
+                placeholder="Podrobné vysvětlení pravidel, pouček a vzorců..."
+                className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium leading-relaxed"
+              />
+            </div>
+
+            {/* Steps Builder */}
+            <div className="space-y-4 pt-4 border-t border-gray-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-bold text-sm text-[#1E1B18] flex items-center gap-1.5">
+                    <CheckCircle2 size={16} className="text-amber-600" />
+                    Kroky řešení a výkladu (krok za krokem)
+                  </h4>
+                  <p className="text-xs text-gray-500 font-medium mt-0.5">
+                    U každého kroku můžete kromě výkladu přidat i kontrolní 4-volbový kvíz a bublinku s tipem od lektora.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={addStep}
+                  className="rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-900 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer shrink-0"
+                >
+                  <Plus size={14} /> Přidat krok
+                </Button>
+              </div>
+
+              {(!editingSubtopic?.studySteps || editingSubtopic.studySteps.length === 0) ? (
+                <div className="text-center py-6 px-4 bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                  <p className="text-xs text-gray-400 font-medium">Toto podtéma zatím nemá žádné studijní kroky.</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={addStep}
+                    className="rounded-xl text-xs font-bold"
+                  >
+                    <Plus size={13} className="mr-1" /> Vytvořit první krok
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {editingSubtopic.studySteps.map((step, idx) => (
+                    <div key={idx} className="p-4 sm:p-5 rounded-2xl border border-gray-200 bg-gray-50/60 space-y-4 relative">
+                      {/* Step Header */}
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                          <span className="w-7 h-7 rounded-xl bg-[#1E1B18] text-[#FAF7F0] font-black text-xs flex items-center justify-center shrink-0 shadow-sm">
+                            {idx + 1}
+                          </span>
+                          <Input
+                            value={step.title}
+                            onChange={e => updateStep(idx, 'title', e.target.value)}
+                            placeholder={`Název kroku ${idx + 1} (např. Určení kořene slova)`}
+                            className="h-10 rounded-xl text-sm font-bold bg-white"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => removeStep(idx)}
+                          className="h-9 w-9 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-xl shrink-0 cursor-pointer"
+                          title="Smazat krok"
+                        >
+                          <Trash2 size={16} />
+                        </Button>
+                      </div>
+
+                      {/* Step Explanation Content */}
+                      <div className="space-y-1.5 pl-0 sm:pl-9">
+                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                          Výkladový text kroku *
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={step.content}
+                          onChange={e => updateStep(idx, 'content', e.target.value)}
+                          placeholder="Podrobné vysvětlení a postup v rámci tohoto kroku..."
+                          className="w-full p-3 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-black font-medium leading-relaxed"
+                        />
+                      </div>
+
+                      {/* Sub-grid: 4-choice Quiz + Tutor Tip */}
+                      <div className="pl-0 sm:pl-9 pt-3 border-t border-gray-200/60 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {/* 4-choice Test Question */}
+                        <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                          <div className="space-y-1">
+                            <h5 className="text-[11px] font-black text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <CheckCircle2 size={14} className="text-blue-600" /> Kontrolní otázka ke kroku (volitelná)
+                            </h5>
+                            <p className="text-[11px] text-gray-400 font-medium">
+                              Otázka pro ověření pochopení tohoto konkrétního kroku (výběr ze 4 možností).
+                            </p>
+                          </div>
+
+                          <Input
+                            value={step.testQuestion || ''}
+                            onChange={e => updateStep(idx, 'testQuestion', e.target.value)}
+                            placeholder="Znění kontrolní otázky..."
+                            className="h-9 text-xs rounded-xl bg-gray-50/80 font-medium"
+                          />
+
+                          <div className="space-y-2 pt-1">
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
+                              Možnosti A–D (kliknutím na písmeno označte správnou)
+                            </span>
+                            {[0, 1, 2, 3].map(optIdx => {
+                              const letter = ['A', 'B', 'C', 'D'][optIdx];
+                              const val = step.testOptions?.[optIdx] || '';
+                              const isCorrect = Boolean(val && step.correctAnswer === val);
+
+                              return (
+                                <div key={optIdx} className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      if (val) {
+                                        updateStep(idx, 'correctAnswer', val);
+                                      }
+                                    }}
+                                    className={`w-7 h-7 rounded-lg text-xs font-black flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+                                      isCorrect
+                                        ? 'bg-emerald-600 text-white shadow-xs'
+                                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                                    }`}
+                                    title={isCorrect ? 'Označeno jako správná odpověď' : `Klikněte pro nastavení ${letter} jako správné`}
+                                  >
+                                    {letter}
+                                  </button>
+                                  <Input
+                                    value={val}
+                                    onChange={e => {
+                                      const newVal = e.target.value;
+                                      const wasCorrect = step.correctAnswer === val;
+                                      updateStepOption(idx, optIdx, newVal);
+                                      if (wasCorrect) {
+                                        updateStep(idx, 'correctAnswer', newVal);
+                                      }
+                                    }}
+                                    placeholder={`Možnost ${letter}`}
+                                    className={`h-8 text-xs rounded-xl ${isCorrect ? 'border-emerald-500 bg-emerald-50/40 font-bold text-emerald-950' : 'bg-gray-50'}`}
+                                  />
+                                  {isCorrect && (
+                                    <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0">
+                                      Správná
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="space-y-1 pt-1">
+                            <label className="text-[10px] font-bold text-gray-500 block">Zvolená správná odpověď:</label>
+                            <select
+                              value={step.correctAnswer || ''}
+                              onChange={e => updateStep(idx, 'correctAnswer', e.target.value)}
+                              className="w-full h-8 px-2.5 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-1 focus:ring-black cursor-pointer"
+                            >
+                              <option value="">-- Vyberte správnou možnost ze zadaných --</option>
+                              {[0, 1, 2, 3].map(optIdx => {
+                                const val = step.testOptions?.[optIdx]?.trim();
+                                if (!val) return null;
+                                return (
+                                  <option key={optIdx} value={val}>
+                                    {['A', 'B', 'C', 'D'][optIdx]}: {val}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        </div>
+
+                        {/* Tutor Tip */}
+                        <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
+                          <div className="space-y-1">
+                            <h5 className="text-[11px] font-black text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
+                              <Sparkles size={14} className="text-amber-600" /> Bublinka s tipem od lektora
+                            </h5>
+                            <p className="text-[11px] text-gray-400 font-medium">
+                              Tento tip se studentovi zobrazí v přehledné bublince až po rozkliknutí tlačítka u kroku.
+                            </p>
+                          </div>
+                          <textarea
+                            value={step.tutorTip || ''}
+                            onChange={e => updateStep(idx, 'tutorTip', e.target.value)}
+                            rows={6}
+                            placeholder="Extra doporučení lektora, pomůcka, trik nebo častá chyba v tomto kroku..."
+                            className="w-full flex-1 p-3 rounded-xl border border-gray-200 text-xs bg-gray-50/70 focus:outline-none focus:ring-1 focus:ring-black resize-none font-medium leading-relaxed"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsSubtopicModalOpen(false)} className="rounded-xl">
+                Zrušit
+              </Button>
+              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold">
+                Uložit podtéma
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 3: CREATE / EDIT QUESTION (CHOICE OR OPEN)              */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isQuestionModalOpen} onOpenChange={setIsQuestionModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-10 w-full sm:max-w-3xl lg:max-w-4xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
+              {editingQuestion?.id ? 'Upravit otázku' : 'Nová otázka'}
+            </DialogTitle>
+          </DialogHeader>
+
+          <form onSubmit={handleSaveQuestion} className="space-y-5 py-2">
+            {/* Type selector */}
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1.5">Typ otázky</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setEditingQuestion(prev => ({ 
+                    ...prev, 
+                    type: 'choice',
+                    options: prev?.options?.length ? prev.options : ['', '', '', '']
+                  }))}
+                  className={`p-3.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    editingQuestion?.type === 'choice'
+                      ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  Výběr ze 4 možností
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setEditingQuestion(prev => ({ ...prev, type: 'open' }))}
+                  className={`p-3.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                    editingQuestion?.type === 'open'
+                      ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
+                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                  }`}
+                >
+                  Volná odpověď (Vepisovací)
+                </button>
+              </div>
+            </div>
+
+            {/* Question Text */}
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Zadání otázky *</label>
+              <textarea
+                required
+                rows={3}
+                value={editingQuestion?.question || ''}
+                onChange={e => setEditingQuestion(prev => ({ ...prev, question: e.target.value }))}
+                placeholder="Zadejte text otázky nebo úlohy..."
+                className="w-full rounded-xl border border-gray-200 p-3.5 text-sm focus:border-black outline-none font-medium leading-snug"
+              />
+            </div>
+
+            {/* Optional Question Image / SVG (pod zadáním) */}
+            <div className="space-y-2.5 bg-[#FAF7F0] p-4 sm:p-5 rounded-2xl border border-gray-200/80">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  <ImageIcon size={15} className="text-amber-600" />
+                  <span>Grafický podklad / Obrázek k úloze (volitelný – konvertuje se do SVG)</span>
+                </label>
+                {(editingQuestion?.svgContent || editingQuestion?.imageUrl) && (
+                  <button
+                    type="button"
+                    onClick={() => setEditingQuestion(prev => ({ ...prev, svgContent: '', imageUrl: '' }))}
+                    className="text-xs font-bold text-red-600 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Trash2 size={13} />
+                    <span>Odebrat obrázek/SVG</span>
+                  </button>
+                )}
+              </div>
+
+              {isUploadingImage ? (
+                <div className="border-2 border-dashed border-amber-300 bg-amber-50/70 rounded-2xl p-6 text-center space-y-2 animate-pulse">
+                  <div className="w-8 h-8 border-3 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                  <p className="font-bold text-xs text-amber-900">{conversionMsg || 'Zpracovávám soubor a převádím do SVG...'}</p>
+                </div>
+              ) : (editingQuestion?.svgContent || editingQuestion?.imageUrl) ? (
+                <div className="rounded-xl border border-gray-200 bg-white p-3 flex flex-col items-center justify-center space-y-2.5 shadow-2xs">
+                  {editingQuestion?.svgContent ? (
+                    <div 
+                      className="w-full flex justify-center [&>svg]:max-h-56 [&>svg]:w-auto [&>svg]:max-w-full overflow-hidden p-2 bg-[#FAF7F0] rounded-lg"
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(editingQuestion.svgContent) }}
+                    />
+                  ) : (
+                    <img
+                      src={editingQuestion.imageUrl}
+                      alt="Náhled k úloze"
+                      className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
+                    />
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-2 w-full pt-1 border-t border-gray-100">
+                    <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                      <CheckCircle2 size={12} />
+                      {editingQuestion?.svgContent ? 'Uloženo jako vektorové SVG (vkládá se přímo do stránky)' : 'Obrázek (URL / data)'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setEditingQuestion(prev => ({ ...prev, svgContent: '', imageUrl: '' }))}
+                      className="px-2.5 py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                    >
+                      Smazat
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                    {/* File Upload Button (PDF, SVG, PNG, JPG, WebP) */}
+                    <label className="w-full sm:w-auto px-4 py-2.5 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl text-xs font-bold text-gray-700 flex items-center justify-center gap-2 cursor-pointer shadow-2xs hover:border-black transition-all shrink-0">
+                      <Upload size={14} className="text-amber-600" />
+                      <span>Nahrát soubor (obrázek / SVG / PDF)</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.svg,.png,.jpg,.jpeg,.webp,image/*,application/pdf"
+                        className="hidden"
+                        onChange={handleQuestionImageUpload}
+                        disabled={isUploadingImage}
+                      />
+                    </label>
+
+                    <span className="text-xs text-gray-400 font-semibold shrink-0">nebo URL:</span>
+
+                    {/* URL Input */}
+                    <div className="flex-1 w-full">
+                      <Input
+                        type="text"
+                        placeholder="https://... nebo /materials/obrazek.svg"
+                        value={editingQuestion?.imageUrl || ''}
+                        onChange={e => setEditingQuestion(prev => ({ ...prev, imageUrl: e.target.value, svgContent: '' }))}
+                        className="rounded-xl h-10 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-gray-400 font-medium">
+                    Nahraný soubor (PNG, JPG, WebP, SVG i PDF) se <strong>automaticky převede na SVG</strong> a vloží se přímo do stránky pod zadání otázky, stejně jako studijní materiály.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Options if choice */}
+            {editingQuestion?.type === 'choice' && (
+              <div className="space-y-3 bg-gray-50/70 p-5 rounded-2xl border border-gray-200/80">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-gray-700 block">
+                    4 Možnosti odpovědi (A–D)
+                  </label>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                    Klikněte na písmeno pro označení správné
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+
+                  {['A', 'B', 'C', 'D'].map((letter, idx) => {
+                    const val = (editingQuestion.options && editingQuestion.options[idx]) || '';
+                    const isCorrect = Boolean(val && editingQuestion.correctAnswer === val);
+
+                    return (
+                      <div key={idx} className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (val) {
+                              setEditingQuestion(prev => ({ ...prev, correctAnswer: val }));
+                            }
+                          }}
+                          className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+                            isCorrect
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
+                          }`}
+                          title={isCorrect ? 'Označeno jako správná odpověď' : `Klikněte pro nastavení ${letter} jako správné`}
+                        >
+                          {letter}
+                        </button>
+                        <Input
+                          required
+                          value={val}
+                          onChange={e => {
+                            const newVal = e.target.value;
+                            const wasCorrect = editingQuestion.correctAnswer === val;
+                            const opts = [...(editingQuestion.options || ['', '', '', ''])];
+                            opts[idx] = newVal;
+                            setEditingQuestion(prev => ({
+                              ...prev,
+                              options: opts,
+                              ...(wasCorrect ? { correctAnswer: newVal } : {})
+                            }));
+                          }}
+                          placeholder={`Možnost ${letter}`}
+                          className={`rounded-xl h-10 text-xs font-medium ${isCorrect ? 'border-emerald-500 bg-emerald-50/40 font-bold text-emerald-950' : 'bg-white'}`}
+                        />
+                        {isCorrect && (
+                          <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0">
+                            Správná
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Dropdown picker for correct answer */}
+                <div className="pt-2 border-t border-gray-200 space-y-1">
+                  <label className="text-[11px] font-bold text-gray-700 block">
+                    Výběr správné odpovědi z možností:
+                  </label>
+                  <select
+                    required
+                    value={editingQuestion?.correctAnswer || ''}
+                    onChange={e => setEditingQuestion(prev => ({ ...prev, correctAnswer: e.target.value }))}
+                    className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black cursor-pointer"
+                  >
+                    <option value="">-- Vyberte správnou možnost ze 4 zadaných --</option>
+                    {['A', 'B', 'C', 'D'].map((letter, idx) => {
+                      const val = (editingQuestion.options && editingQuestion.options[idx])?.trim();
+                      if (!val) return null;
+                      return (
+                        <option key={idx} value={val}>
+                          {letter}: {val}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* Correct Answer input only for 'open' (vepisovací) questions */}
+            {editingQuestion?.type === 'open' && (
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1">
+                  Správná odpověď (přesná textová shoda pro vyhodnocení) *
+                </label>
+                <Input
+                  required
+                  value={editingQuestion?.correctAnswer || ''}
+                  onChange={e => setEditingQuestion(prev => ({ ...prev, correctAnswer: e.target.value }))}
+                  placeholder="Např. 36 nebo konkrétní slovo"
+                  className="rounded-xl h-11 font-bold border-emerald-300 focus:border-emerald-600 bg-white"
+                />
+              </div>
+            )}
+
+            {/* Student hint (takes full width, difficulty removed) */}
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Nápověda pro studenta (volitelná)</label>
+              <Input
+                value={editingQuestion?.hint || ''}
+                onChange={e => setEditingQuestion(prev => ({ ...prev, hint: e.target.value }))}
+                placeholder="Drobná rada při zaseknutí..."
+                className="rounded-xl h-11 text-xs"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Vysvětlení a postup řešení</label>
+              <textarea
+                rows={2}
+                value={editingQuestion?.explanation || ''}
+                onChange={e => setEditingQuestion(prev => ({ ...prev, explanation: e.target.value }))}
+                placeholder="Zobrazí se studentovi po odevzdání odpovědi..."
+                className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-black outline-none font-medium leading-snug"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsQuestionModalOpen(false)} className="rounded-xl">
+                Zrušit
+              </Button>
+              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold">
+                Uložit otázku
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 4A: EXCEL IMPORT - PROCVIČOVÁNÍ                          */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isPracticeModalOpen} onOpenChange={(open) => {
+        setIsPracticeModalOpen(open);
+        if (!open) {
+          setPracticeFile(null);
+          setPracticeParsed(null);
+          setPracticeStats(null);
+        }
+      }}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display font-black text-[#1E1B18] flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-[#B80053]/10 text-[#B80053] flex items-center justify-center">
+                <Upload size={20} />
+              </div>
+              <span>Import úloh do procvičování</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-pink-50/60 rounded-2xl border border-pink-100 text-xs">
+              <span className="text-gray-700 font-medium">
+                Importujte otázky (výběr ze 4 možností i volná odpověď) s automatickou deduplikací.
+              </span>
+              <a 
+                href="/ProEdu_Import_Procvicovani.xlsx" 
+                download 
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#B80053] border border-pink-200 hover:bg-pink-100 font-bold rounded-xl shrink-0 transition-colors"
+              >
+                <FileSpreadsheet size={14} />
+                <span>Stáhnout šablonu (.xlsx)</span>
+              </a>
+            </div>
+
+            {/* Dropzone */}
+            {!practiceStats && (
+              <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center hover:border-black transition-colors">
+                <Upload size={32} className="mx-auto text-gray-400 mb-2" />
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={handlePracticeFileChange}
+                  className="hidden"
+                  id="practice-excel-input"
+                  disabled={isImportingPractice}
+                />
+                <label 
+                  htmlFor="practice-excel-input" 
+                  className="inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  Vybrat soubor Excel (.xlsx) pro procvičování
+                </label>
+                {practiceFile && (
+                  <p className="text-xs font-bold text-emerald-700 mt-2 truncate">
+                    Vybráno: {practiceFile.name}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Validation / Parsing preview */}
+            {practiceParsed && !practiceStats && (
+              <div className="space-y-3">
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs space-y-1.5 text-emerald-950 font-medium">
+                  <div className="font-bold text-sm text-emerald-900 flex items-center gap-1.5">
+                    <CheckCircle2 size={16} /> Soubor zkontrolován
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-emerald-800">{practiceParsed.validRows.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Platných otázek</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-gray-800">{practiceParsed.topicsFound.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Témat</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-gray-800">{practiceParsed.subtopicsFound.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Podtémat</div>
+                    </div>
+                  </div>
+                </div>
+
+                {practiceParsed.invalidRows.length > 0 && (
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-xs space-y-2 text-amber-950">
+                    <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                      <AlertCircle size={15} /> Neplatné řádky ({practiceParsed.invalidRows.length} z {practiceParsed.totalRows}):
+                    </div>
+                    <p className="text-[11px] text-amber-800">
+                      Tyto řádky nebudou importovány. Můžete soubor opravit a nahrát znovu, nebo pokračovat s platnými řádky.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 max-h-32 overflow-y-auto text-[11px]">
+                      {practiceParsed.invalidRows.map((inv, idx) => (
+                        <li key={idx}>
+                          <strong>Řádek {inv.rowNumber}:</strong> {inv.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Importing indicator */}
+            {isImportingPractice && (
+              <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 text-center space-y-2">
+                <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-xs font-bold text-blue-900">{practiceProgressMsg || 'Probíhá import do databáze...'}</p>
+                <p className="text-[11px] text-blue-700">Kontroluji a vynechávám případné duplikáty...</p>
+              </div>
+            )}
+
+            {/* Final Statistics Report */}
+            {practiceStats && (
+              <div className="p-5 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-900 font-black text-base">
+                  <CheckCircle2 size={20} className="text-emerald-600" />
+                  <span>Import procvičování byl úspěšně dokončen!</span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-emerald-700">{practiceStats.importedQuestions}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Naimportováno úloh</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-500">{practiceStats.skippedDuplicates}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Přeskočeno duplikátů</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-800">{practiceStats.topicsCreated}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Nových témat</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-800">{practiceStats.subtopicsCreated}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Nových podtémat</div>
+                  </div>
+                </div>
+
+                {practiceStats.errors.length > 0 && (
+                  <div className="p-3 bg-red-50 rounded-xl border border-red-100 text-xs text-red-900 space-y-1">
+                    <div className="font-bold">Varování během ukládání:</div>
+                    <ul className="list-disc pl-4 text-[11px] space-y-0.5">
+                      {practiceStats.errors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter className="pt-2">
+              {practiceStats ? (
+                <Button 
+                  onClick={() => {
+                    setIsPracticeModalOpen(false);
+                    setPracticeFile(null);
+                    setPracticeParsed(null);
+                    setPracticeStats(null);
+                  }}
+                  className="rounded-xl bg-[#1E1B18] text-white font-bold w-full sm:w-auto"
+                >
+                  Hotovo
+                </Button>
+              ) : (
+                <>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setIsPracticeModalOpen(false)} 
+                    disabled={isImportingPractice}
+                    className="rounded-xl"
+                  >
+                    Zrušit
+                  </Button>
+                  <Button 
+                    onClick={handleExecutePracticeImport}
+                    disabled={!practiceParsed || practiceParsed.validRows.length === 0 || isImportingPractice}
+                    className="rounded-xl bg-[#B80053] hover:bg-[#9a0045] text-white font-bold"
+                  >
+                    {isImportingPractice ? 'Importuji...' : `Potvrdit a importovat (${practiceParsed?.validRows.length || 0} úloh)`}
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 4B: EXCEL IMPORT - STUDIUM (KROKY)                       */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isStudyModalOpen} onOpenChange={(open) => {
+        setIsStudyModalOpen(open);
+        if (!open) {
+          setStudyFile(null);
+          setStudyParsed(null);
+          setStudyStats(null);
+        }
+      }}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="text-2xl font-display font-black text-[#1E1B18] flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-2xl bg-[#0F5238]/10 text-[#0F5238] flex items-center justify-center">
+                <BookOpen size={20} />
+              </div>
+              <span>Import kroků výkladu (Studovat)</span>
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-5 py-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100 text-xs">
+              <span className="text-gray-700 font-medium">
+                Importujte krokový výklad teorie s ověřovacími otázkami a tipy lektora.
+              </span>
+              <a 
+                href="/ProEdu_Import_Studovat.xlsx" 
+                download 
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#0F5238] border border-emerald-200 hover:bg-emerald-100 font-bold rounded-xl shrink-0 transition-colors"
+              >
+                <FileSpreadsheet size={14} />
+                <span>Stáhnout šablonu (.xlsx)</span>
+              </a>
+            </div>
+
+            {/* Dropzone */}
+            {!studyStats && (
+              <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center hover:border-black transition-colors">
+                <Upload size={32} className="mx-auto text-gray-400 mb-2" />
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={handleStudyFileChange}
+                  className="hidden"
+                  id="study-excel-input"
+                  disabled={isImportingStudy}
+                />
+                <label 
+                  htmlFor="study-excel-input" 
+                  className="inline-block px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl font-bold text-xs cursor-pointer transition-colors"
+                >
+                  Vybrat soubor Excel (.xlsx) pro studium
+                </label>
+                {studyFile && (
+                  <p className="text-xs font-bold text-emerald-700 mt-2 truncate">
+                    Vybráno: {studyFile.name}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Validation / Parsing preview */}
+            {studyParsed && !studyStats && (
+              <div className="space-y-3">
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs space-y-1.5 text-emerald-950 font-medium">
+                  <div className="font-bold text-sm text-emerald-900 flex items-center gap-1.5">
+                    <CheckCircle2 size={16} /> Soubor zkontrolován
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-emerald-800">{studyParsed.validRows.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Platných kroků</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-gray-800">{studyParsed.topicsFound.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Témat</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-gray-800">{studyParsed.subtopicsFound.length}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Podtémat</div>
+                    </div>
+                  </div>
+                </div>
+
+                {studyParsed.invalidRows.length > 0 && (
+                  <div className="p-4 bg-amber-50 rounded-2xl border border-amber-200 text-xs space-y-2 text-amber-950">
+                    <div className="font-bold text-amber-900 flex items-center gap-1.5">
+                      <AlertCircle size={15} /> Neplatné řádky ({studyParsed.invalidRows.length} z {studyParsed.totalRows}):
+                    </div>
+                    <p className="text-[11px] text-amber-800">
+                      Tyto řádky nebudou importovány. Můžete soubor opravit a nahrát znovu, nebo pokračovat s platnými řádky.
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 max-h-32 overflow-y-auto text-[11px]">
+                      {studyParsed.invalidRows.map((inv, idx) => (
+                        <li key={idx}>
+                          <strong>Řádek {inv.rowNumber}:</strong> {inv.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Importing indicator */}
+            {isImportingStudy && (
+              <div className="p-5 bg-blue-50 rounded-2xl border border-blue-100 text-center space-y-2">
+                <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                <p className="text-xs font-bold text-blue-900">{studyProgressMsg || 'Probíhá import do databáze...'}</p>
+                <p className="text-[11px] text-blue-700">Kontroluji a vynechávám případné duplikáty kroků...</p>
+              </div>
+            )}
+
+            {/* Final Statistics Report */}
+            {studyStats && (
+              <div className="p-5 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-3">
+                <div className="flex items-center gap-2 text-emerald-900 font-black text-base">
+                  <CheckCircle2 size={20} className="text-emerald-600" />
+                  <span>Import studia byl úspěšně dokončen!</span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center text-xs">
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-emerald-700">{studyStats.importedSteps}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Naimportováno kroků</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-500">{studyStats.skippedDuplicates}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Přeskočeno duplikátů</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-800">{studyStats.subtopicsUpdated}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Doplněno podtémat</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-gray-800">{studyStats.topicsCreated + studyStats.subtopicsCreated}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Nových témat / podtémat</div>
+                  </div>
+                </div>
+
+                {studyStats.errors.length > 0 && (
+                  <div className="p-3 bg-red-50 rounded-xl border border-red-100 text-xs text-red-900 space-y-1">
+                    <div className="font-bold">Varování během ukládání:</div>
+                    <ul className="list-disc pl-4 text-[11px] space-y-0.5">
+                      {studyStats.errors.map((err, i) => (
+                        <li key={i}>{err}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <DialogFooter className="pt-2">
+              {studyStats ? (
+                <Button 
+                  onClick={() => {
+                    setIsStudyModalOpen(false);
+                    setStudyFile(null);
+                    setStudyParsed(null);
+                    setStudyStats(null);
+                  }}
+                  className="rounded-xl bg-[#1E1B18] text-white font-bold w-full sm:w-auto"
+                >
+                  Hotovo
+                </Button>
+              ) : (
+                <>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => setIsStudyModalOpen(false)} 
+                    disabled={isImportingStudy}
+                    className="rounded-xl"
+                  >
+                    Zrušit
+                  </Button>
+                  <Button 
+                    onClick={handleExecuteStudyImport}
+                    disabled={!studyParsed || studyParsed.validRows.length === 0 || isImportingStudy}
+                    className="rounded-xl bg-[#0F5238] hover:bg-[#0b3c29] text-white font-bold"
+                  >
+                    {isImportingStudy ? 'Importuji...' : `Potvrdit a importovat (${studyParsed?.validRows.length || 0} kroků)`}
+                  </Button>
+                </>
+              )}
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL 5: SELECT EXISTING MATERIAL */}
+      <MaterialSelectorModal
+        isOpen={isMaterialSelectorOpen}
+        onClose={() => setIsMaterialSelectorOpen(false)}
+        onSelect={handleSelectMaterial}
+        activeSubject={activeSubject}
+      />
+    </div>
+  );
+}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from './ui/card';
 import { Clock, Calendar as CalendarIcon } from 'lucide-react';
-import { TodoItem } from '../types';
+type TodoItem = any;
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { cn } from '../lib/utils';
 

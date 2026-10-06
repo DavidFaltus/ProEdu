@@ -1,107 +1,119 @@
-import { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
-import { LearningSheet, MathTopic } from '../types';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { BookOpen, Search, FileText, Filter, GraduationCap, ArrowRight, Download, Loader2 } from 'lucide-react';
+import { 
+  Search, FileText, Filter, GraduationCap, Lock, Sparkles, 
+  BookOpen, Eye, ArrowRight, X, Download 
+} from 'lucide-react';
 import { Input } from '../components/ui/input';
-import { motion, AnimatePresence } from 'motion/react';
-import { PDFViewer } from '../components/PDFViewer';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { motion } from 'motion/react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Link } from 'react-router-dom';
-
-const MATH_TOPICS: (MathTopic | 'Vše')[] = [
-  'Vše',
-  'Aritmetika', 
-  'Geometrie', 
-  'Zlomky a procenta', 
-  'Rovnice', 
-  'Slovní úlohy', 
-  'Jednotky a měření'
-];
+import { cn } from '../lib/utils';
+import { useAuth } from '../context/AuthContext';
+import { getAllMaterials, ExistingMaterialItem } from '../services/practiceService';
 
 export default function LearningSheets() {
-  const [sheets, setSheets] = useState<LearningSheet[]>([]);
+  const { user, openAuthModal } = useAuth();
+  const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedTopic, setSelectedTopic] = useState<MathTopic | 'Vše'>('Vše');
-  const [selectedSubject, setSelectedSubject] = useState<string | 'Vše'>('Vše');
-  const [selectedSheet, setSelectedSheet] = useState<LearningSheet | null>(null);
+  const [selectedTopic, setSelectedTopic] = useState<string>('Vše');
+  const [selectedSubject, setSelectedSubject] = useState<string>('Vše');
+  const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'learningSheets'), (snap) => {
-      setSheets(snap.docs.map(d => ({ id: d.id, ...d.data() } as LearningSheet)));
-    });
-    return unsub;
+    async function load() {
+      setLoading(true);
+      try {
+        const items = await getAllMaterials();
+        setMaterials(items);
+      } catch (err) {
+        console.error('Failed to load learning sheets:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
-  const allSubjects = useMemo(() => Array.from(new Set(sheets.map(s => s.subject).filter(Boolean))), [sheets]);
-  const allTopics = useMemo(() => {
-    const rawTopics = Array.from(new Set(sheets.map(s => s.topic).filter(Boolean)));
-    return Array.from(new Set([...MATH_TOPICS.filter(t => t !== 'Vše'), ...rawTopics])).filter(Boolean);
-  }, [sheets]);
+  const topicsList = Array.from(new Set(materials.map(m => m.topic).filter(Boolean)));
 
-  const filteredSheets = sheets.filter(s => {
-    const matchesSearch = s.title.toLowerCase().includes(search.toLowerCase());
-    const matchesTopic = selectedTopic === 'Vše' || s.topic === selectedTopic;
-    const matchesSubject = selectedSubject === 'Vše' || s.subject === selectedSubject;
-    return matchesSearch && matchesTopic && matchesSubject;
+  const filteredMaterials = materials.filter(m => {
+    const matchesSubject = selectedSubject === 'Vše' || m.subject === selectedSubject;
+    const matchesTopic = selectedTopic === 'Vše' || m.topic === selectedTopic;
+    const q = search.toLowerCase().trim();
+    const matchesSearch = !q || 
+      m.title.toLowerCase().includes(q) || 
+      (m.topic && m.topic.toLowerCase().includes(q)) ||
+      (m.studyTheory && m.studyTheory.toLowerCase().includes(q));
+    return matchesSubject && matchesTopic && matchesSearch;
   });
 
   return (
-    <div className="page-container">
-      <section className="text-center space-y-6 max-w-3xl mx-auto">
-        <motion.h1 initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-5xl md:text-6xl font-display font-black text-[#1E1B18]">
+    <div className="page-container space-y-8 pb-16">
+      <section className="text-center space-y-4 max-w-3xl mx-auto">
+        <motion.h1 
+          initial={{ opacity: 0, y: -20 }} 
+          animate={{ opacity: 1, y: 0 }} 
+          className="text-4xl md:text-5xl lg:text-6xl font-display font-black text-[#1E1B18]"
+        >
           Výukové materiály
         </motion.h1>
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }} className="text-xl text-gray-500 leading-relaxed">
-          Přehled všech dostupných studijních listů a výukových materiálů.
+        <motion.p 
+          initial={{ opacity: 0 }} 
+          animate={{ opacity: 1 }} 
+          transition={{ delay: 0.1 }} 
+          className="text-base md:text-lg text-gray-500 leading-relaxed"
+        >
+          Přehledné grafické listy, shrnutí látky z PDF a taháky pro přípravu na přijímačky.
         </motion.p>
 
+        {/* Search & Filter Bar */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="flex flex-col lg:flex-row gap-4 justify-center mt-8 max-w-6xl mx-auto flex-wrap items-center relative z-10"
+          transition={{ delay: 0.2 }}
+          className="flex flex-col sm:flex-row gap-3 justify-center mt-6 max-w-4xl mx-auto flex-wrap items-center relative z-10"
         >
-          <div className="w-full lg:w-auto flex-1 flex gap-2 relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={20} />
+          <div className="w-full sm:w-auto flex-1 flex gap-2 relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={18} />
             <Input 
               value={search}
               onChange={e => setSearch(e.target.value)}
               placeholder="Hledat v materiálech..."
-              className="pl-12 h-14 rounded-2xl border-none bg-white shadow-xl focus:outline-none focus:ring-2 focus:ring-[#B80053]/20 transition-all font-bold placeholder:text-gray-400"
+              className="pl-11 h-12 rounded-2xl border-none bg-white shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-bold placeholder:text-gray-400 text-sm"
             />
           </div>
-          <div className="w-full lg:w-48 text-left">
+
+          <div className="w-full sm:w-44 text-left">
             <Select value={selectedSubject} onValueChange={(val: any) => setSelectedSubject(val)}>
-              <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
+              <SelectTrigger className="h-12 rounded-2xl border-none bg-white shadow-md font-bold text-gray-700 px-4 text-xs">
                 <div className="flex items-center gap-2">
-                  <GraduationCap size={18} className="text-[#B80053]" />
-                  <SelectValue placeholder="Filtrovat předmět" />
+                  <GraduationCap size={16} className="text-amber-600" />
+                  <SelectValue placeholder="Předmět" />
                 </div>
               </SelectTrigger>
               <SelectContent className="rounded-2xl">
                 <SelectItem value="Vše" className="font-bold">Všechny předměty</SelectItem>
-                {allSubjects.map(subject => (
-                  <SelectItem key={subject} value={subject} className="font-bold">{subject}</SelectItem>
-                ))}
+                <SelectItem value="Matematika" className="font-bold">Matematika</SelectItem>
+                <SelectItem value="Čeština" className="font-bold">Čeština</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <div className="w-full lg:w-48 text-left">
+
+          <div className="w-full sm:w-48 text-left">
             <Select value={selectedTopic} onValueChange={(val: any) => setSelectedTopic(val)}>
-              <SelectTrigger className="h-14 rounded-2xl border-none bg-white shadow-xl font-bold text-gray-700 px-6">
+              <SelectTrigger className="h-12 rounded-2xl border-none bg-white shadow-md font-bold text-gray-700 px-4 text-xs">
                 <div className="flex items-center gap-2">
-                  <Filter size={18} className="text-[#B80053]" />
-                  <SelectValue placeholder="Filtrovat téma" />
+                  <Filter size={16} className="text-amber-600" />
+                  <SelectValue placeholder="Téma" />
                 </div>
               </SelectTrigger>
               <SelectContent className="rounded-2xl">
                 <SelectItem value="Vše" className="font-bold">Všechna témata</SelectItem>
-                {allTopics.map(topic => (
-                  <SelectItem key={topic} value={topic} className="font-bold">{topic}</SelectItem>
+                {topicsList.map(t => (
+                  <SelectItem key={t} value={t} className="font-bold">{t}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -109,137 +121,177 @@ export default function LearningSheets() {
         </motion.div>
       </section>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8 mt-12">
-        <AnimatePresence mode="popLayout">
-          {filteredSheets.map((sheet, i) => (
-            <motion.div
-              key={sheet.id}
-              layout
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.9 }}
-              transition={{ delay: i * 0.05 }}
-            >
-              <Card 
-                onClick={() => setSelectedSheet(sheet)}
-                className="rounded-[2.5rem] border-none shadow-xl hover:shadow-2xl transition-all cursor-pointer group h-full flex flex-col bg-white overflow-hidden"
-              >
-                <div className="h-3 bg-[#B80053]/10 group-hover:bg-[#B80053]/20 transition-colors" />
-                <CardHeader className="p-8 pb-4">
-                  <div className="flex justify-between items-start mb-4">
-                    <div className="w-14 h-14 bg-pink-50 rounded-2xl flex items-center justify-center text-[#B80053] group-hover:scale-110 transition-transform shadow-sm">
-                      <FileText size={28} />
+      {/* Main Content Area */}
+      <div className="relative max-w-6xl mx-auto">
+        <div className={cn("transition-all", !user && "filter blur-md select-none pointer-events-none opacity-50")}>
+          {loading ? (
+            <div className="text-center py-24 bg-white/60 rounded-[2.5rem]">
+              <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              <p className="text-gray-500 font-bold text-sm">Načítání výukových listů...</p>
+            </div>
+          ) : filteredMaterials.length === 0 ? (
+            <div className="text-center py-24 bg-white/60 rounded-[2.5rem] border-2 border-dashed border-gray-200">
+              <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-600">
+                <FileText size={32} />
+              </div>
+              <h3 className="text-xl font-display font-bold text-gray-900 mb-1">Žádné materiály nenalezeny</h3>
+              <p className="text-gray-400 text-sm font-medium">
+                {search ? 'Zkuste upravit vyhledávací dotaz.' : 'Pro zvolený filtr zatím nejsou k dispozici studijní materiály.'}
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {filteredMaterials.map(mat => {
+                const hasSvg = Boolean(mat.svgUrl || mat.svgContent);
+
+                return (
+                  <motion.div
+                    key={mat.id}
+                    whileHover={{ y: -3 }}
+                    className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all flex flex-col justify-between gap-5 group"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
+                          mat.subject === 'Matematika' 
+                            ? 'bg-teal-50 text-teal-800 border border-teal-100' 
+                            : 'bg-rose-50 text-rose-800 border border-rose-100'
+                        }`}>
+                          {mat.subject}
+                        </span>
+                      </div>
+
+                      <div>
+                        <h4 className="font-display font-black text-lg text-gray-900 group-hover:text-amber-900 transition-colors line-clamp-2">
+                          {mat.title}
+                        </h4>
+                        {mat.topic && (
+                          <p className="text-xs text-gray-400 font-bold mt-1">
+                            Téma: {mat.topic}
+                          </p>
+                        )}
+                      </div>
+
+                      {mat.studyTheory && (
+                        <p className="text-xs text-gray-600 font-medium line-clamp-3 bg-gray-50/80 p-3 rounded-2xl leading-relaxed">
+                          {mat.studyTheory}
+                        </p>
+                      )}
                     </div>
-                    {sheet.topic && (
-                      <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-[10px] font-black uppercase tracking-widest">
-                        {sheet.topic}
-                      </span>
-                    )}
-                  </div>
-                  <CardTitle className="text-2xl font-display text-[#1E1B18] group-hover:text-[#B80053] transition-colors leading-tight">
-                    {sheet.title}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-8 pt-0 flex-1">
-                  <p className="text-gray-500 text-lg line-clamp-4 leading-relaxed">
-                    Výukový materiál {sheet.subject} - {sheet.level}.
-                  </p>
-                </CardContent>
-                <div className="px-8 py-6 bg-[#FAF7F0] border-t border-gray-100 text-sm font-black text-[#B80053] uppercase tracking-widest flex items-center justify-between">
-                  Zobrazit detail
-                  <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
-                </div>
-              </Card>
-            </motion.div>
-          ))}
-        </AnimatePresence>
-      </div>
 
-      {filteredSheets.length === 0 && (
-        <div className="text-center py-32 bg-white/50 rounded-[3rem] border-2 border-dashed border-gray-100">
-          <div className="w-20 h-20 bg-pink-50 rounded-full flex items-center justify-center mx-auto mb-6 text-[#B80053]">
-            <Search size={40} />
-          </div>
-          <h3 className="text-2xl font-display font-bold text-gray-900 mb-2">Nic jsme nenašli</h3>
-          <p className="text-gray-400 text-lg font-bold">Zkus upravit vyhledávání nebo filtr.</p>
-        </div>
-      )}
+                    <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
+                      {hasSvg && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setPreviewMaterial(mat)}
+                          className="flex-1 rounded-xl h-10 text-xs font-bold border-gray-200 hover:border-black flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+                        >
+                          <Eye size={14} />
+                          <span>Náhled</span>
+                        </Button>
+                      )}
 
-      <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4]">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
-        <div className="relative z-10 space-y-4">
-          <h2 className="text-4xl font-display font-bold">Nevíš si rady s výběrem?</h2>
-          <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, které materiály jsou pro tebe ty pravé.</p>
-          <div className="pt-4">
-            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
-              Kontaktuj nás
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      <Dialog open={!!selectedSheet} onOpenChange={() => setSelectedSheet(null)}>
-        <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95dvh] h-[95dvh] overflow-hidden rounded-2xl p-0 border-none flex flex-col">
-          {selectedSheet && (
-            <div className="flex flex-col h-full w-full bg-white">
-              {/* Header Bar */}
-              <div className="shrink-0 flex items-center justify-between p-4 bg-white border-b border-gray-100">
-                <div className="flex items-center gap-4">
-                  <span className="px-3 py-1 bg-gray-100 text-gray-600 rounded-full text-xs font-bold uppercase tracking-widest">
-                    {selectedSheet.topic || 'Matematika'}
-                  </span>
-                  <DialogHeader>
-                    <DialogTitle className="text-xl font-display font-bold m-0">
-                      {selectedSheet.title}
-                    </DialogTitle>
-                  </DialogHeader>
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <Button 
-                    variant="outline" 
-                    className="h-10 rounded-xl font-bold bg-blue-50 text-brand-blue border-blue-100 hover:bg-blue-100" 
-                    onClick={() => window.open(selectedSheet.fileUrl, '_blank')}
-                  >
-                    <ArrowRight size={18} className="mr-2 rotate-[-45deg]" />
-                    Otevřít v panelu
-                  </Button>
-                  <Button variant="outline" className="h-10 rounded-xl font-bold" onClick={() => {
-                      const a = document.createElement('a');
-                      a.href = selectedSheet.fileUrl || '';
-                      a.download = `${selectedSheet.title || 'material'}.pdf`;
-                      a.click();
-                    }}>
-                      <Download size={18} className="mr-2" />
-                      Stáhnout (PDF)
-                  </Button>
-                  <Button 
-                    variant="ghost"
-                    onClick={() => setSelectedSheet(null)}
-                    className="h-10 w-10 p-0 rounded-full bg-gray-100 text-gray-500 hover:bg-red-50 hover:text-red-500"
-                  >
-                    <ArrowRight size={20} />
-                  </Button>
-                </div>
-              </div>
-              
-              {/* PDF Area */}
-              <div className="flex-1 min-h-0 bg-gray-100/50 p-2 md:p-4 relative">
-                {selectedSheet.fileUrl ? (
-                  <div className="w-full h-full bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden relative">
-                    <PDFViewer url={selectedSheet.fileUrl} title={selectedSheet.title} />
-                  </div>
-                ) : (
-                  <div className="w-full h-full flex flex-col items-center justify-center">
-                    <FileText size={48} className="text-gray-300 mb-4" />
-                    <p className="text-gray-500 font-bold mb-6">K tomuto materiálu nebyl přiložen žádný soubor.</p>
-                  </div>
-                )}
-              </div>
+                      <Link to={`/study/${mat.id}`} className="flex-1">
+                        <Button
+                          size="sm"
+                          className="w-full rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
+                        >
+                          <BookOpen size={14} />
+                          <span>Studovat</span>
+                        </Button>
+                      </Link>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
           )}
-        </DialogContent>
-      </Dialog>
+        </div>
+
+        {/* Locked state overlay for non-authenticated visitors */}
+        {!user && (
+          <div className="absolute inset-0 flex items-center justify-center p-4 z-20 pointer-events-auto">
+            <div className="bg-white/95 backdrop-blur-xl border border-gray-100 shadow-3xl rounded-[2.5rem] p-8 md:p-12 max-w-lg w-full text-center space-y-6">
+              <div className="w-20 h-20 bg-amber-50 border border-amber-200/60 rounded-3xl mx-auto flex items-center justify-center text-amber-600 shadow-inner">
+                <Lock size={36} />
+              </div>
+              <div className="space-y-2">
+                <span className="px-3.5 py-1 bg-amber-100/80 text-amber-900 text-[11px] font-black uppercase tracking-widest rounded-full">
+                  Výukové materiály
+                </span>
+                <h3 className="text-3xl md:text-4xl font-display font-black text-[#1E1B18] tracking-tight">
+                  Odemkni si materiály
+                </h3>
+                <p className="text-gray-500 font-medium text-sm md:text-base leading-relaxed">
+                  Získej přístup k přehledům látky, tahákům z PDF a výukovým listům pro přípravu na zkoušky.
+                </p>
+              </div>
+              <div className="pt-2">
+                <Button
+                  onClick={openAuthModal}
+                  className="w-full h-14 rounded-2xl bg-[#1E1B18] text-[#FAF7F0] hover:bg-[#332f2b] text-base font-black shadow-lg transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Sparkles size={18} className="text-yellow-400" />
+                  Přihlásit se pro přístup
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* SVG Preview Modal */}
+      {previewMaterial && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <FileText size={18} className="text-emerald-600" />
+                <h4 className="font-bold text-gray-900 text-base truncate">
+                  {previewMaterial.title}
+                </h4>
+              </div>
+              <button
+                onClick={() => setPreviewMaterial(null)}
+                className="p-1.5 rounded-xl text-gray-400 hover:text-black hover:bg-gray-100 transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto p-6 bg-slate-50 flex items-center justify-center min-h-[300px]">
+              {previewMaterial.svgContent ? (
+                <div 
+                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
+                  dangerouslySetInnerHTML={{ __html: previewMaterial.svgContent }}
+                />
+              ) : previewMaterial.svgUrl ? (
+                <img 
+                  src={previewMaterial.svgUrl} 
+                  alt="Náhled" 
+                  className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
+                />
+              ) : null}
+            </div>
+
+            <div className="px-6 py-3 bg-white border-t border-gray-100 flex items-center justify-between">
+              <Link to={`/study/${previewMaterial.id}`}>
+                <Button className="rounded-xl font-bold text-xs bg-[#1E1B18] text-white">
+                  Přejít na kompletní výklad
+                </Button>
+              </Link>
+              <Button
+                variant="outline"
+                onClick={() => setPreviewMaterial(null)}
+                className="rounded-xl font-bold text-xs"
+              >
+                Zavřít
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

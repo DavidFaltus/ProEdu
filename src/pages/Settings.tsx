@@ -8,6 +8,8 @@ import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { getStudentInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
+import StudentInquiriesSection from '../components/StudentInquiriesSection';
 
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
@@ -22,12 +24,54 @@ export default function Settings() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync internal state with profile when profile changes
   React.useEffect(() => {
     if (profile?.name) setName(profile.name);
   }, [profile?.name]);
+
+  React.useEffect(() => {
+    async function loadInquiries() {
+      if (!profile?.uid) return;
+      try {
+        const data = await getStudentInquiries(profile.uid);
+        setInquiries(data);
+      } catch (err) {
+        console.error('Failed to load inquiries on profile:', err);
+      }
+    }
+    loadInquiries();
+  }, [profile?.uid]);
+
+  const handleMarkAsRead = async (inquiryId: string) => {
+    try {
+      await markInquiryAsRead(inquiryId);
+      setInquiries(prev => prev.map(inq => inq.id === inquiryId ? { ...inq, isReadByStudent: true } : inq));
+      toast.success('Odpověď označena jako přečtená');
+    } catch (err) {
+      console.error('Failed to mark inquiry as read:', err);
+      toast.error('Nepodařilo se označit odpověď jako přečtenou');
+    }
+  };
+
+  const formatDate = (val: any) => {
+    if (!val) return '';
+    try {
+      const date = val.toDate ? val.toDate() : new Date(val.seconds ? val.seconds * 1000 : val);
+      return date.toLocaleDateString('cs-CZ', {
+        day: 'numeric',
+        month: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return '';
+    }
+  };
 
   const handleNameUpdate = async () => {
     if (!name.trim()) return;
@@ -375,6 +419,17 @@ export default function Settings() {
           </div>
         </div>
       </div>
+
+      {/* Student Inquiries Section on Profile */}
+      {inquiries.length > 0 && (
+        <div className="max-w-2xl mx-auto mt-8">
+          <StudentInquiriesSection
+            inquiries={inquiries}
+            onMarkAsRead={handleMarkAsRead}
+            formatDate={formatDate}
+          />
+        </div>
+      )}
 
       <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] max-w-2xl mx-auto w-full">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />

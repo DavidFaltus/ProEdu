@@ -22,6 +22,9 @@ interface AuthContextType {
   isAuthReady: boolean;
   isProfileSettingsOpen: boolean;
   setIsProfileSettingsOpen: (open: boolean) => void;
+  isAuthModalOpen: boolean;
+  setIsAuthModalOpen: (open: boolean) => void;
+  openAuthModal: () => void;
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
@@ -37,6 +40,9 @@ const AuthContext = createContext<AuthContextType>({
   isAuthReady: false,
   isProfileSettingsOpen: false,
   setIsProfileSettingsOpen: () => {},
+  isAuthModalOpen: false,
+  setIsAuthModalOpen: () => {},
+  openAuthModal: () => {},
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
@@ -51,6 +57,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+
+  const openAuthModal = () => setIsAuthModalOpen(true);
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -156,13 +165,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isAuthReady, 
     isProfileSettingsOpen,
     setIsProfileSettingsOpen,
+    isAuthModalOpen,
+    setIsAuthModalOpen,
+    openAuthModal,
     signInWithGoogle, 
     signInWithEmail, 
     signUpWithEmail, 
     signOut,
     updateProfileData,
     updateUserPassword
-  }), [user, profile, loading, isAuthReady, isProfileSettingsOpen]);
+  }), [user, profile, loading, isAuthReady, isProfileSettingsOpen, isAuthModalOpen]);
 
   return (
     <AuthContext.Provider value={contextValue}>
