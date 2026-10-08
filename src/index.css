@@ -268,3 +268,35 @@
     @apply font-sans;
     }
 }
+
+/* KaTeX math adjustments & mobile responsiveness */
+.katex {
+  font-size: 1.05em;
+  text-rendering: auto;
+  line-height: normal !important;
+}
+
+/* Ensure fraction lines have adequate clearance and never collide with exponents */
+.katex .mfrac {
+  padding-top: 0.12em;
+  padding-bottom: 0.12em;
+}
+
+.katex .mfrac .frac-line {
+  border-bottom-style: solid !important;
+  min-height: 1.2px;
+}
+
+.katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+  margin: 0.5rem 0 !important;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.katex .katex-html {
+  color: inherit;
+}

@@ -20,13 +20,17 @@ import {
 import { submitInquiry } from '../services/inquiryService';
 import { sanitizeSvg } from '../utils/pdfToSvg';
 import { PracticeSubtopic, PracticeQuestion } from '../types';
+import { MathRenderer } from '../components/common/MathRenderer';
+import { evaluateStudentAnswer } from '../utils/mathEvaluator';
 
 interface QuestionAnswerState {
   userAnswer: string;
   isCorrect: boolean;
   usedHint: boolean;
   isSubmitted: boolean;
+  tutorFeedback?: string;
 }
+
 
 export default function PracticeSession() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
@@ -99,16 +103,17 @@ export default function PracticeSession() {
   const handleSelectChoice = (option: string) => {
     if (!currentQuestion || isAnswerSubmitted) return;
 
-    const isCorrect = normalize(option) === normalize(currentQuestion.correctAnswer);
+    const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
 
     setAnswersMap(prev => ({
       ...prev,
       [currentIndex]: {
         userAnswer: option,
-        isCorrect,
+        isCorrect: evalResult.isCorrect,
         usedHint,
-        isSubmitted: true
+        isSubmitted: true,
+        tutorFeedback: evalResult.tutorFeedback
       }
     }));
   };
@@ -120,16 +125,17 @@ export default function PracticeSession() {
     const answer = (openInputs[currentIndex] || '').trim();
     if (!answer) return;
 
-    const isCorrect = normalize(answer) === normalize(currentQuestion.correctAnswer);
+    const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
 
     setAnswersMap(prev => ({
       ...prev,
       [currentIndex]: {
         userAnswer: answer,
-        isCorrect,
+        isCorrect: evalResult.isCorrect,
         usedHint,
-        isSubmitted: true
+        isSubmitted: true,
+        tutorFeedback: evalResult.tutorFeedback
       }
     }));
   };
@@ -377,7 +383,9 @@ export default function PracticeSession() {
                       <span className="w-8 h-8 rounded-xl bg-gray-100 font-bold text-xs flex items-center justify-center text-gray-700">
                         {i + 1}
                       </span>
-                      <h4 className="font-bold text-base text-gray-900">{q.question}</h4>
+                      <h4 className="font-bold text-base text-gray-900">
+                        <MathRenderer content={q.question} inline />
+                      </h4>
                     </div>
                     {!hasAnswered ? (
                       <span className="text-xs font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full shrink-0">
@@ -394,18 +402,25 @@ export default function PracticeSession() {
                     )}
                   </div>
 
-                  <div className="text-sm space-y-1 pl-11">
+                  <div className="text-sm space-y-1.5 pl-11">
                     {hasAnswered && !isCorrect && (
-                      <p className="text-gray-500">
-                        Tvoje odpověď: <span className="font-bold text-rose-700 line-through">{res.userAnswer || '(nevyplněno)'}</span>
-                      </p>
+                      <div className="text-gray-500 flex items-center gap-1 flex-wrap">
+                        <span>Tvoje odpověď:</span>
+                        <span className="font-bold text-rose-700 line-through">
+                          <MathRenderer content={res.userAnswer || '(nevyplněno)'} inline />
+                        </span>
+                      </div>
                     )}
-                    <p className="text-gray-700">
-                      Správná odpověď: <span className="font-black text-emerald-700">{q.correctAnswer}</span>
-                    </p>
+                    <div className="text-gray-700 flex items-center gap-1 flex-wrap">
+                      <span>Správná odpověď:</span>
+                      <span className="font-black text-emerald-700">
+                        <MathRenderer content={q.correctAnswer} inline />
+                      </span>
+                    </div>
                     {q.explanation && (
                       <div className="mt-2 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 font-medium leading-relaxed">
-                        💡 <strong>Vysvětlení:</strong> {q.explanation}
+                        <span className="font-bold text-gray-800 block mb-0.5">💡 Vysvětlení:</span>
+                        <MathRenderer content={q.explanation} />
                       </div>
                     )}
                   </div>
@@ -599,7 +614,9 @@ export default function PracticeSession() {
             >
               <div className="p-4 sm:p-5 bg-amber-50 border border-amber-200 rounded-2xl text-xs sm:text-sm text-amber-900 font-medium flex items-start gap-3 shadow-xs">
                 <span className="text-xl">💡</span>
-                <p className="leading-relaxed">{currentQuestion.hint}</p>
+                <div className="leading-relaxed flex-1">
+                  <MathRenderer content={currentQuestion.hint} />
+                </div>
               </div>
             </motion.div>
           )}
@@ -608,7 +625,7 @@ export default function PracticeSession() {
         {/* Question Text */}
         <div className="py-2 relative z-10">
           <h2 className="text-2xl sm:text-3xl font-display font-black text-gray-900 leading-snug">
-            {currentQuestion.question}
+            <MathRenderer content={currentQuestion.question} />
           </h2>
         </div>
 
@@ -667,7 +684,9 @@ export default function PracticeSession() {
                   }`}>
                     {letter}
                   </span>
-                  <span className="flex-1 min-w-0 font-bold">{option}</span>
+                  <span className="flex-1 min-w-0 font-bold">
+                    <MathRenderer content={option} inline />
+                  </span>
                 </button>
               );
             })}
@@ -677,6 +696,27 @@ export default function PracticeSession() {
         {/* Answer Options: Open-ended text field */}
         {currentQuestion.type === 'open' && (
           <div className="pt-2 space-y-3 relative z-10">
+            {/* Quick Math Symbols Bar for mobile/desktop typing */}
+            {!isAnswerSubmitted && (
+              <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                <span className="text-[11px] font-bold text-gray-400 mr-1 select-none">Rychlé symboly:</span>
+                {['/', '√', '²', '³', 'π', '±', '·', ',', '-'].map((sym) => (
+                  <button
+                    key={sym}
+                    type="button"
+                    onClick={() => {
+                      const prevVal = openInputs[currentIndex] ?? '';
+                      setOpenInputs(p => ({ ...p, [currentIndex]: prevVal + sym }));
+                    }}
+                    className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-sm border border-gray-200 transition-colors cursor-pointer"
+                    title={`Vložit symbol ${sym}`}
+                  >
+                    {sym}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row gap-3">
               <Input
                 disabled={isAnswerSubmitted}
@@ -687,7 +727,7 @@ export default function PracticeSession() {
                     handleCheckOpenAnswer();
                   }
                 }}
-                placeholder="Napiš svou odpověď sem..."
+                placeholder="Napiš svou odpověď sem (např. 1/2 nebo 3)..."
                 className="h-16 rounded-2xl border-gray-300 bg-gray-50 text-base sm:text-lg font-bold px-6 focus:bg-white flex-1"
               />
               {!isAnswerSubmitted && (
@@ -703,13 +743,12 @@ export default function PracticeSession() {
           </div>
         )}
 
-
         {/* Feedback Banner after submission */}
         {isAnswerSubmitted && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className={`p-5 rounded-2xl border space-y-2 ${
+            className={`p-5 rounded-2xl border space-y-2.5 ${
               currentAnswer.isCorrect
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
                 : 'bg-rose-50 border-rose-200 text-rose-950'
@@ -718,23 +757,37 @@ export default function PracticeSession() {
             <div className="flex items-center gap-2 font-black text-base">
               {currentAnswer.isCorrect ? (
                 <>
-                  <CheckCircle2 size={20} className="text-emerald-600" />
+                  <CheckCircle2 size={20} className="text-emerald-600 shrink-0" />
                   <span>
                     Výborně, správná odpověď! {currentAnswer.usedHint && '(použita nápověda)'}
                   </span>
                 </>
               ) : (
                 <>
-                  <XCircle size={20} className="text-rose-600" />
-                  <span>Bohužel nesprávně. Správně je: <strong>{currentQuestion.correctAnswer}</strong></span>
+                  <XCircle size={20} className="text-rose-600 shrink-0" />
+                  <span className="flex items-center gap-1.5 flex-wrap">
+                    <span>Bohužel nesprávně. Správně je:</span>
+                    <strong className="inline-flex items-center">
+                      <MathRenderer content={currentQuestion.correctAnswer} inline />
+                    </strong>
+                  </span>
                 </>
               )}
             </div>
 
+            {/* Didactic tutor feedback (e.g. unreduced fraction) */}
+            {currentAnswer.tutorFeedback && (
+              <div className="p-3 bg-amber-100/80 border border-amber-300 rounded-xl text-amber-950 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-2xs">
+                <span className="text-base shrink-0">💡</span>
+                <span>{currentAnswer.tutorFeedback}</span>
+              </div>
+            )}
+
             {currentQuestion.explanation && (
-              <p className="text-xs sm:text-sm font-medium leading-relaxed pt-1">
-                💡 <strong>Vysvětlení:</strong> {currentQuestion.explanation}
-              </p>
+              <div className="text-xs sm:text-sm font-medium leading-relaxed pt-1 border-t border-gray-200/50">
+                <div className="font-bold text-gray-700 mb-0.5">💡 Vysvětlení:</div>
+                <MathRenderer content={currentQuestion.explanation} />
+              </div>
             )}
           </motion.div>
         )}

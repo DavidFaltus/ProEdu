@@ -359,10 +359,12 @@ export default function StudentInquiriesSection({
     );
   };
 
+  const remainingInquiries = sortedInquiries.slice(1);
+
   return (
-    <div ref={sectionRef} className="space-y-6">
-      {/* MAIN SINGLE INQUIRY CARD: On the main page, only 1 question is displayed by default */}
-      <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-6 sm:p-8 space-y-6">
+    <div ref={sectionRef} className="w-full">
+      {/* MAIN CARD: Odpověď od lektora */}
+      <Card className="rounded-[2.5rem] border-none shadow-xl bg-white p-6 sm:p-8 space-y-6">
         {/* Section Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
@@ -372,27 +374,29 @@ export default function StudentInquiriesSection({
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
-                  {inquiries.length > 1 ? 'Nejnovější dotaz a odpověď od lektora' : 'Dotaz a odpověď od lektora'}
+                  Odpověď od lektora
                 </h3>
                 {unreadCount > 0 && (
                   <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-rose-500 text-white animate-pulse">
-                    Nové odpovědi
+                    Nové ({unreadCount})
                   </span>
                 )}
               </div>
               <p className="text-gray-400 text-xs font-semibold">
                 {inquiries.length > 1 
-                  ? 'Zobrazuje se 1 nejnovější dotaz. Další dotazy můžeš rozkliknout níže.' 
-                  : 'Tvoje otázka k úloze z procvičování a odpověď učitele'}
+                  ? 'Zobrazuje se nejnovější dotaz. Další můžeš rozbalit níže.' 
+                  : 'Otázka k úloze z procvičování a odpověď učitele'}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <span className="text-xs font-bold text-gray-500 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200/60">
-              Celkem dotazů: {inquiries.length}
-            </span>
-          </div>
+          {inquiries.length > 1 && (
+            <div className="flex items-center gap-2 self-start sm:self-auto">
+              <span className="text-xs font-bold text-gray-500 bg-gray-50 px-3 py-1.5 rounded-xl border border-gray-200/60">
+                Celkem dotazů: {inquiries.length}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Display only the SINGLE primary inquiry */}
@@ -400,169 +404,106 @@ export default function StudentInquiriesSection({
           {renderInquiryCard(primaryInquiry, true)}
         </div>
 
-        {/* Action button under the section: if user has more than 1 inquiry, expands full standalone section */}
-        {inquiries.length > 1 && (
-          <div className="pt-2">
+        {/* Action button inside card: expands remaining inquiries inside this card */}
+        {remainingInquiries.length > 0 && (
+          <div className="space-y-4 pt-1">
             <button
-              onClick={() => {
-                const nextState = !isExpanded;
-                setIsExpanded(nextState);
-                if (!nextState && sectionRef.current) {
-                  sectionRef.current.scrollIntoView({ behavior: 'smooth' });
-                }
-              }}
-              className="w-full py-4 px-6 rounded-2xl bg-[#FAF7F0] hover:bg-amber-50/80 border border-amber-200/80 text-amber-950 font-bold text-sm flex items-center justify-between transition-all hover:shadow-md cursor-pointer group"
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="w-full py-3.5 px-5 rounded-2xl bg-[#FAF7F0] hover:bg-amber-50/80 border border-amber-200/80 text-amber-950 font-bold text-xs sm:text-sm flex items-center justify-between transition-all hover:shadow-xs cursor-pointer group"
             >
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <MessageSquare size={18} />
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center group-hover:scale-105 transition-transform">
+                  <MessageSquare size={16} />
                 </div>
                 <div className="text-left">
-                  <p className="text-sm font-black text-[#1E1B18] group-hover:text-amber-950">
+                  <p className="font-black text-[#1E1B18] group-hover:text-amber-950">
                     {isExpanded 
-                      ? 'Sbalit sekci všech dotazů' 
-                      : `Rozbalit všechny dotazy a odpovědi (${inquiries.length})`}
-                  </p>
-                  <p className="text-xs text-gray-500 font-semibold">
-                    {isExpanded
-                      ? 'Zobrazit na nástěnce pouze 1 hlavní dotaz'
-                      : `Máš ještě ${inquiries.length - 1} ${inquiries.length - 1 === 1 ? 'další dotaz' : inquiries.length - 1 < 5 ? 'další dotazy' : 'dalších dotazů'} na svém profilu s podrobnostmi`}
+                      ? 'Sbalit na 1 dotaz' 
+                      : `Zobrazit další dotazy a odpovědi (${remainingInquiries.length})`}
                   </p>
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                {!isExpanded && unreadCount > 0 && (
-                  <span className="px-2.5 py-1 rounded-full text-xs font-black bg-rose-500 text-white">
-                    {unreadCount} {unreadCount === 1 ? 'nová' : 'nové'}
+              <div className="flex items-center gap-2">
+                {!isExpanded && unreadCount > (primaryInquiry.status === 'answered' && !primaryInquiry.isReadByStudent ? 1 : 0) && (
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-black bg-rose-500 text-white">
+                    Nové
                   </span>
                 )}
-                <div className="w-8 h-8 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-700 shadow-2xs group-hover:border-amber-300">
-                  {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                <div className="w-7 h-7 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-700 shadow-2xs group-hover:border-amber-300">
+                  {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
                 </div>
               </div>
             </button>
+
+            {isExpanded && (
+              <div className="space-y-4 pt-2 border-t border-gray-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                {/* Filter Tabs if multiple remaining inquiries */}
+                {inquiries.length > 2 && (
+                  <div className="flex flex-wrap gap-1.5 p-1 bg-[#FAF7F0] rounded-xl border border-gray-200/60 w-fit text-xs">
+                    <button
+                      onClick={() => setActiveFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                        activeFilter === 'all'
+                          ? 'bg-white text-[#1E1B18] shadow-xs'
+                          : 'text-gray-600 hover:text-black'
+                      }`}
+                    >
+                      Všechny ({inquiries.length})
+                    </button>
+
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={() => setActiveFilter('unread')}
+                        className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                          activeFilter === 'unread'
+                            ? 'bg-rose-500 text-white shadow-xs'
+                            : 'text-rose-600 hover:bg-rose-50'
+                        }`}
+                      >
+                        <span>Nové</span>
+                        <span className="px-1 py-0.2 rounded-full text-[10px] font-black bg-white/20">
+                          {unreadCount}
+                        </span>
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => setActiveFilter('answered')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        activeFilter === 'answered'
+                          ? 'bg-white text-emerald-800 shadow-xs'
+                          : 'text-gray-600 hover:text-emerald-700'
+                      }`}
+                    >
+                      <span>Zodpovězené ({answeredCount})</span>
+                    </button>
+
+                    <button
+                      onClick={() => setActiveFilter('pending')}
+                      className={`px-3 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1 cursor-pointer ${
+                        activeFilter === 'pending'
+                          ? 'bg-white text-amber-800 shadow-xs'
+                          : 'text-gray-600 hover:text-amber-800'
+                      }`}
+                    >
+                      <span>Čekající ({pendingCount})</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* List of remaining inquiries */}
+                <div className="space-y-4">
+                  {(activeFilter === 'all' 
+                    ? remainingInquiries 
+                    : filteredInquiries.filter(i => i.id !== primaryInquiry.id)
+                  ).map((inquiry) => renderInquiryCard(inquiry))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Card>
-
-      {/* FULL STANDALONE SECTION WITH ALL INQUIRIES: Revealed when user clicks the button under the section */}
-      {isExpanded && inquiries.length > 1 && (
-        <Card className="rounded-[2.5rem] border-2 border-amber-200 shadow-xl bg-white p-6 sm:p-8 space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
-          {/* Header of standalone section */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-md">
-                <BookOpen size={22} />
-              </div>
-              <div>
-                <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
-                  Všechny dotazy a odpovědi od lektora
-                </h3>
-                <p className="text-gray-500 text-xs sm:text-sm font-medium">
-                  Kompletní přehled otázek k úlohám, odpovědí lektora a podrobností o zadání
-                </p>
-              </div>
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsExpanded(false);
-                sectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="rounded-xl font-bold h-9 px-4 text-xs border-gray-200 hover:bg-gray-100 self-start sm:self-auto cursor-pointer"
-            >
-              <span>Sbalit sekci</span>
-              <ChevronUp size={14} className="ml-1" />
-            </Button>
-          </div>
-
-          {/* Filter Tabs */}
-          <div className="flex flex-wrap gap-2 p-1.5 bg-[#FAF7F0] rounded-2xl border border-gray-200/60 w-fit">
-            <button
-              onClick={() => setActiveFilter('all')}
-              className={`px-4 py-2 rounded-xl font-bold text-xs transition-all cursor-pointer ${
-                activeFilter === 'all'
-                  ? 'bg-white text-[#1E1B18] shadow-xs'
-                  : 'text-gray-600 hover:text-black'
-              }`}
-            >
-              Všechny ({inquiries.length})
-            </button>
-
-            {unreadCount > 0 && (
-              <button
-                onClick={() => setActiveFilter('unread')}
-                className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer ${
-                  activeFilter === 'unread'
-                    ? 'bg-rose-500 text-white shadow-xs'
-                    : 'text-rose-600 hover:bg-rose-50'
-                }`}
-              >
-                <span>Nové odpovědi</span>
-                <span className="px-1.5 py-0.2 rounded-full text-[10px] font-black bg-white/20">
-                  {unreadCount}
-                </span>
-              </button>
-            )}
-
-            <button
-              onClick={() => setActiveFilter('answered')}
-              className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeFilter === 'answered'
-                  ? 'bg-white text-emerald-800 shadow-xs'
-                  : 'text-gray-600 hover:text-emerald-700'
-              }`}
-            >
-              <span>Zodpovězené ({answeredCount})</span>
-            </button>
-
-            <button
-              onClick={() => setActiveFilter('pending')}
-              className={`px-4 py-2 rounded-xl font-bold text-xs transition-all flex items-center gap-1.5 cursor-pointer ${
-                activeFilter === 'pending'
-                  ? 'bg-white text-amber-800 shadow-xs'
-                  : 'text-gray-600 hover:text-amber-800'
-              }`}
-            >
-              <span>Čekající na odpověď ({pendingCount})</span>
-            </button>
-          </div>
-
-          {/* List of all filtered inquiries */}
-          <div className="space-y-4">
-            {filteredInquiries.length === 0 ? (
-              <div className="p-8 text-center text-gray-400 bg-gray-50 rounded-2xl border border-dashed border-gray-200">
-                <p className="font-bold text-sm">V tomto filtru nemáš žádné dotazy.</p>
-              </div>
-            ) : (
-              filteredInquiries.map((inquiry) => renderInquiryCard(inquiry))
-            )}
-          </div>
-
-          {/* Bottom collapse button */}
-          <div className="pt-4 border-t border-gray-100 flex items-center justify-between flex-wrap gap-3">
-            <p className="text-xs text-gray-400 font-semibold">
-              Zobrazeno {filteredInquiries.length} z celkem {inquiries.length} dotazů na tvém profilu
-            </p>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsExpanded(false);
-                sectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="rounded-xl font-bold h-9 px-4 text-xs border-amber-300 text-amber-900 hover:bg-amber-50 cursor-pointer"
-            >
-              <span>Sbalit sekci (zobrazit pouze 1 dotaz)</span>
-              <ChevronUp size={14} className="ml-1" />
-            </Button>
-          </div>
-        </Card>
-      )}
     </div>
   );
 }

@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { 
   PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep 
 } from '../types';
+import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
 
 export const PREDEFINED_SUBJECTS = [
   {
@@ -712,16 +713,38 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
       return;
     }
 
-    const hint = findColValue(row, 'Nápověda', 'Napoveda');
-    const explanation = findColValue(row, 'Vysvětlení', 'Vysvetleni');
+    // Apply smart math preprocessor & syntax validator
+    const processedQuestion = preprocessMathText(question);
+    const questionSyntax = validateLatexSyntax(processedQuestion);
+    if (!questionSyntax.isValid) {
+      invalidRows.push({ rowNumber: rowNum, reason: questionSyntax.error!, questionText: question });
+      return;
+    }
+
+    const rawHint = findColValue(row, 'Nápověda', 'Napoveda');
+    const hint = preprocessMathText(rawHint);
+    const hintSyntax = validateLatexSyntax(hint);
+    if (!hintSyntax.isValid) {
+      invalidRows.push({ rowNumber: rowNum, reason: hintSyntax.error!, questionText: question });
+      return;
+    }
+
+    const rawExplanation = findColValue(row, 'Vysvětlení', 'Vysvetleni');
+    const explanation = preprocessMathText(rawExplanation);
+    const explSyntax = validateLatexSyntax(explanation);
+    if (!explSyntax.isValid) {
+      invalidRows.push({ rowNumber: rowNum, reason: explSyntax.error!, questionText: question });
+      return;
+    }
+
     const imageUrl = findColValue(row, 'Obrázek', 'Obrazek', 'Image', 'ImageUrl', 'Obrázek URL', 'Obrazek URL');
     const typeLower = rawType.toLowerCase();
 
     if (typeLower.includes('výběr') || typeLower.includes('vyber') || typeLower.includes('choice')) {
-      const optA = findColValue(row, 'Možnost A', 'Moznost A');
-      const optB = findColValue(row, 'Možnost B', 'Moznost B');
-      const optC = findColValue(row, 'Možnost C', 'Moznost C');
-      const optD = findColValue(row, 'Možnost D', 'Moznost D');
+      const optA = preprocessMathText(findColValue(row, 'Možnost A', 'Moznost A'));
+      const optB = preprocessMathText(findColValue(row, 'Možnost B', 'Moznost B'));
+      const optC = preprocessMathText(findColValue(row, 'Možnost C', 'Moznost C'));
+      const optD = preprocessMathText(findColValue(row, 'Možnost D', 'Moznost D'));
       const ansChoiceRaw = findColValue(row, 'Odpověď (výběr)', 'Odpoved (vyber)', 'Odpověď výběr', 'Odpoved vyber');
       const ansChoice = ansChoiceRaw.toUpperCase().trim();
 
@@ -746,12 +769,23 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
         return;
       }
 
+      // Check math syntax in options
+      for (const [letter, optVal] of [['A', optA], ['B', optB], ['C', optC], ['D', optD]]) {
+        if (optVal) {
+          const optSyntax = validateLatexSyntax(optVal);
+          if (!optSyntax.isValid) {
+            invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci Možnosti ${letter}: ${optSyntax.error}`, questionText: question });
+            return;
+          }
+        }
+      }
+
       validRows.push({
         rowNumber: rowNum,
         subject,
         topic,
         subtopic,
-        question,
+        question: processedQuestion,
         hint,
         explanation,
         imageUrl: imageUrl || undefined,
@@ -763,10 +797,17 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
       topicsSet.add(topic);
       subtopicsSet.add(subtopic);
     } else if (typeLower.includes('volná') || typeLower.includes('volna') || typeLower.includes('open')) {
-      const ansOpen = findColValue(row, 'Odpověď (volná)', 'Odpoved (volna)', 'Odpověď volná', 'Odpoved volna');
+      const rawAnsOpen = findColValue(row, 'Odpověď (volná)', 'Odpoved (volna)', 'Odpověď volná', 'Odpoved volna');
+      const ansOpen = preprocessMathText(rawAnsOpen);
 
       if (!ansOpen) {
         invalidRows.push({ rowNumber: rowNum, reason: 'Pro úlohu s volnou odpovědí chybí hodnota ve sloupci \'Odpověď (volná)\'.', questionText: question });
+        return;
+      }
+
+      const ansSyntax = validateLatexSyntax(ansOpen);
+      if (!ansSyntax.isValid) {
+        invalidRows.push({ rowNumber: rowNum, reason: ansSyntax.error!, questionText: question });
         return;
       }
 
@@ -775,7 +816,7 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
         subject,
         topic,
         subtopic,
-        question,
+        question: processedQuestion,
         hint,
         explanation,
         imageUrl: imageUrl || undefined,
@@ -1120,13 +1161,38 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
       return;
     }
 
-    const question = findColValue(row, 'Otázka', 'Otazka');
-    const optA = findColValue(row, 'Možnost A', 'Moznost A');
-    const optB = findColValue(row, 'Možnost B', 'Moznost B');
-    const optC = findColValue(row, 'Možnost C', 'Moznost C');
-    const optD = findColValue(row, 'Možnost D', 'Moznost D');
+    const processedStepText = preprocessMathText(stepText);
+    const stepSyntax = validateLatexSyntax(processedStepText);
+    if (!stepSyntax.isValid) {
+      invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci textu kroku: ${stepSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+      return;
+    }
+
+    const rawQuestion = findColValue(row, 'Otázka', 'Otazka');
+    const question = preprocessMathText(rawQuestion);
+    if (question) {
+      const qSyntax = validateLatexSyntax(question);
+      if (!qSyntax.isValid) {
+        invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci kontrolní otázky: ${qSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+        return;
+      }
+    }
+
+    const optA = preprocessMathText(findColValue(row, 'Možnost A', 'Moznost A'));
+    const optB = preprocessMathText(findColValue(row, 'Možnost B', 'Moznost B'));
+    const optC = preprocessMathText(findColValue(row, 'Možnost C', 'Moznost C'));
+    const optD = preprocessMathText(findColValue(row, 'Možnost D', 'Moznost D'));
     const ansRaw = findColValue(row, 'Odpověď', 'Odpoved');
-    const tip = findColValue(row, 'Tip', 'Tip lektora');
+    const rawTip = findColValue(row, 'Tip', 'Tip lektora');
+    const tip = preprocessMathText(rawTip);
+
+    if (tip) {
+      const tipSyntax = validateLatexSyntax(tip);
+      if (!tipSyntax.isValid) {
+        invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci tipu lektora: ${tipSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+        return;
+      }
+    }
 
     let correctAnswer = ansRaw;
     const upperAns = ansRaw.toUpperCase().trim();
@@ -1134,6 +1200,7 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
     else if (upperAns === 'B' && optB) correctAnswer = optB;
     else if (upperAns === 'C' && optC) correctAnswer = optC;
     else if (upperAns === 'D' && optD) correctAnswer = optD;
+    else if (ansRaw) correctAnswer = preprocessMathText(ansRaw);
 
     validRows.push({
       rowNumber: rowNum,
@@ -1141,7 +1208,7 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
       topic,
       subtopic,
       stepNumber,
-      stepText,
+      stepText: processedStepText,
       question,
       optA,
       optB,

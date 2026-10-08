@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
-  Image as ImageIcon
+  Image as ImageIcon, Eye, AlertTriangle, Loader2
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -24,6 +24,9 @@ import { auth } from '../../lib/firebase';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
 import { convertFileToSvg, sanitizeSvg } from '../../utils/pdfToSvg';
+import { MathRenderer } from '../common/MathRenderer';
+import QuickFormulaToolbar from './QuickFormulaToolbar';
+import { validateLatexSyntax } from '../../utils/mathPreprocessor';
 
 interface PracticeManagerProps {
   userId: string;
@@ -50,6 +53,21 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Partial<PracticeQuestion> | null>(null);
   const [questionParentSubtopic, setQuestionParentSubtopic] = useState<PracticeSubtopic | null>(null);
+
+  // Deletion confirmation modal state
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    isOpen: boolean;
+    type: 'topic' | 'subtopic' | 'question';
+    id: string;
+    title: string;
+    details?: string;
+  }>({
+    isOpen: false,
+    type: 'topic',
+    id: '',
+    title: '',
+  });
+  const [isDeleting, setIsDeleting] = useState(false);
 
   // Excel import state - Procvičování
   const [isPracticeModalOpen, setIsPracticeModalOpen] = useState(false);
@@ -117,15 +135,37 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
   };
 
-  const handleDeleteTopic = async (topicId: string, title: string) => {
-    if (!window.confirm(`Opravdu chcete smazat téma "${title}" včetně všech jeho podtémat a otázek?`)) return;
+  const handleConfirmDelete = async () => {
+    if (!deleteConfirm.id) return;
+    setIsDeleting(true);
     try {
-      await deleteTopic(topicId);
-      toast.success('Téma smazáno');
+      if (deleteConfirm.type === 'topic') {
+        await deleteTopic(deleteConfirm.id);
+        toast.success(`Téma "${deleteConfirm.title}" bylo smazáno`);
+      } else if (deleteConfirm.type === 'subtopic') {
+        await deleteSubtopic(deleteConfirm.id);
+        toast.success(`Podtéma "${deleteConfirm.title}" bylo smazáno`);
+      } else if (deleteConfirm.type === 'question') {
+        await deleteQuestion(deleteConfirm.id);
+        toast.success('Otázka byla smazána');
+      }
+      setDeleteConfirm(prev => ({ ...prev, isOpen: false }));
       await loadData();
     } catch (err: any) {
       toast.error('Chyba při mazání: ' + err.message);
+    } finally {
+      setIsDeleting(false);
     }
+  };
+
+  const handleDeleteTopic = (topicId: string, title: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'topic',
+      id: topicId,
+      title: title,
+      details: 'Budou smazána všechna podtémata i všechny obsažené otázky v tomto tématu.'
+    });
   };
 
   // --- SUBTOPIC ACTIONS ---
@@ -286,15 +326,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
   };
 
-  const handleDeleteSubtopic = async (subId: string, title: string) => {
-    if (!window.confirm(`Opravdu chcete smazat podtéma "${title}" včetně otázek?`)) return;
-    try {
-      await deleteSubtopic(subId);
-      toast.success('Podtéma smazáno');
-      await loadData();
-    } catch (err: any) {
-      toast.error('Chyba při mazání: ' + err.message);
-    }
+  const handleDeleteSubtopic = (subId: string, title: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'subtopic',
+      id: subId,
+      title: title,
+      details: 'Bude smazána látka studia i všechny obsažené otázky k procvičování.'
+    });
   };
 
   // --- QUESTION ACTIONS ---
@@ -402,15 +441,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
   };
 
-  const handleDeleteQuestion = async (questionId: string) => {
-    if (!window.confirm('Opravdu chcete tuto otázku smazat?')) return;
-    try {
-      await deleteQuestion(questionId);
-      toast.success('Otázka smazána');
-      await loadData();
-    } catch (err: any) {
-      toast.error('Chyba: ' + err.message);
-    }
+  const handleDeleteQuestion = (questionId: string, questionText?: string) => {
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'question',
+      id: questionId,
+      title: questionText || 'Vybraná otázka',
+      details: 'Otázka bude trvale odstraněna z procvičování.'
+    });
   };
 
   // --- 1. EXCEL IMPORT PROČVIČOVÁNÍ ---
@@ -493,6 +531,95 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       setIsImportingStudy(false);
       setStudyProgressMsg('');
     }
+  };
+
+  // Track last active input/textarea element and cursor selection range for formula insertion
+  const lastActiveInputRef = React.useRef<{
+    element: HTMLInputElement | HTMLTextAreaElement;
+    start: number;
+    end: number;
+  } | null>(null);
+
+  const handleInputTrack = (e: React.SyntheticEvent<HTMLElement>) => {
+    const target = e.target as HTMLInputElement | HTMLTextAreaElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      lastActiveInputRef.current = {
+        element: target,
+        start: target.selectionStart ?? target.value.length,
+        end: target.selectionEnd ?? target.value.length
+      };
+    }
+  };
+
+  const insertSnippetAtCursor = (rawSnippet: string) => {
+    let targetEl: (HTMLInputElement | HTMLTextAreaElement) | null = null;
+    const activeEl = document.activeElement;
+    if (activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+      targetEl = activeEl as HTMLInputElement | HTMLTextAreaElement;
+    } else if (lastActiveInputRef.current?.element && document.body.contains(lastActiveInputRef.current.element)) {
+      targetEl = lastActiveInputRef.current.element;
+    }
+
+    // Fallback: look for the question textarea inside the question dialog
+    if (!targetEl) {
+      const questionEl = document.querySelector('textarea[data-field="question"]') as HTMLTextAreaElement | null;
+      if (questionEl) targetEl = questionEl;
+    }
+
+    if (!targetEl) return;
+
+    const start = (targetEl === activeEl)
+      ? (targetEl.selectionStart ?? targetEl.value.length)
+      : (lastActiveInputRef.current?.start ?? targetEl.value.length);
+    const end = (targetEl === activeEl)
+      ? (targetEl.selectionEnd ?? targetEl.value.length)
+      : (lastActiveInputRef.current?.end ?? targetEl.value.length);
+
+    const currentVal = targetEl.value || '';
+
+    // If the cursor is ALREADY inside an unclosed $...$ or $$...$$ math block, insert without outer $ signs
+    const textBefore = currentVal.slice(0, start);
+    const cleanEscaped = textBefore.replace(/\\\$/g, '');
+    const dollarCount = (cleanEscaped.match(/\$/g) || []).length;
+    const isInsideMath = dollarCount % 2 === 1;
+
+    let snippetToInsert = rawSnippet;
+    if (isInsideMath) {
+      if (snippetToInsert.startsWith('$$') && snippetToInsert.endsWith('$$') && snippetToInsert.length >= 4) {
+        snippetToInsert = snippetToInsert.slice(2, -2).trim();
+      } else if (snippetToInsert.startsWith('$') && snippetToInsert.endsWith('$') && snippetToInsert.length >= 2) {
+        snippetToInsert = snippetToInsert.slice(1, -1);
+      }
+    }
+
+    const newVal = currentVal.slice(0, start) + snippetToInsert + currentVal.slice(end);
+
+    const proto = targetEl instanceof HTMLTextAreaElement 
+      ? window.HTMLTextAreaElement.prototype 
+      : window.HTMLInputElement.prototype;
+    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+
+    if (nativeSetter) {
+      nativeSetter.call(targetEl, newVal);
+    } else {
+      targetEl.value = newVal;
+    }
+
+    targetEl.dispatchEvent(new Event('input', { bubbles: true }));
+
+    targetEl.focus();
+    const newCursor = start + snippetToInsert.length;
+    try {
+      targetEl.setSelectionRange(newCursor, newCursor);
+    } catch {
+      // ignore
+    }
+
+    lastActiveInputRef.current = {
+      element: targetEl,
+      start: newCursor,
+      end: newCursor
+    };
   };
 
   return (
@@ -715,7 +842,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 className="rounded-xl bg-[#1E1B18] text-white hover:bg-[#332f2b] font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
                               >
                                 <Plus size={13} />
-                                <span>Otázka</span>
+                                <span>Přidat procvičování</span>
                               </Button>
 
                               <Button
@@ -725,7 +852,18 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
                               >
                                 <BookOpen size={13} />
-                                <span>Studovat (Látka)</span>
+                                <span>Upravit Studium</span>
+                              </Button>
+
+                              <Button
+                                onClick={() => window.open(`/study/${sub.id}`, '_blank', 'noopener,noreferrer')}
+                                variant="outline"
+                                size="sm"
+                                className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
+                                title="Otevřít náhled studia v nové záložce"
+                              >
+                                <Eye size={13} />
+                                <span>Náhled studia</span>
                               </Button>
 
                               <Button
@@ -750,7 +888,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
                               {questions.length === 0 ? (
                                 <p className="text-gray-400 text-xs italic py-2">
-                                  Zatím žádné otázky. Klikněte na "+ Otázka" pro přidání otázky s volbou ze 4 nebo volnou odpovědí.
+                                  Zatím žádné otázky. Klikněte na "+ Přidat procvičování" pro přidání otázky s volbou ze 4 nebo volnou odpovědí.
                                 </p>
                               ) : (
                                 <div className="space-y-2">
@@ -796,7 +934,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                         <Button
                                           variant="ghost"
                                           size="sm"
-                                          onClick={() => handleDeleteQuestion(q.id)}
+                                          onClick={() => handleDeleteQuestion(q.id, q.question)}
                                           className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
                                         >
                                           <Trash2 size={12} />
@@ -887,7 +1025,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           </DialogHeader>
 
 
-          <form onSubmit={handleSaveSubtopic} className="space-y-5 py-2">
+          <form 
+            onSubmit={handleSaveSubtopic} 
+            className="space-y-5 py-2"
+            onFocusCapture={handleInputTrack}
+            onSelectCapture={handleInputTrack}
+            onKeyUpCapture={handleInputTrack}
+            onMouseUpCapture={handleInputTrack}
+          >
             {/* Prominent Info Banner for Studovat Section */}
             <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 text-amber-950 shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
@@ -1064,10 +1209,16 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                       </div>
 
                       {/* Step Explanation Content */}
-                      <div className="space-y-1.5 pl-0 sm:pl-9">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                          Výkladový text kroku *
-                        </label>
+                      <div className="space-y-2 pl-0 sm:pl-9">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
+                            Výkladový text kroku * (Podporuje KaTeX & Markdown)
+                          </label>
+                        </div>
+                        <QuickFormulaToolbar 
+                          size="xs"
+                          onInsert={insertSnippetAtCursor}
+                        />
                         <textarea
                           rows={3}
                           value={step.content}
@@ -1075,6 +1226,12 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           placeholder="Podrobné vysvětlení a postup v rámci tohoto kroku..."
                           className="w-full p-3 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-black font-medium leading-relaxed"
                         />
+                        {step.content && (
+                          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs space-y-1">
+                            <span className="font-bold text-gray-500 block">Náhled výkladu:</span>
+                            <MathRenderer content={step.content} />
+                          </div>
+                        )}
                       </div>
 
                       {/* Sub-grid: 4-choice Quiz + Tutor Tip */}
@@ -1217,7 +1374,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             </DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={handleSaveQuestion} className="space-y-5 py-2">
+          <form 
+            onSubmit={handleSaveQuestion} 
+            className="space-y-5 py-2"
+            onFocusCapture={handleInputTrack}
+            onSelectCapture={handleInputTrack}
+            onKeyUpCapture={handleInputTrack}
+            onMouseUpCapture={handleInputTrack}
+          >
             {/* Type selector */}
             <div>
               <label className="text-xs font-bold text-gray-700 block mb-1.5">Typ otázky</label>
@@ -1252,17 +1416,46 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               </div>
             </div>
 
-            {/* Question Text */}
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1">Zadání otázky *</label>
+            {/* Jediná univerzální sekce Matematika: pro celý formulář otázky */}
+            <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-xs pb-1 pt-0.5">
+              <QuickFormulaToolbar 
+                onInsert={insertSnippetAtCursor}
+              />
+            </div>
+
+            {/* Question Text with Live Preview */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-700 block">Zadání otázky *</label>
+                <span className="text-[11px] text-gray-400">Podporuje KaTeX & Markdown ($vzor$ / $$blok$$)</span>
+              </div>
+
               <textarea
                 required
+                data-field="question"
                 rows={3}
                 value={editingQuestion?.question || ''}
                 onChange={e => setEditingQuestion(prev => ({ ...prev, question: e.target.value }))}
-                placeholder="Zadejte text otázky nebo úlohy..."
-                className="w-full rounded-xl border border-gray-200 p-3.5 text-sm focus:border-black outline-none font-medium leading-snug"
+                placeholder="Zadejte text otázky nebo úlohy (např. Vypočtěte hodnotu výrazu: $\frac{1}{2} + \frac{3}{4}$)..."
+                className="w-full rounded-xl border border-gray-200 p-3.5 text-sm focus:border-black outline-none font-medium leading-snug bg-white"
               />
+
+              {/* Question Live Preview */}
+              {editingQuestion?.question && (
+                <div className="p-3 bg-amber-50/50 rounded-xl border border-amber-200 space-y-1">
+                  <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-amber-800">
+                    <span>Náhled zadání v reálném čase:</span>
+                    {!validateLatexSyntax(editingQuestion.question).isValid && (
+                      <span className="text-rose-600 normal-case font-bold">
+                        ⚠️ {validateLatexSyntax(editingQuestion.question).error}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-sm font-bold text-gray-900 leading-snug">
+                    <MathRenderer content={editingQuestion.question} />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Optional Question Image / SVG (pod zadáním) */}
@@ -1370,46 +1563,57 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   {['A', 'B', 'C', 'D'].map((letter, idx) => {
                     const val = (editingQuestion.options && editingQuestion.options[idx]) || '';
                     const isCorrect = Boolean(val && editingQuestion.correctAnswer === val);
+                    const hasMath = Boolean(val && (val.includes('$') || val.includes('\\') || val.includes('/') || val.includes('^')));
 
                     return (
-                      <div key={idx} className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (val) {
-                              setEditingQuestion(prev => ({ ...prev, correctAnswer: val }));
-                            }
-                          }}
-                          className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 transition-all cursor-pointer ${
-                            isCorrect
-                              ? 'bg-emerald-600 text-white shadow-xs'
-                              : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
-                          }`}
-                          title={isCorrect ? 'Označeno jako správná odpověď' : `Klikněte pro nastavení ${letter} jako správné`}
-                        >
-                          {letter}
-                        </button>
-                        <Input
-                          required
-                          value={val}
-                          onChange={e => {
-                            const newVal = e.target.value;
-                            const wasCorrect = editingQuestion.correctAnswer === val;
-                            const opts = [...(editingQuestion.options || ['', '', '', ''])];
-                            opts[idx] = newVal;
-                            setEditingQuestion(prev => ({
-                              ...prev,
-                              options: opts,
-                              ...(wasCorrect ? { correctAnswer: newVal } : {})
-                            }));
-                          }}
-                          placeholder={`Možnost ${letter}`}
-                          className={`rounded-xl h-10 text-xs font-medium ${isCorrect ? 'border-emerald-500 bg-emerald-50/40 font-bold text-emerald-950' : 'bg-white'}`}
-                        />
-                        {isCorrect && (
-                          <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0">
-                            Správná
-                          </span>
+                      <div key={idx} className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (val) {
+                                setEditingQuestion(prev => ({ ...prev, correctAnswer: val }));
+                              }
+                            }}
+                            className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 transition-all cursor-pointer ${
+                              isCorrect
+                                ? 'bg-emerald-600 text-white shadow-xs'
+                                : 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
+                            }`}
+                            title={isCorrect ? 'Označeno jako správná odpověď' : `Klikněte pro nastavení ${letter} jako správné`}
+                          >
+                            {letter}
+                          </button>
+                          <Input
+                            required
+                            value={val}
+                            onChange={e => {
+                              const newVal = e.target.value;
+                              const wasCorrect = editingQuestion.correctAnswer === val;
+                              const opts = [...(editingQuestion.options || ['', '', '', ''])];
+                              opts[idx] = newVal;
+                              setEditingQuestion(prev => ({
+                                ...prev,
+                                options: opts,
+                                ...(wasCorrect ? { correctAnswer: newVal } : {})
+                              }));
+                            }}
+                            placeholder={`Možnost ${letter} (např. $\\frac{1}{2}$ nebo 5)`}
+                            className={`rounded-xl h-10 text-xs font-medium flex-1 ${isCorrect ? 'border-emerald-500 bg-emerald-50/40 font-bold text-emerald-950' : 'bg-white'}`}
+                          />
+                          {isCorrect && (
+                            <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md uppercase tracking-wider shrink-0">
+                              Správná
+                            </span>
+                          )}
+                        </div>
+                        {hasMath && (
+                          <div className="pl-10 text-xs text-gray-700 flex items-center gap-1 font-semibold">
+                            <span className="text-[10px] text-gray-400">Náhled:</span>
+                            <span className="px-2 py-0.5 bg-white border border-gray-200 rounded-md shadow-2xs">
+                              <MathRenderer content={val} inline />
+                            </span>
+                          </div>
                         )}
                       </div>
                     );
@@ -1444,22 +1648,30 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
             {/* Correct Answer input only for 'open' (vepisovací) questions */}
             {editingQuestion?.type === 'open' && (
-              <div>
+              <div className="space-y-1">
                 <label className="text-xs font-bold text-gray-700 block mb-1">
-                  Správná odpověď (přesná textová shoda pro vyhodnocení) *
+                  Správná odpověď (hodnota pro vyhodnocení – např. 1/2 nebo $\frac{1}{2}$ nebo 0,5) *
                 </label>
                 <Input
                   required
                   value={editingQuestion?.correctAnswer || ''}
                   onChange={e => setEditingQuestion(prev => ({ ...prev, correctAnswer: e.target.value }))}
-                  placeholder="Např. 36 nebo konkrétní slovo"
+                  placeholder="Např. 1/2 nebo 36 nebo x=5"
                   className="rounded-xl h-11 font-bold border-emerald-300 focus:border-emerald-600 bg-white"
                 />
+                {editingQuestion?.correctAnswer && (
+                  <div className="text-xs text-emerald-800 flex items-center gap-1 font-semibold pt-0.5">
+                    <span className="text-[10px] text-gray-400">Náhled odpovědi:</span>
+                    <span className="px-2 py-0.5 bg-emerald-50 border border-emerald-200 rounded-md">
+                      <MathRenderer content={editingQuestion.correctAnswer} inline />
+                    </span>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Student hint (takes full width, difficulty removed) */}
-            <div>
+            <div className="space-y-1">
               <label className="text-xs font-bold text-gray-700 block mb-1">Nápověda pro studenta (volitelná)</label>
               <Input
                 value={editingQuestion?.hint || ''}
@@ -1467,17 +1679,34 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 placeholder="Drobná rada při zaseknutí..."
                 className="rounded-xl h-11 text-xs"
               />
+              {editingQuestion?.hint && (
+                <div className="text-xs text-gray-700 flex items-center gap-1 font-medium pt-0.5">
+                  <span className="text-[10px] text-gray-400">Náhled nápovědy:</span>
+                  <span className="px-2 py-0.5 bg-amber-50 border border-amber-200/80 rounded-md">
+                    <MathRenderer content={editingQuestion.hint} inline />
+                  </span>
+                </div>
+              )}
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1">Vysvětlení a postup řešení</label>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-bold text-gray-700 block">Vysvětlení a postup řešení (volitelné)</label>
+                <span className="text-[11px] text-gray-400">Zobrazí se studentovi po odevzdání</span>
+              </div>
               <textarea
                 rows={2}
                 value={editingQuestion?.explanation || ''}
                 onChange={e => setEditingQuestion(prev => ({ ...prev, explanation: e.target.value }))}
                 placeholder="Zobrazí se studentovi po odevzdání odpovědi..."
-                className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-black outline-none font-medium leading-snug"
+                className="w-full rounded-xl border border-gray-200 p-3 text-xs focus:border-black outline-none font-medium leading-snug bg-white"
               />
+              {editingQuestion?.explanation && (
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 space-y-1 text-xs">
+                  <span className="font-bold text-gray-600 block">Náhled vysvětlení:</span>
+                  <MathRenderer content={editingQuestion.explanation} />
+                </div>
+              )}
             </div>
 
             <DialogFooter className="pt-2">
@@ -1883,6 +2112,77 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         onSelect={handleSelectMaterial}
         activeSubject={activeSubject}
       />
+
+      {/* MODAL 6: DELETE CONFIRMATION DIALOG */}
+      <Dialog 
+        open={deleteConfirm.isOpen} 
+        onOpenChange={(open) => {
+          if (!open && !isDeleting) {
+            setDeleteConfirm(prev => ({ ...prev, isOpen: false }));
+          }
+        }}
+      >
+        <DialogContent className="rounded-[2.5rem] p-6 sm:p-8 border-none shadow-2xl max-w-md bg-white">
+          <div className="space-y-6">
+            <div className="flex items-start gap-4">
+              <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center shrink-0 shadow-inner">
+                <AlertTriangle size={24} />
+              </div>
+              <div className="space-y-1">
+                <DialogTitle className="text-xl font-display font-black text-[#1E1B18]">
+                  {deleteConfirm.type === 'topic' && 'Smazat téma?'}
+                  {deleteConfirm.type === 'subtopic' && 'Smazat podtéma?'}
+                  {deleteConfirm.type === 'question' && 'Smazat otázku?'}
+                </DialogTitle>
+                <p className="text-xs text-gray-500 font-medium">
+                  Tato akce je nevratná a data budou trvale odstraněna.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100 space-y-2">
+              <p className="text-xs font-bold text-gray-700 leading-snug">
+                Položka: <span className="text-[#1E1B18] font-black">"{deleteConfirm.title}"</span>
+              </p>
+              {deleteConfirm.details && (
+                <p className="text-[11px] text-red-600 font-semibold leading-relaxed">
+                  ⚠️ {deleteConfirm.details}
+                </p>
+              )}
+            </div>
+
+            <DialogFooter className="flex items-center justify-end gap-2.5 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDeleteConfirm(prev => ({ ...prev, isOpen: false }))}
+                disabled={isDeleting}
+                className="rounded-xl border-gray-200 hover:bg-gray-50 font-bold text-xs h-10 px-4 cursor-pointer"
+              >
+                Zrušit
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs h-10 px-5 flex items-center gap-1.5 shadow-md cursor-pointer transition-transform active:scale-95"
+              >
+                {isDeleting ? (
+                  <>
+                    <Loader2 size={14} className="animate-spin" />
+                    <span>Mazání...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Smazat</span>
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

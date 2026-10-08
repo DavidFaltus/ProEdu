@@ -24,7 +24,6 @@ import {
   RefreshCcw, 
   Video, 
   ExternalLink,
-  Download,
   Sparkles
 } from 'lucide-react';
 type TodoItem = any;
@@ -35,8 +34,7 @@ import {
   getGoogleAccessToken, 
   syncEventToGoogleCalendar, 
   syncLiveLessonToGoogleCalendar,
-  getGoogleCalendarWebUrl,
-  downloadLessonIcsFile 
+  getGoogleCalendarWebUrl
 } from '../services/calendarService';
 import { LiveLesson } from '../types';
 import { toast } from 'sonner';
@@ -288,9 +286,9 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
   const hasItemsToDisplay = hasEventsForSelectedDay || !!nextActivity;
 
   return (
-    <div className="grid lg:grid-cols-[1fr_350px] gap-8 bg-white rounded-[2.5rem] p-8 shadow-xl border border-gray-100 overflow-hidden">
+    <div className="grid lg:grid-cols-[1fr_350px] gap-8 bg-white rounded-[2.5rem] p-6 sm:p-8 shadow-xl border border-gray-100 overflow-hidden h-full">
       {/* Calendar Grid Side */}
-      <div className="space-y-6 flex flex-col justify-between">
+      <div className="space-y-6 flex flex-col justify-between h-full">
         <div>
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
@@ -388,7 +386,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
       </div>
 
       {/* Right Column: Upcoming / Selected Activity Side */}
-      <div className="bg-gray-50/50 rounded-[1.5rem] border border-gray-100 flex flex-col min-h-[460px]">
+      <div className="bg-gray-50/50 rounded-[1.5rem] border border-gray-100 flex flex-col h-full min-h-[460px]">
         {/* Header */}
         <div className="p-6 border-b border-gray-100 bg-white rounded-t-[1.5rem]">
           <div className="flex items-center justify-between gap-2 mb-3">
@@ -500,7 +498,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                             </span>
                           </div>
 
-                          <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                          <div className="pt-2 border-t border-gray-100">
                             <Button
                               size="sm"
                               onClick={() => {
@@ -511,23 +509,13 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                                 }
                               }}
                               className={cn(
-                                "flex-1 h-8 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer",
+                                "w-full h-8 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer",
                                 isLive ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-900 hover:bg-black text-white"
                               )}
                             >
                               <Video size={13} />
                               <span>{isLive ? 'Připojit se' : 'Google Meet'}</span>
                               <ExternalLink size={11} />
-                            </Button>
-
-                            <Button
-                              size="icon"
-                              variant="outline"
-                              title="Stáhnout .ics do kalendáře"
-                              onClick={() => downloadLessonIcsFile(lesson)}
-                              className="h-8 w-8 rounded-xl text-gray-600 hover:text-gray-900 border-gray-200 shrink-0 cursor-pointer"
-                            >
-                              <Download size={13} />
                             </Button>
                           </div>
                         </div>
@@ -633,7 +621,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                               </span>
                             </div>
 
-                            <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
+                            <div className="pt-2 border-t border-gray-100">
                               <Button
                                 size="sm"
                                 onClick={() => {
@@ -644,23 +632,13 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                                   }
                                 }}
                                 className={cn(
-                                  "flex-1 h-8 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer",
+                                  "w-full h-8 rounded-xl text-xs font-black flex items-center justify-center gap-1.5 cursor-pointer",
                                   isLive ? "bg-red-600 hover:bg-red-700 text-white" : "bg-gray-900 hover:bg-black text-white"
                                 )}
                               >
                                 <Video size={13} />
                                 <span>{isLive ? 'Připojit se' : 'Google Meet'}</span>
                                 <ExternalLink size={11} />
-                              </Button>
-
-                              <Button
-                                size="icon"
-                                variant="outline"
-                                title="Stáhnout .ics do kalendáře"
-                                onClick={() => downloadLessonIcsFile(lesson)}
-                                className="h-8 w-8 rounded-xl text-gray-600 hover:text-gray-900 border-gray-200 shrink-0 cursor-pointer"
-                              >
-                                <Download size={13} />
                               </Button>
                             </div>
                           </div>

@@ -8,6 +8,7 @@ import {
 import { Button } from '../components/ui/button';
 import { getSubtopicById, getQuestionsForSubtopic, getTopicById } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep } from '../types';
+import { MathRenderer } from '../components/common/MathRenderer';
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
@@ -173,11 +174,11 @@ export default function StudyView() {
                     </div>
                     <div className="space-y-1.5 flex-1 min-w-0">
                       <h4 className="font-bold text-lg sm:text-xl text-[#1E1B18] tracking-tight">
-                        {step.title}
+                        <MathRenderer content={step.title} inline />
                       </h4>
-                      <p className="text-gray-600 font-medium text-sm sm:text-base leading-relaxed">
-                        {step.content}
-                      </p>
+                      <div className="text-gray-600 font-medium text-sm sm:text-base leading-relaxed">
+                        <MathRenderer content={step.content} />
+                      </div>
                     </div>
                   </div>
 
@@ -220,9 +221,9 @@ export default function StudyView() {
                             <Sparkles size={14} />
                             <span>Doporučení lektora</span>
                           </div>
-                          <p className="text-sm sm:text-base font-medium leading-relaxed text-amber-900">
-                            {step.tutorTip}
-                          </p>
+                          <div className="text-sm sm:text-base font-medium leading-relaxed text-amber-900">
+                            <MathRenderer content={step.tutorTip} />
+                          </div>
                         </div>
                       </motion.div>
                     )}
@@ -237,9 +238,9 @@ export default function StudyView() {
                         Otázka k ověření kroku
                       </span>
                     </div>
-                    <p className="font-bold text-gray-900 text-sm sm:text-base leading-snug">
-                      {step.testQuestion}
-                    </p>
+                    <div className="font-bold text-gray-900 text-sm sm:text-base leading-snug">
+                      <MathRenderer content={step.testQuestion} />
+                    </div>
 
                     {step.testOptions && step.testOptions.length > 0 && step.testOptions.some(Boolean) ? (
                       <div className="space-y-3">
@@ -274,7 +275,9 @@ export default function StudyView() {
                                 <span className="w-6 h-6 rounded-xl bg-gray-100 text-gray-700 text-xs font-black flex items-center justify-center shrink-0">
                                   {['A', 'B', 'C', 'D'][oIdx] || oIdx + 1}
                                 </span>
-                                <span className="leading-snug">{opt}</span>
+                                <span className="leading-snug flex-1">
+                                  <MathRenderer content={opt} inline />
+                                </span>
                               </button>
                             );
                           })}
@@ -295,7 +298,14 @@ export default function StudyView() {
                               ) : (
                                 <>
                                   <span className="w-5 h-5 rounded-full bg-rose-200 text-rose-800 flex items-center justify-center font-black shrink-0 text-xs">✕</span>
-                                  <span>Nesprávně.{step.correctAnswer ? ` Správná odpověď je: ${step.correctAnswer}` : ''}</span>
+                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                    <span>Nesprávně.</span>
+                                    {step.correctAnswer && (
+                                      <span>
+                                        Správná odpověď je: <MathRenderer content={step.correctAnswer} inline />
+                                      </span>
+                                    )}
+                                  </span>
                                 </>
                               )}
                             </div>
