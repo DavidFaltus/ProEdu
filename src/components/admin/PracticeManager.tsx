@@ -1304,24 +1304,51 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                             })}
                           </div>
 
-                          <div className="space-y-1 pt-1">
-                            <label className="text-[10px] font-bold text-gray-500 block">Zvolená správná odpověď:</label>
-                            <select
-                              value={step.correctAnswer || ''}
-                              onChange={e => updateStep(idx, 'correctAnswer', e.target.value)}
-                              className="w-full h-8 px-2.5 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-1 focus:ring-black cursor-pointer"
-                            >
-                              <option value="">-- Vyberte správnou možnost ze zadaných --</option>
+                          <div className="space-y-1.5 pt-1.5 border-t border-gray-100">
+                            <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
+                              Zvolená správná odpověď:
+                            </label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                               {[0, 1, 2, 3].map(optIdx => {
+                                const letter = ['A', 'B', 'C', 'D'][optIdx];
                                 const val = step.testOptions?.[optIdx]?.trim();
+                                const isCorrect = Boolean(val && step.correctAnswer === val);
                                 if (!val) return null;
+
                                 return (
-                                  <option key={optIdx} value={val}>
-                                    {['A', 'B', 'C', 'D'][optIdx]}: {val}
-                                  </option>
+                                  <button
+                                    key={optIdx}
+                                    type="button"
+                                    onClick={() => updateStep(idx, 'correctAnswer', val)}
+                                    className={`flex items-center gap-2 p-1.5 px-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                                      isCorrect
+                                        ? 'bg-emerald-50 border-emerald-500 ring-1 ring-emerald-500 shadow-2xs'
+                                        : 'bg-white border-gray-200 hover:bg-gray-50'
+                                    }`}
+                                  >
+                                    <span className={`w-5 h-5 rounded-md text-[10px] font-black flex items-center justify-center shrink-0 ${
+                                      isCorrect ? 'bg-emerald-600 text-white' : 'bg-gray-100 text-gray-700'
+                                    }`}>
+                                      {letter}
+                                    </span>
+                                    <div className="flex-1 min-w-0 text-xs font-bold text-gray-900 truncate">
+                                      <MathRenderer content={val} inline />
+                                    </div>
+                                    {isCorrect && (
+                                      <span className="text-[9px] font-black text-emerald-700 bg-emerald-100 px-1.5 py-0.2 rounded uppercase shrink-0">
+                                        ✓
+                                      </span>
+                                    )}
+                                  </button>
                                 );
                               })}
-                            </select>
+                            </div>
+                            {step.correctAnswer && (
+                              <div className="flex items-center gap-1.5 p-2 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-bold text-emerald-950 mt-1">
+                                <span className="text-[10px] uppercase tracking-wider text-emerald-700">Správně:</span>
+                                <MathRenderer content={step.correctAnswer} inline />
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -1620,28 +1647,75 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   })}
                 </div>
 
-                {/* Dropdown picker for correct answer */}
-                <div className="pt-2 border-t border-gray-200 space-y-1">
-                  <label className="text-[11px] font-bold text-gray-700 block">
-                    Výběr správné odpovědi z možností:
-                  </label>
-                  <select
-                    required
-                    value={editingQuestion?.correctAnswer || ''}
-                    onChange={e => setEditingQuestion(prev => ({ ...prev, correctAnswer: e.target.value }))}
-                    className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black cursor-pointer"
-                  >
-                    <option value="">-- Vyberte správnou možnost ze 4 zadaných --</option>
+                {/* Visual Picker for correct answer */}
+                <div className="pt-3 border-t border-gray-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-800 block">
+                      Výběr správné odpovědi z možností (A–D): *
+                    </label>
+                    <span className="text-[10px] text-gray-400 font-medium">Klikněte na možnost pro označení správné</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {['A', 'B', 'C', 'D'].map((letter, idx) => {
-                      const val = (editingQuestion.options && editingQuestion.options[idx])?.trim();
-                      if (!val) return null;
+                      const val = (editingQuestion.options && editingQuestion.options[idx])?.trim() || '';
+                      const isCorrect = Boolean(val && editingQuestion.correctAnswer === val);
+
                       return (
-                        <option key={idx} value={val}>
-                          {letter}: {val}
-                        </option>
+                        <button
+                          key={idx}
+                          type="button"
+                          disabled={!val}
+                          onClick={() => {
+                            if (val) {
+                              setEditingQuestion(prev => ({ ...prev, correctAnswer: val }));
+                            }
+                          }}
+                          className={`flex items-center gap-2.5 p-3 rounded-2xl border text-left transition-all cursor-pointer ${
+                            !val 
+                              ? 'opacity-40 bg-gray-50 border-dashed border-gray-200 cursor-not-allowed'
+                              : isCorrect
+                                ? 'bg-emerald-50/90 border-emerald-500 shadow-xs ring-2 ring-emerald-500/20'
+                                : 'bg-white border-gray-200 hover:border-gray-400 hover:bg-gray-50'
+                          }`}
+                        >
+                          <span className={`w-7 h-7 rounded-xl text-xs font-black flex items-center justify-center shrink-0 transition-colors ${
+                            isCorrect 
+                              ? 'bg-emerald-600 text-white shadow-xs' 
+                              : 'bg-gray-100 text-gray-700'
+                          }`}>
+                            {letter}
+                          </span>
+                          
+                          <div className="flex-1 min-w-0 text-sm font-bold text-gray-900 leading-snug">
+                            {val ? (
+                              <MathRenderer content={val} inline />
+                            ) : (
+                              <span className="text-xs text-gray-400 italic font-normal">Nevyplněno</span>
+                            )}
+                          </div>
+
+                          {isCorrect && (
+                            <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg uppercase tracking-wider shrink-0 flex items-center gap-1">
+                              <CheckCircle2 size={13} />
+                              <span>Správná</span>
+                            </span>
+                          )}
+                        </button>
                       );
                     })}
-                  </select>
+                  </div>
+
+                  {editingQuestion.correctAnswer && (
+                    <div className="flex items-center gap-2.5 p-3 bg-emerald-50/80 border border-emerald-200 rounded-2xl text-xs text-emerald-950 mt-1">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 shrink-0">
+                        Aktivní správná odpověď:
+                      </span>
+                      <div className="font-bold text-sm bg-white px-3 py-1 rounded-xl border border-emerald-200 shadow-2xs">
+                        <MathRenderer content={editingQuestion.correctAnswer} inline />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
