@@ -15,7 +15,7 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { 
-  getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt 
+  getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice 
 } from '../services/practiceService';
 import { submitInquiry } from '../services/inquiryService';
 import { sanitizeSvg } from '../utils/pdfToSvg';
@@ -72,7 +72,8 @@ export default function PracticeSession() {
         setSubtopic(subData);
 
         const qData = await getQuestionsForSubtopic(subtopicId);
-        setQuestions(qData);
+        const sampled = sampleQuestionsForPractice(qData, subData?.practiceConfig);
+        setQuestions(sampled);
       } catch (err) {
         console.error('Failed to load practice questions:', err);
       } finally {
@@ -570,6 +571,15 @@ export default function PracticeSession() {
             </span>
             <span className="px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-gray-100 text-gray-700">
               {currentQuestion.type === 'choice' ? 'Výběr z možností' : 'Vepisovací otázka'}
+            </span>
+            <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border ${
+              (currentQuestion.difficulty || 'Střední') === 'Lehká'
+                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                : (currentQuestion.difficulty || 'Střední') === 'Těžká'
+                  ? 'bg-rose-50 text-rose-800 border-rose-200'
+                  : 'bg-amber-50 text-amber-900 border-amber-200'
+            }`}>
+              {currentQuestion.difficulty || 'Střední'}
             </span>
           </div>
 

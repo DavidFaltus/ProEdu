@@ -29,8 +29,8 @@ test('buildSubtopicUpdatePayload preserves all existing fields when partial upda
   const partialUpdate: Partial<PracticeSubtopic> = {
     id: 'sub_123',
     studySteps: [
-      { title: 'Krok 1', content: 'Rozdíl být a bít', tutorTip: 'Pozor na kontext věty' },
-      { title: 'Krok 2', content: 'Bylina a příbuzná slova' }
+      { title: 'Krok 1', content: 'Rozdíl být a bít', tutorTip: 'Pozor na kontext věty', imageUrl: 'https://example.com/step1.png' },
+      { title: 'Krok 2', content: 'Bylina a příbuzná slova', svgContent: '<svg>step2</svg>' }
     ],
     hasStudyMaterial: true
   };
@@ -53,9 +53,11 @@ test('buildSubtopicUpdatePayload preserves all existing fields when partial upda
     correctAnswer: 'byl'
   });
 
-  // 3. New studySteps must be applied
+  // 3. New studySteps must be applied including imageUrl and svgContent
   assert.equal(merged.studySteps?.length, 2);
+  assert.equal(merged.studySteps?.[0].imageUrl, 'https://example.com/step1.png');
   assert.equal(merged.studySteps?.[1].title, 'Krok 2');
+  assert.equal(merged.studySteps?.[1].svgContent, '<svg>step2</svg>');
 
   // 4. Immutable ownership fields must NOT be overwritten
   assert.equal(merged.createdBy, 'original_teacher_uid');
@@ -88,4 +90,34 @@ test('buildSubtopicUpdatePayload allows updating explicit fields without erasing
   assert.equal(merged.topicId, 'topic_equations');
   assert.equal(merged.subjectId, 'Matematika');
   assert.equal(merged.studyTheory, 'Ekvivalentní úpravy');
+});
+
+test('buildSubtopicUpdatePayload does NOT produce undefined fields on studySteps', () => {
+  const existing: PracticeSubtopic = {
+    id: 'sub_789',
+    title: 'Test',
+    topicId: 't1',
+    subjectId: 'Matematika'
+  };
+
+  const update: Partial<PracticeSubtopic> = {
+    studySteps: [
+      { title: 'Krok 1', content: 'Text 1' } // no imageUrl, svgContent, testQuestion, tutorTip
+    ]
+  };
+
+  const merged = buildSubtopicUpdatePayload(existing, update);
+  const step = merged.studySteps![0];
+
+  assert.equal(step.title, 'Krok 1');
+  assert.equal(step.content, 'Text 1');
+  assert.equal('imageUrl' in step, false, 'imageUrl should NOT exist with undefined value');
+  assert.equal('svgContent' in step, false, 'svgContent should NOT exist with undefined value');
+  assert.equal('tutorTip' in step, false, 'tutorTip should NOT exist with undefined value');
+  assert.equal('testQuestion' in step, false, 'testQuestion should NOT exist with undefined value');
+
+  // Verify none of the keys in step have value undefined
+  for (const [k, v] of Object.entries(step)) {
+    assert.notEqual(v, undefined, `Key ${k} must not have value undefined`);
+  }
 });

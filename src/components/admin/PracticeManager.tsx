@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
-  Image as ImageIcon, Eye, AlertTriangle, Loader2
+  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -13,13 +13,13 @@ import {
   getTopics, getSubtopics, getQuestionsForSubtopic, 
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
   saveQuestion, deleteQuestion, seedInitialPracticeData, PREDEFINED_SUBJECTS,
-  ExistingMaterialItem,
+  ExistingMaterialItem, cleanStudyStep,
   parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
   parseStudyStepsExcelFile, importStudyStepsToFirestore,
   PracticeExcelParseResult, StudyExcelParseResult,
   PracticeImportStats, StudyImportStats
 } from '../../services/practiceService';
-import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyStep } from '../../types';
+import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyStep, PracticeConfig } from '../../types';
 import { auth } from '../../lib/firebase';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
@@ -49,6 +49,16 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [editingSubtopic, setEditingSubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
   const [subtopicParentTopicId, setSubtopicParentTopicId] = useState<string>('');
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
+  const [isStudyContentModalOpen, setIsStudyContentModalOpen] = useState(false);
+  const [editingStudySubtopic, setEditingStudySubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
+
+  const [isPracticeConfigModalOpen, setIsPracticeConfigModalOpen] = useState(false);
+  const [configuringSubtopic, setConfiguringSubtopic] = useState<PracticeSubtopic | null>(null);
+  const [practiceConfigForm, setPracticeConfigForm] = useState<{
+    easyCount: number;
+    mediumCount: number;
+    hardCount: number;
+  }>({ easyCount: 0, mediumCount: 0, hardCount: 0 });
 
   const [isQuestionModalOpen, setIsQuestionModalOpen] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Partial<PracticeQuestion> | null>(null);
@@ -168,22 +178,168 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     });
   };
 
-  // --- SUBTOPIC ACTIONS ---
+  // --- SUBTOPIC ACTIONS (BASIC INFO) ---
+  const handleOpenNewSubtopic = (topicId: string) => {
+    setSubtopicParentTopicId(topicId);
+    setEditingSubtopic({
+      title: '',
+      description: '',
+      topicId: topicId,
+      subjectId: activeSubject
+    });
+    setIsSubtopicModalOpen(true);
+  };
+
+  const handleOpenEditSubtopic = (sub: PracticeSubtopic) => {
+    setSubtopicParentTopicId(sub.topicId);
+    setEditingSubtopic({
+      id: sub.id,
+      title: sub.title,
+      description: sub.description || '',
+      topicId: sub.topicId,
+      subjectId: sub.subjectId
+    });
+    setIsSubtopicModalOpen(true);
+  };
+
+  const handleSaveSubtopic = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingSubtopic?.title?.trim()) {
+      toast.error('Zadejte prosím název podtématu.');
+      return;
+    }
+
+    try {
+      await saveSubtopic({
+        id: editingSubtopic.id,
+        title: editingSubtopic.title.trim(),
+        description: editingSubtopic.description?.trim() || '',
+        topicId: subtopicParentTopicId,
+        subjectId: activeSubject
+      }, effectiveUserId);
+      toast.success(editingSubtopic.id ? 'Podtéma bylo úspěšně upraveno' : 'Podtéma bylo úspěšně vytvořeno');
+      setIsSubtopicModalOpen(false);
+      setEditingSubtopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  // --- STUDY CONTENT ACTIONS ---
+  const handleOpenStudyContent = (sub: PracticeSubtopic) => {
+    setEditingStudySubtopic({
+      ...sub,
+      studySteps: sub.studySteps?.length
+        ? sub.studySteps.map(cleanStudyStep)
+        : [{ title: 'Krok 1', content: '' }],
+      sampleProblem: sub.sampleProblem || { problem: '', correctAnswer: '', options: ['', '', '', ''], explanation: '' }
+    });
+    setIsStudyContentModalOpen(true);
+  };
+
+  const handleSaveStudyContent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingStudySubtopic?.id) return;
+
+    try {
+      const cleanSteps: StudyStep[] = (editingStudySubtopic.studySteps || [])
+        .filter(s => s.title?.trim() || s.content?.trim() || s.imageUrl || s.svgContent)
+        .map(cleanStudyStep);
+
+      await saveSubtopic({
+        id: editingStudySubtopic.id,
+        hasStudyMaterial: true,
+        svgUrl: editingStudySubtopic.svgUrl || null,
+        svgContent: editingStudySubtopic.svgContent || null,
+        studyTheory: editingStudySubtopic.studyTheory?.trim() || '',
+        sampleProblem: editingStudySubtopic.sampleProblem,
+        studySteps: cleanSteps
+      }, effectiveUserId);
+      toast.success('Studijní výklad byl úspěšně uložen');
+      setIsStudyContentModalOpen(false);
+      setEditingStudySubtopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  // --- PRACTICE CONFIG ACTIONS ("Upravit Procvičování") ---
+  const handleOpenPracticeConfig = (sub: PracticeSubtopic) => {
+    setConfiguringSubtopic(sub);
+    setPracticeConfigForm({
+      easyCount: sub.practiceConfig?.easyCount ?? 0,
+      mediumCount: sub.practiceConfig?.mediumCount ?? 0,
+      hardCount: sub.practiceConfig?.hardCount ?? 0
+    });
+    setIsPracticeConfigModalOpen(true);
+  };
+
+  const handleSavePracticeConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!configuringSubtopic?.id) return;
+
+    const easy = Math.max(0, Math.floor(Number(practiceConfigForm.easyCount) || 0));
+    const med = Math.max(0, Math.floor(Number(practiceConfigForm.mediumCount) || 0));
+    const hard = Math.max(0, Math.floor(Number(practiceConfigForm.hardCount) || 0));
+    const total = easy + med + hard;
+
+    try {
+      const configToSave = total > 0 ? {
+        easyCount: easy,
+        mediumCount: med,
+        hardCount: hard,
+        totalCount: total
+      } : null;
+
+      await saveSubtopic({
+        id: configuringSubtopic.id,
+        practiceConfig: configToSave as any
+      }, effectiveUserId);
+
+      toast.success(total > 0
+        ? `Konfigurace procvičování uložena (celkem ${total} otázek pro žáka)`
+        : 'Nastaveno procvičování všech dostupných otázek'
+      );
+      setIsPracticeConfigModalOpen(false);
+      setConfiguringSubtopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při ukládání konfigurace: ' + err.message);
+    }
+  };
+
+  const handleResetPracticeConfig = async () => {
+    if (!configuringSubtopic?.id) return;
+    try {
+      await saveSubtopic({
+        id: configuringSubtopic.id,
+        practiceConfig: null as any
+      }, effectiveUserId);
+      toast.success('Konfigurace byla resetována. Žáci budou procvičovat všechny dostupné otázky.');
+      setIsPracticeConfigModalOpen(false);
+      setConfiguringSubtopic(null);
+      await loadData();
+    } catch (err: any) {
+      toast.error('Chyba při resetování konfigurace: ' + err.message);
+    }
+  };
+
   const handleSelectMaterial = (mat: ExistingMaterialItem) => {
-    setEditingSubtopic(prev => ({
+    setEditingStudySubtopic(prev => ({
       ...prev,
       svgContent: mat.svgContent || '',
       svgUrl: mat.svgUrl || '',
       hasStudyMaterial: true,
-      studyTheory: prev?.studyTheory || mat.studyTheory || '',
-      title: prev?.title || mat.title
+      studyTheory: prev?.studyTheory || mat.studyTheory || ''
     }));
     toast.success(`Materiál "${mat.title}" byl přiřazen k tomuto podtématu.`);
   };
 
   const addStep = () => {
-    const current = editingSubtopic?.studySteps || [];
-    setEditingSubtopic(prev => ({
+    const current = editingStudySubtopic?.studySteps || [];
+    setEditingStudySubtopic(prev => ({
       ...prev,
       studySteps: [
         ...current,
@@ -193,21 +349,23 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           testQuestion: '',
           testOptions: ['', '', '', ''],
           correctAnswer: '',
-          tutorTip: ''
+          tutorTip: '',
+          imageUrl: '',
+          svgContent: ''
         }
       ]
     }));
   };
 
   const removeStep = (idx: number) => {
-    setEditingSubtopic(prev => ({
+    setEditingStudySubtopic(prev => ({
       ...prev,
       studySteps: (prev?.studySteps || []).filter((_, i) => i !== idx)
     }));
   };
 
   const updateStep = (idx: number, field: keyof StudyStep, value: any) => {
-    setEditingSubtopic(prev => {
+    setEditingStudySubtopic(prev => {
       const updated = [...(prev?.studySteps || [])];
       updated[idx] = {
         ...updated[idx],
@@ -221,7 +379,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   };
 
   const updateStepOption = (stepIdx: number, optIdx: number, value: string) => {
-    setEditingSubtopic(prev => {
+    setEditingStudySubtopic(prev => {
       const updated = [...(prev?.studySteps || [])];
       const step = { ...updated[stepIdx] };
       const currentOpts = [...(step.testOptions || ['', '', '', ''])];
@@ -236,94 +394,6 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         studySteps: updated
       };
     });
-  };
-
-  const handleOpenNewSubtopic = (topicId: string) => {
-    setSubtopicParentTopicId(topicId);
-    setEditingSubtopic({
-      title: '',
-      description: '',
-      topicId: topicId,
-      subjectId: activeSubject,
-      svgUrl: '',
-      svgContent: '',
-      studyTheory: '',
-      studySteps: [
-        {
-          title: 'Krok 1',
-          content: '',
-          testQuestion: '',
-          testOptions: ['', '', '', ''],
-          correctAnswer: '',
-          tutorTip: ''
-        }
-      ],
-      sampleProblem: {
-        problem: '',
-        correctAnswer: '',
-        options: ['', '', '', ''],
-        explanation: ''
-      }
-    });
-    setIsSubtopicModalOpen(true);
-  };
-
-  const handleOpenEditSubtopic = (sub: PracticeSubtopic) => {
-    setSubtopicParentTopicId(sub.topicId);
-    setEditingSubtopic({
-      ...sub,
-      studySteps: sub.studySteps?.length
-        ? sub.studySteps.map(s => ({
-            ...s,
-            testOptions: s.testOptions && s.testOptions.length > 0 ? s.testOptions : ['', '', '', '']
-          }))
-        : [{ title: 'Krok 1', content: '', testQuestion: '', testOptions: ['', '', '', ''], correctAnswer: '', tutorTip: '' }],
-      sampleProblem: sub.sampleProblem || { problem: '', correctAnswer: '', options: ['', '', '', ''], explanation: '' }
-    });
-    setIsSubtopicModalOpen(true);
-  };
-
-  const handleSaveSubtopic = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingSubtopic?.title?.trim()) {
-      toast.error('Zadejte prosím název podtémata.');
-      return;
-    }
-
-    try {
-      const cleanSteps: StudyStep[] = (editingSubtopic.studySteps || [])
-        .filter(s => s.title?.trim() || s.content?.trim())
-        .map(s => {
-          const rawOpts = (s.testOptions || []).map(o => o.trim());
-          const hasAnyOpt = rawOpts.some(Boolean);
-          const validOpts = hasAnyOpt ? rawOpts : undefined;
-          const correct = s.correctAnswer?.trim() || undefined;
-
-          return {
-            title: s.title?.trim() || 'Krok',
-            content: s.content?.trim() || '',
-            testQuestion: s.testQuestion?.trim() || undefined,
-            testOptions: validOpts,
-            correctAnswer: correct,
-            tutorTip: s.tutorTip?.trim() || undefined
-          };
-        });
-
-      await saveSubtopic({
-        ...editingSubtopic,
-        title: editingSubtopic.title.trim(),
-        description: editingSubtopic.description?.trim() || '',
-        topicId: subtopicParentTopicId,
-        subjectId: activeSubject,
-        studySteps: cleanSteps
-      }, effectiveUserId);
-      toast.success(editingSubtopic.id ? 'Podtéma bylo úspěšně upraveno' : 'Podtéma bylo úspěšně vytvořeno');
-      setIsSubtopicModalOpen(false);
-      setEditingSubtopic(null);
-      await loadData();
-    } catch (err: any) {
-      toast.error('Chyba při ukládání: ' + err.message);
-    }
   };
 
   const handleDeleteSubtopic = (subId: string, title: string) => {
@@ -439,6 +509,88 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       setConversionMsg('');
       e.target.value = '';
     }
+  };
+
+  const [uploadingStepIdx, setUploadingStepIdx] = useState<number | null>(null);
+  const [stepConversionMsg, setStepConversionMsg] = useState('');
+
+  const handleStepImageUpload = async (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const validExts = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'pdf'];
+    if (!ext || !validExts.includes(ext)) {
+      toast.error('Nahrajte prosím obrázek (PNG, JPG, WebP, SVG) nebo PDF.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Soubor je příliš velký (maximum 15 MB).');
+      return;
+    }
+
+    setUploadingStepIdx(stepIdx);
+    setStepConversionMsg('Převádím soubor na vektorové SVG...');
+    try {
+      const res = await convertFileToSvg(file, (msg) => setStepConversionMsg(msg));
+      setEditingStudySubtopic(prev => {
+        const updated = [...(prev?.studySteps || [])];
+        updated[stepIdx] = {
+          ...updated[stepIdx],
+          svgContent: res.svgString,
+          imageUrl: res.thumbnailDataUrl || ''
+        };
+        return {
+          ...prev,
+          studySteps: updated
+        };
+      });
+      toast.success(
+        ext === 'svg'
+          ? 'SVG soubor úspěšně načten a vložen ke kroku!'
+          : ext === 'pdf'
+            ? 'PDF úspěšně převedeno na vektorové SVG a vloženo ke kroku!'
+            : 'Obrázek byl úspěšně převeden do formátu SVG a vložen ke kroku!'
+      );
+    } catch (err: any) {
+      console.error('Error processing step image/svg:', err);
+      toast.error('Nepodařilo se zpracovat soubor: ' + (err.message || ''));
+    } finally {
+      setUploadingStepIdx(null);
+      setStepConversionMsg('');
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveStepImage = (stepIdx: number) => {
+    setEditingStudySubtopic(prev => {
+      const updated = [...(prev?.studySteps || [])];
+      updated[stepIdx] = {
+        ...updated[stepIdx],
+        svgContent: '',
+        imageUrl: ''
+      };
+      return {
+        ...prev,
+        studySteps: updated
+      };
+    });
+  };
+
+  const handleStepImageUrlChange = (stepIdx: number, url: string) => {
+    setEditingStudySubtopic(prev => {
+      const updated = [...(prev?.studySteps || [])];
+      updated[stepIdx] = {
+        ...updated[stepIdx],
+        imageUrl: url,
+        svgContent: ''
+      };
+      return {
+        ...prev,
+        studySteps: updated
+      };
+    });
   };
 
   const handleDeleteQuestion = (questionId: string, questionText?: string) => {
@@ -827,6 +979,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 <span className="text-[11px] font-bold text-gray-500 bg-white px-2.5 py-0.5 rounded-md border border-gray-200">
                                   {questions.length} {questions.length === 1 ? 'otázka' : questions.length < 5 ? 'otázky' : 'otázek'}
                                 </span>
+
+                                {sub.practiceConfig && (sub.practiceConfig.totalCount ?? 0) > 0 && (
+                                  <span className="text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-md flex items-center gap-1 shadow-2xs" title="Aktivní konfigurace výběru otázek">
+                                    <SlidersHorizontal size={11} />
+                                    <span>
+                                      Výběr {sub.practiceConfig.totalCount} ({sub.practiceConfig.easyCount ?? 0}L / {sub.practiceConfig.mediumCount ?? 0}S / {sub.practiceConfig.hardCount ?? 0}T)
+                                    </span>
+                                  </span>
+                                )}
                               </div>
 
                               {sub.description && (
@@ -846,7 +1007,18 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               </Button>
 
                               <Button
-                                onClick={() => handleOpenEditSubtopic(sub)}
+                                onClick={() => handleOpenPracticeConfig(sub)}
+                                variant="outline"
+                                size="sm"
+                                className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
+                                title="Nastavit počet a distribuci obtížností pro studenty"
+                              >
+                                <SlidersHorizontal size={13} />
+                                <span>Upravit Procvičování</span>
+                              </Button>
+
+                              <Button
+                                onClick={() => handleOpenStudyContent(sub)}
                                 variant="outline"
                                 size="sm"
                                 className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
@@ -864,6 +1036,16 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               >
                                 <Eye size={13} />
                                 <span>Náhled studia</span>
+                              </Button>
+
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenEditSubtopic(sub)}
+                                className="rounded-xl h-8 w-8 p-0 text-gray-500 hover:text-black cursor-pointer"
+                                title="Upravit podtéma (název a popis)"
+                              >
+                                <Edit2 size={14} />
                               </Button>
 
                               <Button
@@ -904,6 +1086,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                             q.type === 'choice' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
                                           }`}>
                                             {q.type === 'choice' ? '4 možnosti' : 'Volná odpověď'}
+                                          </span>
+                                          <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider border ${
+                                            (q.difficulty || 'Střední') === 'Lehká' 
+                                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                                              : (q.difficulty || 'Střední') === 'Těžká'
+                                                ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                                          }`}>
+                                            {q.difficulty || 'Střední'}
                                           </span>
                                           {(q.svgContent || q.imageUrl) && (
                                             <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0" title={q.svgContent ? 'Otázka má vložené vektorové SVG zadání' : 'Otázka má přiložený obrázek'}>
@@ -1014,25 +1205,17 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       </Dialog>
 
       {/* ------------------------------------------------------------- */}
-      {/* MODAL 2: CREATE / EDIT SUBTOPIC & STUDY MATERIAL              */}
+      {/* MODAL 2: CREATE / EDIT SUBTOPIC (METADATA)                     */}
       {/* ------------------------------------------------------------- */}
       <Dialog open={isSubtopicModalOpen} onOpenChange={setIsSubtopicModalOpen}>
-        <DialogContent className="rounded-3xl p-6 sm:p-10 w-full sm:max-w-5xl lg:max-w-6xl xl:max-w-7xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
-              {editingSubtopic?.id ? 'Upravit podtéma a látku' : 'Nové podtéma a látka'}
+              {editingSubtopic?.id ? 'Upravit podtéma' : 'Nové podtéma'}
             </DialogTitle>
           </DialogHeader>
 
-
-          <form 
-            onSubmit={handleSaveSubtopic} 
-            className="space-y-5 py-2"
-            onFocusCapture={handleInputTrack}
-            onSelectCapture={handleInputTrack}
-            onKeyUpCapture={handleInputTrack}
-            onMouseUpCapture={handleInputTrack}
-          >
+          <form onSubmit={handleSaveSubtopic} className="space-y-4 py-2">
             {/* Prominent Info Banner for Studovat Section */}
             <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 text-amber-950 shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
@@ -1043,56 +1226,83 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   Vytváříte podtéma i interaktivní sekci "Studovat"
                 </h5>
                 <p className="text-xs text-amber-800 font-medium leading-relaxed">
-                  Tento formulář zakládá nejen téma pro procvičování, ale zároveň kompletní interaktivní modul <strong>Studovat</strong> pro žáky. V sekci níže můžete přiložit grafický list, popsat teorii a vytvořit jednotlivé kroky výkladu.
+                  Tento formulář spravuje název a popis podtématu. Výukové materiály a kroky výkladu pro sekci <strong>Studovat</strong> můžete kdykoliv upravit samostatně kliknutím na tlačítko <strong>Upravit Studium</strong>.
                 </p>
               </div>
             </div>
 
-            <div className="bg-gray-50/70 p-4 sm:p-5 rounded-2xl border border-gray-200/70 space-y-4">
-              <h5 className="text-xs font-bold uppercase tracking-wider text-gray-700">Základní informace o podtématu</h5>
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">Název podtémata *</label>
-                <Input
-                  required
-                  value={editingSubtopic?.title || ''}
-                  onChange={e => setEditingSubtopic(prev => ({ ...prev, title: e.target.value }))}
-                  placeholder="Např. Zlomky a smíšená čísla"
-                  className="rounded-xl h-11 font-medium bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">Popis podtémata</label>
-                <Input
-                  value={editingSubtopic?.description || ''}
-                  onChange={e => setEditingSubtopic(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Krátké vysvětlení, co se zde student naučí..."
-                  className="rounded-xl h-11 font-medium bg-white"
-                />
-              </div>
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Předmět</label>
+              <Input
+                disabled
+                value={activeSubject}
+                className="rounded-xl h-11 bg-gray-100 font-bold"
+              />
             </div>
 
-            {/* SEKCĚ STUDOVAT - ZVÝRAZNĚNÝ KONTEJNER */}
-            <div className="rounded-2xl border-2 border-amber-300 bg-amber-50/30 p-5 sm:p-6 space-y-5 shadow-xs">
-              <div className="flex items-center justify-between pb-3 border-b border-amber-200/80">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-8 h-8 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs">
-                    <BookOpen size={16} />
-                  </div>
-                  <div>
-                    <h4 className="font-display font-black text-base text-[#1E1B18] flex items-center gap-2">
-                      <span>Sekce Studovat (Výklad látky & Grafický list)</span>
-                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-200 text-amber-900 px-2 py-0.5 rounded-md">
-                        Interaktivní výuka
-                      </span>
-                    </h4>
-                    <p className="text-xs text-gray-500 font-medium">
-                      Tento obsah se žákovi zobrazí po kliknutí na tlačítko "Studovat".
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Název podtémata *</label>
+              <Input
+                required
+                value={editingSubtopic?.title || ''}
+                onChange={e => setEditingSubtopic(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="Např. Zlomky a smíšená čísla"
+                className="rounded-xl h-11 font-medium bg-white"
+              />
+            </div>
 
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">Popis podtémata</label>
+              <textarea
+                rows={2}
+                value={editingSubtopic?.description || ''}
+                onChange={e => setEditingSubtopic(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Krátké vysvětlení, co se zde student naučí..."
+                className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium"
+              />
+            </div>
+
+            <DialogFooter className="pt-2">
+              <Button type="button" variant="outline" onClick={() => setIsSubtopicModalOpen(false)} className="rounded-xl cursor-pointer">
+                Zrušit
+              </Button>
+              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold cursor-pointer">
+                {editingSubtopic?.id ? 'Uložit podtéma' : 'Vytvořit podtéma'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 2B: EDIT STUDY CONTENT & MATERIAL                        */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isStudyContentModalOpen} onOpenChange={setIsStudyContentModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-10 w-full sm:max-w-5xl lg:max-w-6xl xl:max-w-7xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                <BookOpen size={20} />
+              </div>
+              <div>
+                <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
+                  Studijní výklad: {editingStudySubtopic?.title || 'Podtéma'}
+                </DialogTitle>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  Správa grafického výukového listu, teoretického výkladu a jednotlivých kroků pro žáky.
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <form 
+            onSubmit={handleSaveStudyContent} 
+            className="space-y-5 py-2"
+            onFocusCapture={handleInputTrack}
+            onSelectCapture={handleInputTrack}
+            onKeyUpCapture={handleInputTrack}
+            onMouseUpCapture={handleInputTrack}
+          >
             {/* Grafický list: Drag & Drop PDF / SVG + Výběr z materiálů */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1112,19 +1322,18 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               </div>
 
               <PdfSvgDropzone
-                valueSvgString={editingSubtopic?.svgContent}
-                valueSvgUrl={editingSubtopic?.svgUrl}
+                valueSvgString={editingStudySubtopic?.svgContent}
+                valueSvgUrl={editingStudySubtopic?.svgUrl}
                 onChange={(res) => {
                   if (res) {
-                    setEditingSubtopic(prev => ({
+                    setEditingStudySubtopic(prev => ({
                       ...prev,
                       svgContent: res.svgString,
                       svgUrl: '',
-                      hasStudyMaterial: true,
-                      title: prev?.title || res.fileName.replace(/\.(pdf|svg)$/i, '')
+                      hasStudyMaterial: true
                     }));
                   } else {
-                    setEditingSubtopic(prev => ({
+                    setEditingStudySubtopic(prev => ({
                       ...prev,
                       svgContent: '',
                       svgUrl: ''
@@ -1138,8 +1347,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <label className="text-xs font-bold text-gray-700 block mb-1">Teoretický výklad / Popis látky</label>
               <textarea
                 rows={4}
-                value={editingSubtopic?.studyTheory || ''}
-                onChange={e => setEditingSubtopic(prev => ({ ...prev, studyTheory: e.target.value }))}
+                value={editingStudySubtopic?.studyTheory || ''}
+                onChange={e => setEditingStudySubtopic(prev => ({ ...prev, studyTheory: e.target.value }))}
                 placeholder="Podrobné vysvětlení pravidel, pouček a vzorců..."
                 className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium leading-relaxed"
               />
@@ -1167,7 +1376,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 </Button>
               </div>
 
-              {(!editingSubtopic?.studySteps || editingSubtopic.studySteps.length === 0) ? (
+              {(!editingStudySubtopic?.studySteps || editingStudySubtopic.studySteps.length === 0) ? (
                 <div className="text-center py-6 px-4 bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
                   <p className="text-xs text-gray-400 font-medium">Toto podtéma zatím nemá žádné studijní kroky.</p>
                   <Button
@@ -1175,14 +1384,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                     variant="outline"
                     size="sm"
                     onClick={addStep}
-                    className="rounded-xl text-xs font-bold"
+                    className="rounded-xl text-xs font-bold cursor-pointer"
                   >
                     <Plus size={13} className="mr-1" /> Vytvořit první krok
                   </Button>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {editingSubtopic.studySteps.map((step, idx) => (
+                  {editingStudySubtopic.studySteps.map((step, idx) => (
                     <div key={idx} className="p-4 sm:p-5 rounded-2xl border border-gray-200 bg-gray-50/60 space-y-4 relative">
                       {/* Step Header */}
                       <div className="flex items-start justify-between gap-3">
@@ -1230,6 +1439,90 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs space-y-1">
                             <span className="font-bold text-gray-500 block">Náhled výkladu:</span>
                             <MathRenderer content={step.content} />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Step Image / SVG */}
+                      <div className="space-y-2.5 bg-[#FAF7F0] p-4 rounded-2xl border border-gray-200/80 ml-0 sm:ml-9">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                            <ImageIcon size={15} className="text-amber-600" />
+                            <span>Grafický podklad / Obrázek ke kroku (volitelné - konvertuje se do SVG)</span>
+                          </label>
+                          {(step.svgContent || step.imageUrl) && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveStepImage(idx)}
+                              className="text-xs font-bold text-red-600 hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <Trash2 size={13} />
+                              <span>Odebrat obrázek</span>
+                            </button>
+                          )}
+                        </div>
+
+                        {uploadingStepIdx === idx ? (
+                          <div className="border-2 border-dashed border-amber-300 bg-amber-50/70 rounded-2xl p-5 text-center space-y-2 animate-pulse">
+                            <div className="w-7 h-7 border-3 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                            <p className="font-bold text-xs text-amber-900">{stepConversionMsg || 'Zpracovávám soubor a převádím do SVG...'}</p>
+                          </div>
+                        ) : (step.svgContent || step.imageUrl) ? (
+                          <div className="rounded-xl border border-gray-200 bg-white p-3 flex flex-col items-center justify-center space-y-2.5 shadow-2xs">
+                            {step.svgContent ? (
+                              <div 
+                                className="max-h-52 w-full overflow-hidden flex justify-center [&>svg]:max-h-52 [&>svg]:w-auto [&>svg]:max-w-full"
+                                dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
+                              />
+                            ) : (
+                              <img
+                                src={step.imageUrl}
+                                alt={`Náhled ke kroku ${idx + 1}`}
+                                className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
+                              />
+                            )}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveStepImage(idx)}
+                                className="px-2.5 py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                Změnit / Smazat obrázek
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                              {/* File Upload Button */}
+                              <label className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl text-xs font-bold text-gray-700 flex items-center justify-center gap-2 cursor-pointer shadow-2xs hover:border-black transition-all shrink-0">
+                                <Upload size={14} className="text-amber-600" />
+                                <span>Nahrát soubor (obrázek / SVG / PDF)</span>
+                                <input
+                                  type="file"
+                                  accept=".pdf,.svg,.png,.jpg,.jpeg,.webp,image/*,application/pdf"
+                                  className="hidden"
+                                  onChange={(e) => handleStepImageUpload(idx, e)}
+                                  disabled={uploadingStepIdx !== null}
+                                />
+                              </label>
+
+                              <span className="text-xs text-gray-400 font-semibold shrink-0">nebo URL:</span>
+
+                              {/* URL Input */}
+                              <div className="flex-1 w-full">
+                                <Input
+                                  type="text"
+                                  placeholder="https://... nebo /materials/obrazek.svg"
+                                  value={step.imageUrl || ''}
+                                  onChange={e => handleStepImageUrlChange(idx, e.target.value)}
+                                  className="rounded-xl h-9 text-xs bg-white"
+                                />
+                              </div>
+                            </div>
+                            <p className="text-[11px] text-gray-400 font-medium">
+                              Nahraný soubor se automaticky převede na SVG a zobrazí se žákům v tomto kroku výkladu.
+                            </p>
                           </div>
                         )}
                       </div>
@@ -1376,17 +1669,197 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 </div>
               )}
             </div>
-            </div>
 
             <DialogFooter className="pt-2">
-              <Button type="button" variant="outline" onClick={() => setIsSubtopicModalOpen(false)} className="rounded-xl">
+              <Button type="button" variant="outline" onClick={() => setIsStudyContentModalOpen(false)} className="rounded-xl cursor-pointer">
                 Zrušit
               </Button>
-              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold">
-                Uložit podtéma
+              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold cursor-pointer">
+                Uložit studium
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* ------------------------------------------------------------- */}
+      {/* MODAL 2C: EDIT PRACTICE CONFIGURATION ("Upravit Procvičování") */}
+      {/* ------------------------------------------------------------- */}
+      <Dialog open={isPracticeConfigModalOpen} onOpenChange={setIsPracticeConfigModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl">
+          <DialogHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                <SlidersHorizontal size={20} />
+              </div>
+              <div>
+                <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
+                  Upravit Procvičování
+                </DialogTitle>
+                <p className="text-xs text-gray-500 font-medium mt-0.5">
+                  {configuringSubtopic?.title || 'Podtéma'}
+                </p>
+              </div>
+            </div>
+          </DialogHeader>
+
+          {configuringSubtopic && (() => {
+            const subQuestions = questionsMap[configuringSubtopic.id] || [];
+            const availableEasy = subQuestions.filter(q => (q.difficulty || 'Střední') === 'Lehká').length;
+            const availableMed = subQuestions.filter(q => (q.difficulty || 'Střední') === 'Střední').length;
+            const availableHard = subQuestions.filter(q => (q.difficulty || 'Střední') === 'Těžká').length;
+            const totalAvailable = subQuestions.length;
+            const currentTotal = (Number(practiceConfigForm.easyCount) || 0) + (Number(practiceConfigForm.mediumCount) || 0) + (Number(practiceConfigForm.hardCount) || 0);
+
+            return (
+              <form onSubmit={handleSavePracticeConfig} className="space-y-5 py-2">
+                {/* Bank status overview */}
+                <div className="bg-gray-50/80 p-4 rounded-2xl border border-gray-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                      Otázky v bance podtématu:
+                    </span>
+                    <span className="text-xs font-black text-gray-800">
+                      Celkem {totalAvailable} {totalAvailable === 1 ? 'otázka' : totalAvailable < 5 ? 'otázky' : 'otázek'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                    <div className="p-2.5 bg-emerald-50/70 border border-emerald-200/70 rounded-xl">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 block">Lehké</span>
+                      <span className="text-lg font-black text-emerald-900">{availableEasy}</span>
+                    </div>
+                    <div className="p-2.5 bg-amber-50/70 border border-amber-200/70 rounded-xl">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 block">Střední</span>
+                      <span className="text-lg font-black text-amber-900">{availableMed}</span>
+                    </div>
+                    <div className="p-2.5 bg-rose-50/70 border border-rose-200/70 rounded-xl">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-rose-800 block">Těžké</span>
+                      <span className="text-lg font-black text-rose-900">{availableHard}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Form fields: counts per difficulty */}
+                <div className="space-y-3">
+                  <h5 className="text-xs font-bold uppercase tracking-wider text-gray-700">
+                    Kolik otázek vylosovat pro žáka:
+                  </h5>
+
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                        <div>
+                          <label className="text-xs font-bold text-gray-800 block">Počet lehkých otázek</label>
+                          <span className="text-[10px] text-gray-400">Dostupných: {availableEasy}</span>
+                        </div>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={practiceConfigForm.easyCount}
+                        onChange={e => setPracticeConfigForm(prev => ({ ...prev, easyCount: Math.max(0, parseInt(e.target.value, 10) || 0) }))}
+                        className="w-24 h-10 text-center font-bold text-sm rounded-xl"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-amber-500 shrink-0" />
+                        <div>
+                          <label className="text-xs font-bold text-gray-800 block">Počet středních otázek</label>
+                          <span className="text-[10px] text-gray-400">Dostupných: {availableMed}</span>
+                        </div>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={practiceConfigForm.mediumCount}
+                        onChange={e => setPracticeConfigForm(prev => ({ ...prev, mediumCount: Math.max(0, parseInt(e.target.value, 10) || 0) }))}
+                        className="w-24 h-10 text-center font-bold text-sm rounded-xl"
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3 p-3 bg-white border border-gray-200 rounded-2xl">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                        <div>
+                          <label className="text-xs font-bold text-gray-800 block">Počet těžkých otázek</label>
+                          <span className="text-[10px] text-gray-400">Dostupných: {availableHard}</span>
+                        </div>
+                      </div>
+                      <Input
+                        type="number"
+                        min="0"
+                        value={practiceConfigForm.hardCount}
+                        onChange={e => setPracticeConfigForm(prev => ({ ...prev, hardCount: Math.max(0, parseInt(e.target.value, 10) || 0) }))}
+                        className="w-24 h-10 text-center font-bold text-sm rounded-xl"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Callout */}
+                <div className={`p-4 rounded-2xl border text-xs font-medium space-y-1 ${
+                  currentTotal > 0
+                    ? 'bg-indigo-50/70 border-indigo-200 text-indigo-950'
+                    : 'bg-gray-50 border-gray-200 text-gray-600'
+                }`}>
+                  <div className="flex items-center justify-between font-bold">
+                    <span>Celkem otázek pro žáka:</span>
+                    <span className="text-sm font-black text-indigo-700">
+                      {currentTotal > 0 ? `${currentTotal} otázek` : 'Všechny otázky (bez omezení)'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    {currentTotal > 0
+                      ? 'Při spuštění procvičování systém náhodně vylosuje zadané počty a seřadí je od lehkých po těžké.'
+                      : 'Při zadání 0 (nebo nevyplnění) dostane student k procvičení všechny otázky z banky.'}
+                  </p>
+
+                  {(practiceConfigForm.easyCount > availableEasy ||
+                    practiceConfigForm.mediumCount > availableMed ||
+                    practiceConfigForm.hardCount > availableHard) && (
+                    <div className="pt-1 text-amber-800 font-bold flex items-center gap-1">
+                      <AlertTriangle size={13} className="shrink-0" />
+                      <span>
+                        Upozornění: Požadovaný počet některých otázek přesahuje aktuální počet v bance. Žákovi se vygeneruje tolik otázek, kolik jich je reálně k dispozici.
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={handleResetPracticeConfig}
+                    className="text-xs text-gray-500 hover:text-red-600 rounded-xl cursor-pointer w-full sm:w-auto"
+                  >
+                    Resetovat na všechny otázky
+                  </Button>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsPracticeConfigModalOpen(false)}
+                      className="rounded-xl cursor-pointer"
+                    >
+                      Zrušit
+                    </Button>
+                    <Button
+                      type="submit"
+                      className="rounded-xl bg-[#1E1B18] text-white font-bold cursor-pointer"
+                    >
+                      Uložit nastavení
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </form>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
@@ -1409,37 +1882,65 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             onKeyUpCapture={handleInputTrack}
             onMouseUpCapture={handleInputTrack}
           >
-            {/* Type selector */}
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1.5">Typ otázky</label>
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEditingQuestion(prev => ({ 
-                    ...prev, 
-                    type: 'choice',
-                    options: prev?.options?.length ? prev.options : ['', '', '', '']
-                  }))}
-                  className={`p-3.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                    editingQuestion?.type === 'choice'
-                      ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
-                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  Výběr ze 4 možností
-                </button>
+            {/* Type & Difficulty selector grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1.5">Typ otázky</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingQuestion(prev => ({ 
+                      ...prev, 
+                      type: 'choice',
+                      options: prev?.options?.length ? prev.options : ['', '', '', '']
+                    }))}
+                    className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      editingQuestion?.type === 'choice'
+                        ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    4 možnosti
+                  </button>
 
-                <button
-                  type="button"
-                  onClick={() => setEditingQuestion(prev => ({ ...prev, type: 'open' }))}
-                  className={`p-3.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-all ${
-                    editingQuestion?.type === 'open'
-                      ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
-                      : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-                  }`}
-                >
-                  Volná odpověď (Vepisovací)
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingQuestion(prev => ({ ...prev, type: 'open' }))}
+                    className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                      editingQuestion?.type === 'open'
+                        ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    Volná odpověď
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-gray-700 block mb-1.5">Obtížnost otázky</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['Lehká', 'Střední', 'Těžká'] as const).map(diff => {
+                    const isSelected = (editingQuestion?.difficulty || 'Střední') === diff;
+                    const colorClasses = diff === 'Lehká'
+                      ? (isSelected ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100/60')
+                      : diff === 'Těžká'
+                        ? (isSelected ? 'bg-rose-600 text-white border-rose-600 shadow-sm' : 'bg-rose-50 text-rose-800 border-rose-200 hover:bg-rose-100/60')
+                        : (isSelected ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100/60');
+
+                    return (
+                      <button
+                        key={diff}
+                        type="button"
+                        onClick={() => setEditingQuestion(prev => prev ? ({ ...prev, difficulty: diff }) : null)}
+                        className={`p-2.5 rounded-xl border text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1 ${colorClasses}`}
+                      >
+                        <span>{diff}</span>
+                        {isSelected && <span className="text-[10px]">✓</span>}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -1819,7 +2320,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           <div className="space-y-5 py-2">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-pink-50/60 rounded-2xl border border-pink-100 text-xs">
               <span className="text-gray-700 font-medium">
-                Importujte otázky (výběr ze 4 možností i volná odpověď) s automatickou deduplikací.
+                Importujte otázky (výběr ze 4 možností i volná odpověď) s automatickou deduplikací a sloupcem Obtížnost (Lehká / Střední / Těžká).
               </span>
               <a 
                 href="/ProEdu_Import_Procvicovani.xlsx" 

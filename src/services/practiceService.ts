@@ -5,7 +5,7 @@ import {
 import { db, auth } from '../lib/firebase';
 import * as XLSX from 'xlsx';
 import { 
-  PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep 
+  PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig 
 } from '../types';
 import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
 
@@ -133,6 +133,66 @@ export async function deleteTopic(topicId: string): Promise<void> {
 
 export const PRACTICE_SUBTOPICS_COLLECTION = 'practiceSubtopics';
 
+/**
+ * Recursively removes all keys with `undefined` values from an object or array.
+ * Required because Firestore `updateDoc` and `addDoc` throw errors if any field is `undefined`.
+ */
+export function removeUndefinedFields<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return obj;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => removeUndefinedFields(item)) as unknown as T;
+  }
+  if (typeof obj === 'object' && !(obj instanceof Timestamp)) {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = removeUndefinedFields(value);
+      }
+    }
+    return cleaned;
+  }
+  return obj;
+}
+
+export function cleanStudyStep(s: Partial<StudyStep>): StudyStep {
+  const step: StudyStep = {
+    title: s.title?.trim() || 'Krok',
+    content: s.content?.trim() || ''
+  };
+  const img = s.imageUrl?.trim();
+  if (img) step.imageUrl = img;
+  if (s.svgContent?.trim()) step.svgContent = s.svgContent.trim();
+  const tip = s.tutorTip?.trim();
+  if (tip) step.tutorTip = tip;
+  const question = s.testQuestion?.trim();
+  if (question) step.testQuestion = question;
+  if (Array.isArray(s.testOptions)) {
+    const validOpts = s.testOptions.map(o => o?.trim() || '').filter(Boolean);
+    if (validOpts.length > 0) {
+      step.testOptions = validOpts;
+    }
+  }
+  const ans = s.correctAnswer?.trim();
+  if (ans) step.correctAnswer = ans;
+  return step;
+}
+
+export function cleanPracticeConfig(cfg?: any): PracticeConfig | null {
+  if (!cfg || typeof cfg !== 'object') return null;
+  const easy = typeof cfg.easyCount === 'number' && cfg.easyCount >= 0 ? Math.floor(cfg.easyCount) : 0;
+  const med = typeof cfg.mediumCount === 'number' && cfg.mediumCount >= 0 ? Math.floor(cfg.mediumCount) : 0;
+  const hard = typeof cfg.hardCount === 'number' && cfg.hardCount >= 0 ? Math.floor(cfg.hardCount) : 0;
+  const total = easy + med + hard;
+  return {
+    easyCount: easy,
+    mediumCount: med,
+    hardCount: hard,
+    totalCount: total
+  };
+}
+
 export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>) {
   const title = subtopicData.title?.trim() || 'Nové podtéma';
   const topicId = subtopicData.topicId?.trim() || '';
@@ -141,19 +201,13 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
   const order = typeof subtopicData.order === 'number' ? subtopicData.order : 0;
   const studyTheory = subtopicData.studyTheory?.trim() || '';
   const studySteps = Array.isArray(subtopicData.studySteps)
-    ? subtopicData.studySteps.map(s => ({
-        title: s.title?.trim() || 'Krok',
-        content: s.content?.trim() || '',
-        tutorTip: s.tutorTip?.trim() || undefined,
-        testQuestion: s.testQuestion?.trim() || undefined,
-        testOptions: Array.isArray(s.testOptions) ? s.testOptions.map(o => o?.trim() || '').filter(Boolean) : undefined,
-        correctAnswer: s.correctAnswer?.trim() || undefined
-      }))
+    ? subtopicData.studySteps.map(cleanStudyStep)
     : [];
   const sampleProblem = subtopicData.sampleProblem || null;
   const svgUrl = subtopicData.svgUrl || null;
   const svgContent = subtopicData.svgContent || null;
   const hasStudyMaterial = !!(svgUrl || svgContent || studyTheory || studySteps.length > 0 || sampleProblem);
+  const practiceConfig = subtopicData.practiceConfig ? cleanPracticeConfig(subtopicData.practiceConfig) : null;
 
   return {
     title,
@@ -166,7 +220,8 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     svgContent,
     studyTheory,
     studySteps,
-    sampleProblem
+    sampleProblem,
+    practiceConfig
   };
 }
 
@@ -189,6 +244,7 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
   const svgUrl = data.svgUrl ?? (data.fileUrl || null);
   const svgContent = data.svgContent ?? (parsedContent.svgContent || null);
   const hasStudyMaterial = !!(data.hasStudyMaterial || svgUrl || svgContent || studyTheory || studySteps.length > 0 || sampleProblem);
+  const practiceConfig = data.practiceConfig ? cleanPracticeConfig(data.practiceConfig) : undefined;
 
   return {
     id: d.id,
@@ -203,6 +259,7 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     studyTheory: studyTheory,
     studySteps: studySteps,
     sampleProblem: sampleProblem,
+    practiceConfig: practiceConfig,
     createdAt: data.createdAt,
     createdBy: data.createdBy
   };
@@ -252,14 +309,7 @@ export function buildSubtopicUpdatePayload(
 
   let studySteps = existing.studySteps || [];
   if (Array.isArray(updates.studySteps)) {
-    studySteps = updates.studySteps.map(s => ({
-      title: s.title?.trim() || 'Krok',
-      content: s.content?.trim() || '',
-      tutorTip: s.tutorTip?.trim() || undefined,
-      testQuestion: s.testQuestion?.trim() || undefined,
-      testOptions: Array.isArray(s.testOptions) ? s.testOptions.map(o => o?.trim() || '').filter(Boolean) : undefined,
-      correctAnswer: s.correctAnswer?.trim() || undefined
-    }));
+    studySteps = updates.studySteps.map(cleanStudyStep);
   }
 
   const sampleProblem = updates.sampleProblem !== undefined ? updates.sampleProblem : (existing.sampleProblem || null);
@@ -269,6 +319,11 @@ export function buildSubtopicUpdatePayload(
   const hasStudyMaterial = updates.hasStudyMaterial !== undefined
     ? updates.hasStudyMaterial
     : !!(svgUrl || svgContent || studyTheory || (studySteps && studySteps.length > 0) || sampleProblem);
+
+  let practiceConfig: PracticeConfig | null | undefined = existing.practiceConfig;
+  if (updates.practiceConfig !== undefined) {
+    practiceConfig = updates.practiceConfig ? cleanPracticeConfig(updates.practiceConfig) : null;
+  }
 
   return {
     title,
@@ -282,6 +337,7 @@ export function buildSubtopicUpdatePayload(
     studyTheory,
     studySteps,
     sampleProblem,
+    practiceConfig,
     createdBy: existing.createdBy,
     createdAt: existing.createdAt
   };
@@ -301,17 +357,19 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
     const existing = mapDocToSubtopic(existingSnap);
     const payload = buildSubtopicUpdatePayload(existing, subtopicData);
 
-    // In updateDoc, never change immutable createdBy/createdAt fields
+    // In updateDoc, never change immutable createdBy/createdAt fields, and strip any undefined fields
     const { createdBy, createdAt, ...updateFields } = payload;
-    await updateDoc(docRef, updateFields);
+    const sanitizedUpdateFields = removeUndefinedFields(updateFields);
+    await updateDoc(docRef, sanitizedUpdateFields);
     return subtopicData.id;
   } else {
     const normalized = normalizeSubtopicPayload(subtopicData);
-    const newDoc = await addDoc(collRef, {
+    const sanitizedDoc = removeUndefinedFields({
       ...normalized,
       createdAt: now,
       createdBy: effectiveUserId
     });
+    const newDoc = await addDoc(collRef, sanitizedDoc);
     return newDoc.id;
   }
 }
@@ -644,6 +702,50 @@ export interface ValidatedPracticeRow {
   correctAnswer: string;
   rawType: string;
   imageUrl?: string;
+  difficulty: 'Lehká' | 'Střední' | 'Těžká';
+}
+
+export function normalizeDifficulty(val?: string): 'Lehká' | 'Střední' | 'Těžká' {
+  if (!val) return 'Střední';
+  const s = String(val).toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (s.includes('lehk') || s.includes('snadn') || s.includes('easy')) return 'Lehká';
+  if (s.includes('tezk') || s.includes('obtizn') || s.includes('hard')) return 'Těžká';
+  return 'Střední';
+}
+
+export function sampleQuestionsForPractice(
+  allQuestions: PracticeQuestion[],
+  config?: PracticeConfig | null
+): PracticeQuestion[] {
+  if (!config) return [...allQuestions];
+
+  const easyReq = typeof config.easyCount === 'number' && config.easyCount >= 0 ? Math.floor(config.easyCount) : 0;
+  const medReq = typeof config.mediumCount === 'number' && config.mediumCount >= 0 ? Math.floor(config.mediumCount) : 0;
+  const hardReq = typeof config.hardCount === 'number' && config.hardCount >= 0 ? Math.floor(config.hardCount) : 0;
+
+  const totalReq = easyReq + medReq + hardReq;
+  if (totalReq === 0) {
+    return [...allQuestions];
+  }
+
+  const easyPool = allQuestions.filter(q => (q.difficulty || 'Střední') === 'Lehká');
+  const medPool = allQuestions.filter(q => (q.difficulty || 'Střední') === 'Střední');
+  const hardPool = allQuestions.filter(q => (q.difficulty || 'Střední') === 'Těžká');
+
+  const shuffle = <T>(arr: T[]): T[] => {
+    const copy = [...arr];
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  const selectedEasy = shuffle(easyPool).slice(0, easyReq);
+  const selectedMed = shuffle(medPool).slice(0, medReq);
+  const selectedHard = shuffle(hardPool).slice(0, hardReq);
+
+  return [...selectedEasy, ...selectedMed, ...selectedHard];
 }
 
 export interface PracticeExcelParseResult {
@@ -702,6 +804,8 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
     const subject = findColValue(row, 'Předmět', 'Predmet') || 'Matematika';
     const topic = findColValue(row, 'Téma', 'Tema') || 'Obecné téma';
     const subtopic = findColValue(row, 'Podtéma', 'Podtema') || 'Základní procvičování';
+    const rawDifficulty = findColValue(row, 'Obtížnost', 'Obtiznost', 'Obtížnost (Lehká/Střední/Těžká)', 'Obtiznost (Lehka/Stredni/Tezka)', 'Difficulty');
+    const difficulty = normalizeDifficulty(rawDifficulty);
 
     // If whole row is empty, skip
     if (!question && !rawType && !findColValue(row, 'Možnost A', 'Moznost A')) {
@@ -792,7 +896,8 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
         type: 'choice',
         options: [optA, optB, optC, optD].filter(Boolean),
         correctAnswer: resolvedCorrectAnswer,
-        rawType
+        rawType,
+        difficulty
       });
       topicsSet.add(topic);
       subtopicsSet.add(subtopic);
@@ -823,7 +928,8 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
         type: 'open',
         options: [],
         correctAnswer: ansOpen,
-        rawType
+        rawType,
+        difficulty
       });
       topicsSet.add(topic);
       subtopicsSet.add(subtopic);
@@ -1046,7 +1152,7 @@ export async function importPracticeQuestionsToFirestore(
         correctAnswer: row.correctAnswer,
         hint: row.hint,
         explanation: row.explanation,
-        difficulty: 'Střední',
+        difficulty: row.difficulty || 'Střední',
         imageUrl: row.imageUrl || undefined
       }, effectiveUserId);
 

@@ -25,6 +25,8 @@ test('normalizeSubtopicPayload strips global tutor tip (studyTips) and keeps ste
       {
         title: 'Krok 1',
         content: 'Najděte společného jmenovatele',
+        imageUrl: 'https://example.com/step1.png',
+        svgContent: '<svg>step1</svg>',
         tutorTip: 'Pozor na nejmenší společný násobek',
         testQuestion: 'Jaký je jmenovatel 1/2 a 1/3?',
         testOptions: ['6', '5', '3', '2'],
@@ -48,9 +50,11 @@ test('normalizeSubtopicPayload strips global tutor tip (studyTips) and keeps ste
   // 2. Global studyTips must NOT be present on the subtopic
   assert.equal((payload as any).studyTips, undefined);
 
-  // 3. Step tutor tip must remain intact
+  // 3. Step tutor tip, imageUrl, and svgContent must remain intact
   assert.equal(payload.studySteps.length, 1);
   assert.equal(payload.studySteps[0].tutorTip, 'Pozor na nejmenší společný násobek');
+  assert.equal(payload.studySteps[0].imageUrl, 'https://example.com/step1.png');
+  assert.equal(payload.studySteps[0].svgContent, '<svg>step1</svg>');
 
   // 4. hasStudyMaterial must be true when SVG or theory or steps are present
   assert.equal(payload.hasStudyMaterial, true);

@@ -93,6 +93,7 @@ service cloud.firestore {
              (!('studyTips' in data) || data.studyTips == null || (data.studyTips is string && data.studyTips.size() <= 5000)) &&
              (!('studySteps' in data) || data.studySteps == null || data.studySteps is list) &&
              (!('sampleProblem' in data) || data.sampleProblem == null || data.sampleProblem is map) &&
+             (!('practiceConfig' in data) || data.practiceConfig == null || data.practiceConfig is map) &&
              (!('order' in data) || data.order is number) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              data.createdBy is string && data.createdBy.size() <= 128;

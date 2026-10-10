@@ -45,6 +45,8 @@ export interface PracticeQuestion {
 export interface StudyStep {
   title: string;
   content: string;
+  imageUrl?: string;
+  svgContent?: string;
   testQuestion?: string;
   testOptions?: string[];
   correctAnswer?: string;
@@ -56,6 +58,13 @@ export interface SampleProblem {
   options?: string[];
   correctAnswer: string;
   explanation?: string;
+}
+
+export interface PracticeConfig {
+  easyCount?: number;
+  mediumCount?: number;
+  hardCount?: number;
+  totalCount?: number;
 }
 
 export interface PracticeSubtopic {
@@ -73,6 +82,7 @@ export interface PracticeSubtopic {
   studySteps?: StudyStep[];
   studyTips?: string; // Tip lektora & časté chyby
   questionCount?: number;
+  practiceConfig?: PracticeConfig;
   createdAt?: any;
   createdBy?: string;
 }

@@ -9,6 +9,7 @@ import { Button } from '../components/ui/button';
 import { getSubtopicById, getQuestionsForSubtopic, getTopicById } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
+import { sanitizeSvg } from '../utils/pdfToSvg';
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
@@ -134,7 +135,7 @@ export default function StudyView() {
           {subtopic.svgContent ? (
             <div 
               className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-sm rounded-2xl bg-white p-2 sm:p-4"
-              dangerouslySetInnerHTML={{ __html: subtopic.svgContent }}
+              dangerouslySetInnerHTML={{ __html: sanitizeSvg(subtopic.svgContent) }}
             />
           ) : subtopic.svgUrl ? (
             <img 
@@ -202,6 +203,28 @@ export default function StudyView() {
                     </div>
                   )}
                 </div>
+
+                {/* Step Image / SVG */}
+                {step.svgContent ? (
+                  <div className="py-2 flex justify-center w-full">
+                    <div 
+                      className="w-full max-w-2xl flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-xs rounded-2xl bg-[#FAF7F0] p-3 sm:p-5 border border-gray-200/80 overflow-hidden"
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
+                    />
+                  </div>
+                ) : step.imageUrl ? (
+                  <div className="py-2 flex justify-center w-full">
+                    <div className="rounded-2xl overflow-hidden border border-gray-200/80 bg-[#FAF7F0] p-2.5 sm:p-3 shadow-xs max-w-full">
+                      <img 
+                        src={step.imageUrl} 
+                        alt={step.title || `Obrázek ke kroku ${idx + 1}`}
+                        className="max-h-[360px] w-auto max-w-full rounded-xl object-contain hover:scale-[1.01] transition-transform cursor-pointer mx-auto"
+                        onClick={() => window.open(step.imageUrl, '_blank')}
+                        title="Kliknutím otevřete obrázek v plné velikosti"
+                      />
+                    </div>
+                  </div>
+                ) : null}
 
                 {/* Tutor Tip - Bublinka lektora rozkliknutá přímo pod záhlavím s ocáskem směřujícím k tlačítku vpravo */}
                 {step.tutorTip && (
