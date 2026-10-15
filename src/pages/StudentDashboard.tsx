@@ -284,7 +284,7 @@ export default function StudentDashboard() {
       </header>
 
       {/* MAIN TWO-COLUMN ROW: Calendar on Left, Recommended Practice on Right */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-8 items-stretch">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch">
         {/* Left Column: Kalendář */}
         <div className="w-full h-full flex flex-col">
           <QuickCalendar 
@@ -295,20 +295,20 @@ export default function StudentDashboard() {
         </div>
 
         {/* Right Column: Doporučená procvičování */}
-        <Card className="rounded-[2.5rem] border-none shadow-xl bg-white p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden h-full">
-          <div className="absolute top-0 right-0 w-44 h-44 bg-gradient-to-br from-amber-100/40 via-yellow-50/20 to-transparent rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
+        <Card className="rounded-[1.75rem] border-none shadow-md bg-white p-4 sm:p-5 flex flex-col justify-start relative overflow-hidden h-full">
+          <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-amber-100/40 via-yellow-50/20 to-transparent rounded-full blur-2xl -mr-12 -mt-12 pointer-events-none" />
 
-          <div className="flex flex-col justify-between h-full space-y-6">
+          <div className="flex flex-col justify-start h-full space-y-4">
             <div>
               {/* Card Header */}
-              <div className="flex items-center justify-between mb-6 pb-3 border-b border-gray-100 gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner shrink-0">
-                    <Sparkles size={20} />
+              <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-gray-100 gap-2.5">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner shrink-0">
+                    <Sparkles size={16} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
-                    <p className="text-gray-400 text-xs font-semibold">
+                    <h3 className="font-sans font-black text-lg sm:text-xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
+                    <p className="text-gray-400 text-[11px] font-semibold truncate">
                       {user ? 'Přizpůsobeno podle tvých dosavadních výsledků a cílů' : 'Témata pro nejlepší výsledky u zkoušek'}
                     </p>
                   </div>
@@ -318,34 +318,34 @@ export default function StudentDashboard() {
                   variant="outline"
                   size="sm"
                   onClick={() => navigate('/practice')}
-                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-9 px-3.5 flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0"
+                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0"
                 >
                   <span>Katalog témat</span>
-                  <ArrowRight size={13} />
+                  <ArrowRight size={12} />
                 </Button>
               </div>
 
               {/* List of Recommended Topics (3 items) */}
               {loadingRecommendations ? (
-                <div className="space-y-3.5">
+                <div className="space-y-2.5">
                   {[1, 2, 3].map((n) => (
                     <div
                       key={n}
-                      className="p-3.5 sm:p-4 rounded-2xl bg-[#FAF7F0] border border-gray-200/50 flex items-center justify-between gap-3.5 animate-pulse"
+                      className="p-3 rounded-xl bg-[#FAF7F0] border border-gray-200/50 flex items-center justify-between gap-3 animate-pulse"
                     >
-                      <div className="flex items-center gap-3.5 min-w-0">
-                        <div className="w-11 h-11 rounded-2xl bg-gray-200 shrink-0" />
-                        <div className="space-y-2">
-                          <div className="h-3 w-28 bg-gray-200 rounded" />
-                          <div className="h-4 w-48 bg-gray-300 rounded" />
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-xl bg-gray-200 shrink-0" />
+                        <div className="space-y-1.5">
+                          <div className="h-2.5 w-24 bg-gray-200 rounded" />
+                          <div className="h-3.5 w-40 bg-gray-300 rounded" />
                         </div>
                       </div>
-                      <div className="h-9 w-24 bg-gray-200 rounded-xl shrink-0" />
+                      <div className="h-8 w-20 bg-gray-200 rounded-xl shrink-0" />
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="space-y-3.5">
+                <div className="space-y-2.5">
                   {recommendedItems.slice(0, 3).map((item) => {
                     const badgeStyles = {
                       warning: 'bg-rose-100 text-rose-800 border-rose-200',
@@ -355,42 +355,42 @@ export default function StudentDashboard() {
                     }[item.badge.variant];
 
                     const badgeIcon = {
-                      warning: <RotateCcw size={10} />,
-                      accent: <Target size={10} />,
-                      info: <Sparkles size={10} />,
-                      success: <CheckCircle2 size={10} />
+                      warning: <RotateCcw size={9} />,
+                      accent: <Target size={9} />,
+                      info: <Sparkles size={9} />,
+                      success: <CheckCircle2 size={9} />
                     }[item.badge.variant];
 
                     return (
                       <div
                         key={item.subtopicId}
                         onClick={() => navigate(`/practice/session/${item.subtopicId}`)}
-                        className="group p-3.5 sm:p-4 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-md transition-all flex items-center justify-between gap-3.5 cursor-pointer"
+                        className="group p-2.5 sm:p-3 rounded-xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-sm transition-all flex items-center justify-between gap-3 cursor-pointer"
                       >
-                        <div className="flex items-center gap-3.5 min-w-0">
-                          <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-xl shrink-0 shadow-sm transition-transform group-hover:scale-105", item.bg)}>
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs transition-transform group-hover:scale-105", item.bg)}>
                             {item.icon}
                           </div>
                           <div className="min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={cn("text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md", item.tagClass)}>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded", item.tagClass)}>
                                 {item.subject}
                               </span>
-                              <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1", badgeStyles)}>
+                              <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1", badgeStyles)}>
                                 {badgeIcon}
                                 {item.badge.text}
                               </span>
                             </div>
-                            <h4 className="font-bold text-gray-800 text-sm md:text-base mt-0.5 truncate group-hover:text-black">
+                            <h4 className="font-bold text-gray-800 text-xs sm:text-sm mt-0.5 truncate group-hover:text-black leading-snug">
                               {item.title}
                             </h4>
-                            <p className="text-[11px] font-medium text-gray-400 truncate max-w-sm">
+                            <p className="text-[10px] font-medium text-gray-400 truncate max-w-xs sm:max-w-sm">
                               {item.reasonText}
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center gap-1.5 shrink-0">
                           {item.hasStudyMaterial && (
                             <Button
                               size="sm"
@@ -400,9 +400,9 @@ export default function StudentDashboard() {
                                 navigate(`/study/${item.subtopicId}`);
                               }}
                               title="Prostudovat teorii před testem"
-                              className="rounded-xl border-gray-200 hover:border-black text-gray-700 font-bold text-xs h-9 px-2.5 shrink-0 hidden sm:flex items-center gap-1 cursor-pointer bg-white"
+                              className="rounded-lg border-gray-200 hover:border-black text-gray-700 font-bold text-[11px] h-7.5 px-2 shrink-0 hidden sm:flex items-center gap-1 cursor-pointer bg-white"
                             >
-                              <BookOpen size={13} />
+                              <BookOpen size={12} />
                               <span>Teorie</span>
                             </Button>
                           )}
@@ -413,9 +413,9 @@ export default function StudentDashboard() {
                               e.stopPropagation();
                               navigate(`/practice/session/${item.subtopicId}`);
                             }}
-                            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-3.5 h-9 shrink-0 flex items-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-xs"
+                            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-3 h-8 shrink-0 flex items-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs"
                           >
-                            <Play size={12} className="fill-current text-[#F5C400]" />
+                            <Play size={11} className="fill-current text-[#F5C400]" />
                             <span>Procvičit</span>
                           </Button>
                         </div>

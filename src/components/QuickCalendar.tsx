@@ -286,38 +286,38 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
   const hasItemsToDisplay = hasEventsForSelectedDay || !!nextActivity;
 
   return (
-    <div className="grid lg:grid-cols-[1fr_350px] gap-8 bg-white rounded-[2.5rem] p-6 sm:p-8 shadow-xl border border-gray-100 overflow-hidden h-full">
+    <div className="grid lg:grid-cols-[1fr_310px] gap-5 bg-white rounded-[1.75rem] p-4 sm:p-5 shadow-md border border-gray-100 overflow-hidden h-full">
       {/* Calendar Grid Side */}
-      <div className="space-y-6 flex flex-col justify-between h-full">
+      <div className="space-y-4 flex flex-col justify-between h-full">
         <div>
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-brand-blue shadow-inner">
-                <CalendarIcon size={20} />
+          <div className="flex items-center justify-between mb-3.5">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-brand-blue shadow-inner">
+                <CalendarIcon size={16} />
               </div>
-              <h3 className="text-2xl font-display font-black text-gray-900 capitalize">
+              <h3 className="text-xl font-display font-black text-gray-900 capitalize">
                 {format(currentDate, 'MMMM yyyy', { locale: cs })}
               </h3>
             </div>
-            <div className="flex gap-2">
-              <Button variant="ghost" size="icon" onClick={prevMonth} className="rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all">
-                <ChevronLeft size={20} />
+            <div className="flex gap-1.5">
+              <Button variant="ghost" size="icon" onClick={prevMonth} className="h-8 w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all">
+                <ChevronLeft size={16} />
               </Button>
-              <Button variant="ghost" size="icon" onClick={nextMonth} className="rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all">
-                <ChevronRight size={20} />
+              <Button variant="ghost" size="icon" onClick={nextMonth} className="h-8 w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all">
+                <ChevronRight size={16} />
               </Button>
             </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-2 mb-2">
+          <div className="grid grid-cols-7 gap-1.5 mb-1">
             {daysOfWeek.map(day => (
-              <div key={day} className="text-center text-[10px] font-black text-gray-400 uppercase tracking-widest py-2">
+              <div key={day} className="text-center text-[9px] font-black text-gray-400 uppercase tracking-widest py-1">
                 {day}
               </div>
             ))}
           </div>
 
-          <div className="grid grid-cols-7 gap-2">
+          <div className="grid grid-cols-7 gap-1.5">
             {calendarDays.map((day, idx) => {
               const dayTodos = getTodosForDay(day);
               const dayLessons = getLessonsForDay(day);
@@ -333,17 +333,17 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setSelectedDay(day)}
                   className={cn(
-                    "relative aspect-square flex flex-col items-center justify-center rounded-2xl transition-all cursor-pointer group border-2",
+                    "relative aspect-square flex flex-col items-center justify-center rounded-xl transition-all cursor-pointer group border",
                     !isCurrentMonth ? "opacity-30" : "opacity-100",
                     isSelected 
-                      ? "bg-brand-blue border-brand-blue text-white shadow-lg shadow-blue-100" 
+                      ? "bg-brand-blue border-brand-blue text-white shadow-md shadow-blue-100" 
                       : isToday(day)
                         ? "bg-blue-50/50 border-brand-blue/20 text-brand-blue hover:bg-blue-50"
                         : "bg-white border-gray-50 text-gray-600 hover:border-brand-blue/30 hover:bg-blue-50/30"
                   )}
                 >
                   <span className={cn(
-                    "text-lg font-display font-bold leading-none mb-1",
+                    "text-base font-display font-bold leading-none mb-0.5",
                     isSelected ? "text-white" : ""
                   )}>
                     {format(day, 'd')}
@@ -386,17 +386,17 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
       </div>
 
       {/* Right Column: Upcoming / Selected Activity Side */}
-      <div className="bg-gray-50/50 rounded-[1.5rem] border border-gray-100 flex flex-col h-full min-h-[460px]">
+      <div className="bg-gray-50/50 rounded-2xl border border-gray-100 flex flex-col h-full min-h-[360px]">
         {/* Header */}
-        <div className="p-6 border-b border-gray-100 bg-white rounded-t-[1.5rem]">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <span className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-brand-blue">
-              <Sparkles size={13} className="text-amber-500 animate-pulse" />
+        <div className="p-4 sm:p-4.5 border-b border-gray-100 bg-white rounded-t-2xl">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-brand-blue">
+              <Sparkles size={12} className="text-amber-500 animate-pulse" />
               {isShowingNextActivityFallback ? 'Nejbližší aktivita' : isToday(selectedDay) ? 'Dnešní aktivita' : 'Události dne'}
             </span>
             {isShowingNextActivityFallback && nextActivity && (
               <span className={cn(
-                "text-[10px] font-black px-2 py-0.5 rounded-md border shadow-2xs uppercase tracking-wider",
+                "text-[9px] font-black px-1.5 py-0.5 rounded border shadow-2xs uppercase tracking-wider",
                 nextActivity.isLive 
                   ? "bg-red-600 text-white border-red-500 animate-pulse" 
                   : "bg-blue-50 text-brand-blue border-blue-200"
@@ -407,36 +407,36 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-5xl font-display font-black text-brand-blue lining-nums leading-none">
+            <span className="text-4xl font-display font-black text-brand-blue lining-nums leading-none">
               {safeFormat(displayDate, 'd')}
             </span>
             <div className="flex flex-col">
-              <span className="text-xs font-black text-gray-400 uppercase tracking-widest leading-none mb-1">
+              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest leading-none mb-0.5">
                 {safeFormat(displayDate, 'EEEE', { locale: cs })}
               </span>
-              <span className="text-sm font-bold text-gray-600 capitalize">
+              <span className="text-xs font-bold text-gray-600 capitalize">
                 {safeFormat(displayDate, 'LLLL yyyy', { locale: cs })}
               </span>
             </div>
           </div>
 
           {isShowingNextActivityFallback && nextActivity && !isSameDay(selectedDay, nextActivity.date) && (
-            <div className="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between gap-2 text-[11px] text-gray-500">
+            <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between gap-2 text-[10px] text-gray-500">
               <span className="truncate">Pro {safeFormat(selectedDay, 'd. M.')} není nic v plánu</span>
               <button
                 type="button"
                 onClick={handleJumpToNextActivity}
                 className="text-brand-blue hover:text-blue-800 font-bold flex items-center gap-1 shrink-0 cursor-pointer hover:underline"
               >
-                <span>Přejít na aktivitu</span>
-                <ArrowRight size={12} />
+                <span>Přejít</span>
+                <ArrowRight size={11} />
               </button>
             </div>
           )}
         </div>
 
         {/* Scrollable Items List */}
-        <div className="flex-1 p-6 overflow-y-auto space-y-4 max-h-[500px] scrollbar-hide">
+        <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto space-y-3 max-h-[380px] scrollbar-hide">
           <AnimatePresence mode="wait">
             {hasEventsForSelectedDay ? (
               <motion.div
