@@ -649,6 +649,8 @@ export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' 
       title: `Procvičování (${attempt.percentage}%)`,
       description: JSON.stringify({
         subtopicId: attempt.subtopicId,
+        subjectId: attempt.subjectId,
+        topicId: attempt.topicId,
         score: attempt.score,
         totalQuestions: attempt.totalQuestions,
         percentage: attempt.percentage

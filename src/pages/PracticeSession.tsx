@@ -510,27 +510,22 @@ export default function PracticeSession() {
 
         <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
           {!isPremium && user ? (
-            <button
-              onClick={() => setIsVideoModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
-              title="Klikni pro dobití žolíků sledováním 15s videa"
+            <div
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-950 border border-amber-300/80 rounded-xl text-xs font-bold shadow-2xs select-none"
+              title="Zbývající žolíky pro dnešní den"
             >
               <span className="text-sm">🃏</span>
               <span className="font-mono font-black">{jokers}</span>
-              <span className="text-[10px] text-amber-700 underline font-normal hidden sm:inline ml-0.5">+5 za video</span>
-            </button>
+              <span className="text-[11px] text-amber-800 font-semibold hidden sm:inline">žolíků</span>
+            </div>
           ) : isPremium ? (
-            <span className="flex items-center gap-1 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black">
+            <span className="flex items-center gap-1 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
               <span>✨ Premium</span>
             </span>
           ) : (
-            <button
-              onClick={() => setIsVideoModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer"
-            >
+            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold select-none">
               <span>Host</span>
-              <span className="text-[10px] text-amber-700 font-normal underline">15s video</span>
-            </button>
+            </div>
           )}
 
           <div className="text-xs font-bold text-gray-500 hidden md:block">

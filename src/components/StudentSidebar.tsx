@@ -86,9 +86,9 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
   return (
     <aside className={cn("w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-6 h-screen sticky top-0 shadow-sm z-30", className)}>
-      <div className="space-y-8 flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-h-0">
         {/* Logo and Brand */}
-        <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2">
+        <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0">
           <img 
             src="/photo/logo2.svg" 
             alt="ProEdu" 
@@ -99,122 +99,162 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
         </Link>
 
         {/* Navigation Links */}
-        <nav className="space-y-2 flex-1 pt-4">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const activeStyle = item.active 
-              ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]' 
-              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold';
-            
-            return (
+        <nav className="flex-1 flex flex-col justify-between pt-6 min-h-0">
+          <div className="space-y-2">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const activeStyle = item.active 
+                ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]' 
+                : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold';
+              
+              return (
+                <Link
+                  key={item.name}
+                  to={item.path}
+                  onClick={() => {
+                    if (item.onClick) item.onClick();
+                    if (onNavigate) onNavigate();
+                  }}
+                  className={cn(
+                    "flex items-center gap-4 px-4 py-3.5 rounded-[1.25rem] text-sm tracking-wide transition-all select-none",
+                    activeStyle
+                  )}
+                >
+                  <Icon size={20} className={cn("shrink-0", item.active ? "text-[#1E1B18]" : "text-gray-400")} />
+                  <span>{item.name}</span>
+                  {item.locked && (
+                    <Lock size={15} className="ml-auto text-amber-600/90 shrink-0" />
+                  )}
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Sekce Nastavení posunutá do horní sekce a připnutá na úplný spodek */}
+          {user && (
+            <div className="mt-auto pt-4">
               <Link
-                key={item.name}
-                to={item.path}
-                onClick={() => {
-                  if (item.onClick) item.onClick();
-                  if (onNavigate) onNavigate();
-                }}
+                to="/settings"
+                onClick={onNavigate}
                 className={cn(
-                  "flex items-center gap-4 px-4 py-3.5 rounded-[1.25rem] text-sm tracking-wide transition-all select-none",
-                  activeStyle
+                  "w-full flex items-center gap-4 px-4 py-3.5 rounded-[1.25rem] text-sm tracking-wide transition-all select-none cursor-pointer",
+                  location.pathname === '/settings'
+                    ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]'
+                    : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold'
                 )}
               >
-                <Icon size={20} className={cn("shrink-0", item.active ? "text-[#1E1B18]" : "text-gray-400")} />
-                <span>{item.name}</span>
-                {item.locked && (
-                  <Lock size={15} className="ml-auto text-amber-600/90 shrink-0" />
-                )}
+                <Settings size={20} className={cn("shrink-0", location.pathname === '/settings' ? "text-[#1E1B18]" : "text-gray-400")} />
+                <span>Nastavení</span>
               </Link>
-            );
-          })}
-
+            </div>
+          )}
         </nav>
       </div>
 
       {/* User Profile Card Footer */}
-      <div className="border-t border-gray-100 pt-6 mt-auto flex flex-col gap-2 relative">
+      <div className="border-t border-gray-100 pt-5 mt-4 flex flex-col gap-2 relative shrink-0">
         {user ? (
           <>
-            <Link
-              to="/settings"
-              onClick={onNavigate}
-              className={cn(
-                "w-full flex items-center gap-4 px-4 py-3 rounded-[1.25rem] text-sm tracking-wide transition-all select-none cursor-pointer",
-                location.pathname === '/settings'
-                  ? 'bg-[#F5C400] text-[#1E1B18] font-black border-b-4 border-[#C29B00] shadow-md scale-[1.02]'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900 font-bold'
-              )}
-            >
-              <Settings size={20} className={cn("shrink-0", location.pathname === '/settings' ? "text-[#1E1B18]" : "text-gray-400")} />
-              <span>Nastavení</span>
-            </Link>
+            <div className="bg-[#FAF7F0] p-3.5 rounded-[1.5rem] border border-gray-200/60 shadow-2xs space-y-2.5">
+              {/* Řádek 1: Avatar, Jméno a Akční tlačítka (Notifikace + Odhlášení) */}
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <button
+                    onClick={() => setIsAvatarModalOpen(true)}
+                    className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shrink-0 shadow-sm cursor-pointer hover:scale-105 transition-transform flex items-center justify-center"
+                    style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
+                    title="Změnit avatar"
+                  >
+                    {profile?.avatarEmoji ? (
+                      <span className="text-xl leading-none">{profile.avatarEmoji}</span>
+                    ) : profile?.photoURL ? (
+                      <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-xl leading-none">🎓</span>
+                    )}
+                  </button>
 
-            <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] flex items-center gap-3 border border-gray-200/50">
-              <button
-                onClick={() => setIsAvatarModalOpen(true)}
-                className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shrink-0 shadow-sm cursor-pointer hover:scale-105 transition-transform flex items-center justify-center"
-                style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
-                title="Změnit avatar"
-              >
-                {profile?.avatarEmoji ? (
-                  <span className="text-xl leading-none">{profile.avatarEmoji}</span>
-                ) : profile?.photoURL ? (
-                  <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
-                ) : (
-                  <span className="text-xl leading-none">🎓</span>
-                )}
-              </button>
-              <div className="flex-1 min-w-0">
-                <h4 className="text-sm font-bold text-gray-800 truncate leading-tight flex items-center gap-1.5">
-                  {profile?.name || 'Můj profil'}
-                  {unreadCount > 0 && (
-                    <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" title="Máš nová upozornění!" />
-                  )}
-                </h4>
-                <div className="flex items-center gap-1.5 mt-1">
-                  {profile?.role === 'premium' ? (
-                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-md">✨ Premium</span>
-                  ) : profile?.role === 'course' ? (
-                    <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-md">🎓 Kurz</span>
-                  ) : profile?.role === 'teacher' ? (
-                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-md">👑 Učitel</span>
-                  ) : (
-                    <span className="text-[10px] font-bold text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
-                      <span>🃏</span> <span>{jokers} žolíků</span>
-                    </span>
-                  )}
+                  <div className="min-w-0">
+                    <h4 className="text-sm font-bold text-gray-800 truncate leading-tight flex items-center gap-1.5" title={profile?.name}>
+                      {profile?.name || 'Můj profil'}
+                      {unreadCount > 0 && (
+                        <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shrink-0" title="Máš nová upozornění!" />
+                      )}
+                    </h4>
+                    <p className="text-[11px] text-gray-400 truncate font-medium">
+                      {profile?.email || ''}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Tlačítka pro notifikace a odhlášení */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    ref={notificationBtnRef}
+                    onClick={handleToggleNotifications}
+                    className={cn(
+                      "p-1.5 rounded-xl transition-all shrink-0 cursor-pointer relative",
+                      isNotificationsOpen
+                        ? "bg-[#F5C400] text-[#1E1B18] shadow-xs"
+                        : unreadCount > 0 
+                          ? "text-red-500 bg-red-50 hover:bg-red-100" 
+                          : "text-gray-400 hover:text-gray-600 hover:bg-white"
+                    )}
+                    title={unreadCount > 0 ? `Máš ${unreadCount} nových aktivit!` : "Upozornění"}
+                    aria-label="Upozornění"
+                  >
+                    <Bell size={16} />
+                    {unreadCount > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
+                        {unreadCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <button 
+                    onClick={handleSignOut} 
+                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl transition-all shrink-0 cursor-pointer"
+                    title="Odhlásit se"
+                  >
+                    <LogOut size={16} />
+                  </button>
                 </div>
               </div>
-              
-              <button
-                ref={notificationBtnRef}
-                onClick={handleToggleNotifications}
-                className={cn(
-                  "p-2 rounded-xl transition-all shrink-0 cursor-pointer relative",
-                  isNotificationsOpen
-                    ? "bg-[#F5C400] text-[#1E1B18] shadow-xs"
-                    : unreadCount > 0 
-                      ? "text-red-500 bg-red-50 hover:bg-red-100" 
-                      : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+
+              {/* Řádek 2: Role / Odznáček plánu a žolíky */}
+              <div className="pt-2 border-t border-gray-200/50 flex items-center justify-between gap-1.5">
+                {profile?.role === 'premium' ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-lg border border-amber-200/60 flex items-center gap-1">
+                    ✨ Premium účet
+                  </span>
+                ) : profile?.role === 'course' ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 px-2.5 py-0.5 rounded-lg border border-blue-200/60 flex items-center gap-1">
+                    🎓 Kurz student
+                  </span>
+                ) : profile?.role === 'teacher' ? (
+                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 px-2.5 py-0.5 rounded-lg border border-purple-200/60 flex items-center gap-1">
+                    👑 Učitel / Lektor
+                  </span>
+                ) : (
+                  <div className="flex items-center justify-between w-full">
+                    <span className="text-[10px] font-bold text-gray-700 bg-white px-2 py-0.5 rounded-lg border border-gray-200/70 flex items-center gap-1.5 shadow-2xs">
+                      <span>🃏</span>
+                      <span className="font-mono font-black text-gray-900">{jokers}</span>
+                      <span className="text-gray-500 font-semibold">žolíků</span>
+                    </span>
+                    <span className="text-[10px] font-semibold text-gray-400">
+                      Základní plán
+                    </span>
+                  </div>
                 )}
-                title={unreadCount > 0 ? `Máš ${unreadCount} nových aktivit!` : "Upozornění"}
-                aria-label="Upozornění"
-              >
-                <Bell size={16} />
-                {unreadCount > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
-                    {unreadCount}
+
+                {profile?.role && profile.role !== 'free' && profile.role !== 'student' && (
+                  <span className="text-[10px] font-semibold text-emerald-600 flex items-center gap-1 shrink-0">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                    Aktivní
                   </span>
                 )}
-              </button>
-
-              <button 
-                onClick={handleSignOut} 
-                className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all shrink-0 cursor-pointer"
-                title="Odhlásit se"
-              >
-                <LogOut size={16} />
-              </button>
+              </div>
             </div>
 
             {/* Floating Notification Popover */}

@@ -5,7 +5,7 @@ import { cn, safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { Sparkles, ArrowRight } from 'lucide-react';
+import { Sparkles, ArrowRight, Play, BookOpen, RotateCcw, Target, CheckCircle2, Award } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import QuickCalendar from '../components/QuickCalendar';
 import { getStudentInquiries, getAllInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
@@ -25,6 +25,7 @@ import {
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { toast } from 'sonner';
+import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
 
 const MOTIVATIONAL_QUOTES = [
   { text: "Učení je jediná věc, kterou se mysl nikdy nevyčerpá, nikdy se jí nebojí a nikdy nelituje.", author: "Leonardo da Vinci" },
@@ -44,41 +45,6 @@ const GREETINGS = [
   "pojďme na to šlápnout!"
 ];
 
-const RECOMMENDED_TOPICS = [
-  {
-    title: 'Lineární rovnice a výrazy',
-    subject: 'Matematika',
-    difficulty: '10 úloh • Střední',
-    icon: '🧮',
-    bg: 'bg-blue-100 text-blue-700',
-    tagClass: 'bg-blue-50 text-blue-700 border border-blue-200'
-  },
-  {
-    title: 'Pravopis velkých písmen a shoda',
-    subject: 'Čeština',
-    difficulty: '10 úloh • Klíčové k PZ',
-    icon: '📖',
-    bg: 'bg-rose-100 text-rose-700',
-    tagClass: 'bg-rose-50 text-rose-700 border border-rose-200'
-  },
-  {
-    title: 'Planimetrie a výpočty úhlů',
-    subject: 'Matematika',
-    difficulty: '8 úloh • Geometrie',
-    icon: '📐',
-    bg: 'bg-amber-100 text-amber-700',
-    tagClass: 'bg-amber-50 text-amber-700 border border-amber-200'
-  },
-  {
-    title: 'Práce s textem a porozumění',
-    subject: 'Čeština',
-    difficulty: '10 úloh • Cermat typ',
-    icon: '✍️',
-    bg: 'bg-emerald-100 text-emerald-700',
-    tagClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-  }
-];
-
 export default function StudentDashboard() {
   const { user, profile, isPremium } = useAuth();
   const navigate = useNavigate();
@@ -93,6 +59,33 @@ export default function StudentDashboard() {
   const [joinedLessonIds, setJoinedLessonIds] = useState<string[]>(() => getJoinedLessonIds());
   const [todos, setTodos] = useState<any[]>([]);
   const [syncingLessonId, setSyncingLessonId] = useState<string | null>(null);
+
+  // Personalized practice recommendations
+  const [recommendedItems, setRecommendedItems] = useState<RecommendedPracticeItem[]>([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function loadRecommendations() {
+      setLoadingRecommendations(true);
+      try {
+        const items = await getPersonalizedRecommendations(user?.uid, profile?.focusAreas || []);
+        if (isMounted) {
+          setRecommendedItems(items);
+        }
+      } catch (err) {
+        console.error('Failed to load personalized recommendations:', err);
+      } finally {
+        if (isMounted) {
+          setLoadingRecommendations(false);
+        }
+      }
+    }
+    loadRecommendations();
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.uid, profile?.focusAreas]);
 
   // Subscribe to student's todos in Firestore
   useEffect(() => {
@@ -315,58 +308,120 @@ export default function StudentDashboard() {
                   </div>
                   <div>
                     <h3 className="font-sans font-black text-2xl text-[#1E1B18]">Doporučená procvičování</h3>
-                    <p className="text-gray-400 text-xs font-semibold">Témata pro nejlepší výsledky u zkoušek</p>
+                    <p className="text-gray-400 text-xs font-semibold">
+                      {user ? 'Přizpůsobeno podle tvých dosavadních výsledků a cílů' : 'Témata pro nejlepší výsledky u zkoušek'}
+                    </p>
                   </div>
                 </div>
-                <Link 
-                  to="/practice" 
-                  className="text-xs font-black text-brand-blue hover:underline flex items-center gap-1 shrink-0"
-                >
-                  Všechna témata <ArrowRight size={14} />
-                </Link>
               </div>
 
-              {/* List of Recommended Topics */}
-              <div className="space-y-3.5">
-                {RECOMMENDED_TOPICS.map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="group p-3.5 sm:p-4 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-md transition-all flex items-center justify-between gap-3.5"
-                  >
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-xl shrink-0 shadow-sm", item.bg)}>
-                        {item.icon}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className={cn("text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md", item.tagClass)}>
-                            {item.subject}
-                          </span>
-                          <span className="text-[11px] font-semibold text-gray-400">{item.difficulty}</span>
-                        </div>
-                        <h4 className="font-bold text-gray-800 text-sm md:text-base mt-0.5 truncate group-hover:text-black">
-                          {item.title}
-                        </h4>
-                      </div>
-                    </div>
-
-                    <Button
-                      size="sm"
-                      onClick={() => navigate('/practice')}
-                      className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-3.5 h-9 shrink-0 flex items-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer"
+              {/* List of Recommended Topics (3 items) */}
+              {loadingRecommendations ? (
+                <div className="space-y-3.5">
+                  {[1, 2, 3].map((n) => (
+                    <div
+                      key={n}
+                      className="p-3.5 sm:p-4 rounded-2xl bg-[#FAF7F0] border border-gray-200/50 flex items-center justify-between gap-3.5 animate-pulse"
                     >
-                      <span>Procvičit</span>
-                      <ArrowRight size={14} />
-                    </Button>
-                  </div>
-                ))}
-              </div>
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-11 h-11 rounded-2xl bg-gray-200 shrink-0" />
+                        <div className="space-y-2">
+                          <div className="h-3 w-28 bg-gray-200 rounded" />
+                          <div className="h-4 w-48 bg-gray-300 rounded" />
+                        </div>
+                      </div>
+                      <div className="h-9 w-24 bg-gray-200 rounded-xl shrink-0" />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="space-y-3.5">
+                  {recommendedItems.slice(0, 3).map((item) => {
+                    const badgeStyles = {
+                      warning: 'bg-rose-100 text-rose-800 border-rose-200',
+                      accent: 'bg-purple-100 text-purple-800 border-purple-200',
+                      info: 'bg-blue-100 text-blue-800 border-blue-200',
+                      success: 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                    }[item.badge.variant];
+
+                    const badgeIcon = {
+                      warning: <RotateCcw size={10} />,
+                      accent: <Target size={10} />,
+                      info: <Sparkles size={10} />,
+                      success: <CheckCircle2 size={10} />
+                    }[item.badge.variant];
+
+                    return (
+                      <div
+                        key={item.subtopicId}
+                        onClick={() => navigate(`/practice/session/${item.subtopicId}`)}
+                        className="group p-3.5 sm:p-4 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-md transition-all flex items-center justify-between gap-3.5 cursor-pointer"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className={cn("w-11 h-11 rounded-2xl flex items-center justify-center text-xl shrink-0 shadow-sm transition-transform group-hover:scale-105", item.bg)}>
+                            {item.icon}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={cn("text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md", item.tagClass)}>
+                                {item.subject}
+                              </span>
+                              <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1", badgeStyles)}>
+                                {badgeIcon}
+                                {item.badge.text}
+                              </span>
+                            </div>
+                            <h4 className="font-bold text-gray-800 text-sm md:text-base mt-0.5 truncate group-hover:text-black">
+                              {item.title}
+                            </h4>
+                            <p className="text-[11px] font-medium text-gray-400 truncate max-w-sm">
+                              {item.reasonText}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          {item.hasStudyMaterial && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/study/${item.subtopicId}`);
+                              }}
+                              title="Prostudovat teorii před testem"
+                              className="rounded-xl border-gray-200 hover:border-black text-gray-700 font-bold text-xs h-9 px-2.5 shrink-0 hidden sm:flex items-center gap-1 cursor-pointer bg-white"
+                            >
+                              <BookOpen size={13} />
+                              <span>Teorie</span>
+                            </Button>
+                          )}
+
+                          <Button
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/practice/session/${item.subtopicId}`);
+                            }}
+                            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-3.5 h-9 shrink-0 flex items-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-xs"
+                          >
+                            <Play size={12} className="fill-current text-[#F5C400]" />
+                            <span>Procvičit</span>
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Bottom bar balancing the card height */}
             <div className="pt-4 border-t border-gray-100 flex items-center justify-between gap-3 mt-auto">
               <span className="text-xs font-bold text-gray-400">
-                Více než 50 dalších témat k procvičení
+                {user 
+                  ? '🎯 Přizpůsobeno tvému tempu z desítek témat' 
+                  : 'Více než 50 dalších témat k procvičení'}
               </span>
               <Button
                 variant="outline"

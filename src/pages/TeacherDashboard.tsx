@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Target, BookOpen, MessageSquare, Video, GraduationCap } from 'lucide-react';
+import { Target, BookOpen, MessageSquare, Video, GraduationCap, Users } from 'lucide-react';
 import PracticeManager from '../components/admin/PracticeManager';
 import MaterialsManager from '../components/admin/MaterialsManager';
 import InquiriesManager from '../components/admin/InquiriesManager';
 import LiveLessonsManager from '../components/admin/LiveLessonsManager';
 import CoursesManager from '../components/admin/CoursesManager';
+import StudentsProgressManager from '../components/admin/StudentsProgressManager';
 import { getAllInquiries, QuestionInquiry } from '../services/inquiryService';
 import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
@@ -15,7 +16,7 @@ import { LiveLesson } from '../types';
 export default function TeacherDashboard() {
   const { profile: userProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['practices', 'materials', 'inquiries', 'lessons', 'courses'];
+  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses'];
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'practices';
 
@@ -86,7 +87,7 @@ export default function TeacherDashboard() {
               className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-sm data-[state=active]:border-[#B80053]/20 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
             >
               <Target size={18} />
-              Procvičování & Banka otázek
+              Procvičování
             </TabsTrigger>
             <TabsTrigger 
               value="materials" 
@@ -94,6 +95,13 @@ export default function TeacherDashboard() {
             >
               <BookOpen size={18} />
               Studijní materiály
+            </TabsTrigger>
+            <TabsTrigger 
+              value="students" 
+              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
+            >
+              <Users size={18} />
+              Studenti
             </TabsTrigger>
             <TabsTrigger 
               value="inquiries" 
@@ -132,6 +140,10 @@ export default function TeacherDashboard() {
 
           <TabsContent value="materials">
             <MaterialsManager userId={userProfile?.uid || ''} />
+          </TabsContent>
+
+          <TabsContent value="students">
+            <StudentsProgressManager />
           </TabsContent>
 
           <TabsContent value="inquiries">

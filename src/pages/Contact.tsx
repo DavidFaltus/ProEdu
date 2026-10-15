@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Mail, Phone, MapPin, Send, MessageSquare, Clock } from 'lucide-react';
+import { Mail, Phone, MapPin, Send, Clock } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -79,19 +79,6 @@ export default function Contact() {
                 <div className="text-lg font-bold text-gray-800">Po - Pá: 9:00 - 17:00</div>
               </div>
             </Card>
-          </div>
-
-          <div className="bg-gray-50 rounded-[2.5rem] p-8 border-2 border-dashed border-gray-200">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-white rounded-2xl shadow-sm flex items-center justify-center text-brand-blue flex-shrink-0">
-                <MessageSquare size={24} />
-              </div>
-              <div className="space-y-2">
-                <h3 className="text-xl font-bold text-gray-800">Často kladené dotazy</h3>
-                <p className="text-gray-500">Možná jsme na váš dotaz již odpověděli v naší sekci FAQ. Podívejte se na nejčastější otázky studentů.</p>
-                <Button variant="link" className="p-0 text-brand-blue font-bold h-auto">Zobrazit FAQ</Button>
-              </div>
-            </div>
           </div>
         </motion.div>
 
