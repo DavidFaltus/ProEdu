@@ -301,18 +301,28 @@ export default function StudentDashboard() {
           <div className="flex flex-col justify-between h-full space-y-6">
             <div>
               {/* Card Header */}
-              <div className="flex items-center justify-between mb-6 pb-3 border-b border-gray-100">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
+              <div className="flex items-center justify-between mb-6 pb-3 border-b border-gray-100 gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner shrink-0">
                     <Sparkles size={20} />
                   </div>
-                  <div>
-                    <h3 className="font-sans font-black text-2xl text-[#1E1B18]">Doporučená procvičování</h3>
+                  <div className="min-w-0">
+                    <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
                     <p className="text-gray-400 text-xs font-semibold">
                       {user ? 'Přizpůsobeno podle tvých dosavadních výsledků a cílů' : 'Témata pro nejlepší výsledky u zkoušek'}
                     </p>
                   </div>
                 </div>
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigate('/practice')}
+                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-9 px-3.5 flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0"
+                >
+                  <span>Katalog témat</span>
+                  <ArrowRight size={13} />
+                </Button>
               </div>
 
               {/* List of Recommended Topics (3 items) */}
@@ -414,24 +424,6 @@ export default function StudentDashboard() {
                   })}
                 </div>
               )}
-            </div>
-
-            {/* Bottom bar balancing the card height */}
-            <div className="pt-4 border-t border-gray-100 flex items-center justify-between gap-3 mt-auto">
-              <span className="text-xs font-bold text-gray-400">
-                {user 
-                  ? '🎯 Přizpůsobeno tvému tempu z desítek témat' 
-                  : 'Více než 50 dalších témat k procvičení'}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => navigate('/practice')}
-                className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-9 px-4 flex items-center gap-1.5 cursor-pointer shadow-2xs"
-              >
-                <span>Katalog témat</span>
-                <ArrowRight size={13} />
-              </Button>
             </div>
           </div>
         </Card>
