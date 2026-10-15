@@ -3,16 +3,21 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, 
-  Lightbulb, Play, Sparkles
+  Lightbulb, Play, Sparkles, Crown, Lock
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
+import { toast } from 'sonner';
+import { useAuth } from '../context/AuthContext';
 import { getSubtopicById, getQuestionsForSubtopic, getTopicById } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
 import { sanitizeSvg } from '../utils/pdfToSvg';
+import { cn } from '../lib/utils';
+import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
+  const { user, isPremium, openAuthModal } = useAuth();
   const navigate = useNavigate();
 
   const [subtopic, setSubtopic] = useState<PracticeSubtopic | null>(null);
@@ -86,7 +91,8 @@ export default function StudyView() {
   const steps: StudyStep[] = subtopic.studySteps || [];
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8 pb-16">
+    <>
+      <div className={cn("w-full max-w-5xl mx-auto space-y-8 pb-16 relative", !isPremium && "filter blur-sm select-none pointer-events-none")}>
       {/* Top Breadcrumb Navigation */}
       <div className="flex items-center justify-between">
         <Link 
@@ -160,7 +166,41 @@ export default function StudyView() {
           </div>
 
           <div className="grid gap-4">
-            {steps.map((step, idx) => (
+            {steps.map((step, idx) => {
+              const isLocked = !isPremium && idx > 0;
+              if (isLocked && idx > 1) return null;
+
+              if (isLocked) {
+                return (
+                  <div
+                    key="premium-lock"
+                    className="p-8 bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-white rounded-3xl border-2 border-yellow-400/50 shadow-xl text-center space-y-4 relative overflow-hidden"
+                  >
+                    <div className="w-14 h-14 mx-auto rounded-2xl bg-yellow-400 text-black flex items-center justify-center shadow-md">
+                      <Crown className="w-7 h-7" />
+                    </div>
+                    <div className="max-w-md mx-auto space-y-1.5">
+                      <h4 className="text-xl font-display font-black text-[#1E1B18]">
+                        Další kroky řešení jsou součástí ProEdu Premium
+                      </h4>
+                      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+                        Odemkni kompletní teorii, rozbory všech {steps.length} kroků a tipy lektora pro úspěšné zvládnutí přijímaček.
+                      </p>
+                    </div>
+                    <div className="flex justify-center pt-2">
+                      <Button
+                        onClick={() => navigate(`/practice/session/${subtopic.id}`)}
+                        className="rounded-2xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-11 px-6 shadow-md cursor-pointer"
+                      >
+                        <Play size={14} className="fill-current text-[#F5C400] mr-1" />
+                        Přejít na procvičování tohoto tématu
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
               <motion.div
                 key={idx}
                 initial={{ opacity: 0, y: 10 }}
@@ -363,7 +403,8 @@ export default function StudyView() {
                   </div>
                 )}
               </motion.div>
-            ))}
+            );
+          })}
           </div>
         </div>
       )}
@@ -391,5 +432,15 @@ export default function StudyView() {
         </Button>
       </div>
     </div>
+
+    {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
+    <UnifiedPaywallModal
+      isOpen={!isPremium}
+      onClose={() => navigate('/practice')}
+      type="premium"
+      title="ProEdu Premium – Teorie & Výuka"
+      description="Kompletní výukové listy, vysvětlení látky krok za krokem a tipy lektorů jsou dostupné pouze v balíčku Premium."
+    />
+  </>
   );
 }

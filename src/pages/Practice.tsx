@@ -3,16 +3,20 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
   Calculator, BookMarked, BookOpen, Play, Sparkles, Plus, 
-  ArrowRight, CheckCircle2, ChevronRight, FileText, GraduationCap 
+  ArrowRight, CheckCircle2, ChevronRight, FileText, GraduationCap, Lock, Crown
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
+import { 
+  Dialog, DialogContent, DialogTitle, DialogDescription 
+} from '../components/ui/dialog';
 import { 
   getTopics, getSubtopics, getQuestionsForSubtopic, 
   PREDEFINED_SUBJECTS 
 } from '../services/practiceService';
 import { PracticeTopic, PracticeSubtopic } from '../types';
 import { toast } from 'sonner';
+import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 
 const getSubjectIcon = (id: string) => {
   if (id === 'Matematika') return <Calculator className="w-8 h-8" />;
@@ -20,15 +24,28 @@ const getSubjectIcon = (id: string) => {
 };
 
 export default function Practice() {
-  const { user, profile } = useAuth();
+  const { user, profile, isPremium, openAuthModal } = useAuth();
   const navigate = useNavigate();
 
   const [activeSubject, setActiveSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [topics, setTopics] = useState<PracticeTopic[]>([]);
   const [subtopics, setSubtopics] = useState<PracticeSubtopic[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
+  const [selectedSubtopicForStudy, setSelectedSubtopicForStudy] = useState<PracticeSubtopic | null>(null);
 
   const isTeacher = profile?.role === 'teacher';
+
+  // Najdeme první reálně zobrazené podtéma v daném předmětu (pro neregistrovaného)
+  const firstVisibleSubtopicId = React.useMemo(() => {
+    for (const topic of topics) {
+      const matching = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+      if (matching.length > 0) {
+        return matching[0].id;
+      }
+    }
+    return null;
+  }, [topics, subtopics]);
 
   const loadData = async () => {
     setLoading(true);
@@ -177,49 +194,111 @@ export default function Practice() {
                     <p className="text-gray-400 text-sm italic py-4">Žádná podtémata v tomto tématu.</p>
                   ) : (
                     <div className="grid gap-3.5">
-                      {topicSubtopics.map((subtopic) => (
-                        <div
-                          key={subtopic.id}
-                          className="p-5 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/70 hover:border-gray-300 hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
-                        >
-                          <div className="space-y-1.5 flex-1 min-w-0">
-                            <div className="flex items-center gap-2">
-                              <h4 className="font-bold text-lg text-gray-900 leading-tight">
-                                {subtopic.title}
-                              </h4>
+                      {topicSubtopics.map((subtopic) => {
+                        const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
+                        const isLockedForGuest = !user && !isFirstDemo;
+                        const isStudyLocked = !isPremium;
+
+                        const handlePracticeClick = (e: React.MouseEvent) => {
+                          if (isLockedForGuest) {
+                            e.preventDefault();
+                            openAuthModal();
+                            toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                          }
+                        };
+
+                        const handleStudyClick = (e: React.MouseEvent) => {
+                          if (isStudyLocked) {
+                            e.preventDefault();
+                            if (!user) {
+                              openAuthModal();
+                              toast.info('Studium a teorie je dostupné pro předplatitele ProEdu Premium. Přihlaste se prosím.');
+                            } else {
+                              setSelectedSubtopicForStudy(subtopic);
+                              setIsPremiumModalOpen(true);
+                            }
+                          }
+                        };
+
+                        return (
+                          <div
+                            key={subtopic.id}
+                            className={`p-5 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                              isLockedForGuest
+                                ? 'bg-[#FAF7F0]/60 border-gray-200/50 opacity-85'
+                                : 'bg-[#FAF7F0] hover:bg-white border-gray-200/70 hover:border-gray-300 hover:shadow-md'
+                            }`}
+                          >
+                            <div className="space-y-1.5 flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <h4 className="font-bold text-lg text-gray-900 leading-tight">
+                                  {subtopic.title}
+                                </h4>
+                                {isFirstDemo && !user && (
+                                  <span className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                    Vyzkoušet zdarma
+                                  </span>
+                                )}
+                                {isLockedForGuest && (
+                                  <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
+                                    <Lock size={12} /> Vyžaduje registraci
+                                  </span>
+                                )}
+                              </div>
+                              {subtopic.description && (
+                                <p className="text-gray-500 text-xs sm:text-sm font-medium line-clamp-2">
+                                  {subtopic.description}
+                                </p>
+                              )}
                             </div>
-                            {subtopic.description && (
-                              <p className="text-gray-500 text-xs sm:text-sm font-medium line-clamp-2">
-                                {subtopic.description}
-                              </p>
-                            )}
-                          </div>
 
-                          {/* Action Buttons for this subtopic */}
-                          <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
-                            {/* Studovat Button */}
-                            <Link to={`/study/${subtopic.id}`}>
-                              <Button
-                                variant="outline"
-                                className="rounded-xl border-gray-300 hover:border-black font-bold text-xs h-10 px-4 flex items-center gap-1.5 cursor-pointer bg-white"
+                            {/* Action Buttons for this subtopic */}
+                            <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                              {/* Studovat Button (Zamčeno pro Free a hosty, pouze pro Premium) */}
+                              <Link 
+                                to={isStudyLocked ? '#' : `/study/${subtopic.id}`}
+                                onClick={handleStudyClick}
                               >
-                                <BookOpen size={15} />
-                                <span>Studovat</span>
-                              </Button>
-                            </Link>
+                                <Button
+                                  variant="outline"
+                                  className={`rounded-xl font-bold text-xs h-10 px-4 flex items-center gap-1.5 cursor-pointer bg-white ${
+                                    isStudyLocked ? 'border-amber-300 hover:border-amber-400 text-amber-900' : 'border-gray-300 hover:border-black'
+                                  }`}
+                                >
+                                  {isStudyLocked ? (
+                                    <Lock size={13} className="text-amber-500" />
+                                  ) : (
+                                    <BookOpen size={15} />
+                                  )}
+                                  <span>Studovat</span>
+                                  {isStudyLocked && (
+                                    <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
+                                      PRO
+                                    </span>
+                                  )}
+                                </Button>
+                              </Link>
 
-                            {/* Procvičovat Button */}
-                            <Link to={`/practice/session/${subtopic.id}`}>
-                              <Button
-                                className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 px-5 flex items-center gap-1.5 shadow-sm hover:scale-105 transition-transform cursor-pointer"
+                              {/* Procvičovat Button */}
+                              <Link 
+                                to={isLockedForGuest ? '#' : `/practice/session/${subtopic.id}`}
+                                onClick={handlePracticeClick}
                               >
-                                <Play size={14} className="fill-current text-[#F5C400]" />
-                                <span>Procvičovat</span>
-                              </Button>
-                            </Link>
+                                <Button
+                                  className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 px-5 flex items-center gap-1.5 shadow-sm hover:scale-105 transition-transform cursor-pointer"
+                                >
+                                  {isLockedForGuest ? (
+                                    <Lock size={14} className="text-yellow-400" />
+                                  ) : (
+                                    <Play size={14} className="fill-current text-[#F5C400]" />
+                                  )}
+                                  <span>{isLockedForGuest ? 'Odemknout' : 'Procvičovat'}</span>
+                                </Button>
+                              </Link>
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -228,6 +307,20 @@ export default function Practice() {
           </div>
         )}
       </div>
+
+      {/* Sjednocený Paywall dialog pro sekci Studium */}
+      <UnifiedPaywallModal
+        isOpen={isPremiumModalOpen}
+        onClose={() => setIsPremiumModalOpen(false)}
+        type="premium"
+        title="ProEdu Premium – Teorie & Výuka"
+        description="Kompletní výukové listy, vysvětlení látky krok za krokem, tipy lektora a vzorové řešené úlohy jsou dostupné pouze v balíčku Premium."
+        onSuccess={() => {
+          if (selectedSubtopicForStudy) {
+            navigate(`/study/${selectedSubtopicForStudy.id}`);
+          }
+        }}
+      />
     </div>
   );
 }

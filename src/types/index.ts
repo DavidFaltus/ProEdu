@@ -1,6 +1,6 @@
 import { Timestamp } from 'firebase/firestore';
 
-export type UserRole = 'student' | 'teacher';
+export type UserRole = 'student' | 'free' | 'premium' | 'course' | 'teacher';
 
 export type Difficulty = 'Začátečník' | 'Středně pokročilý' | 'Pokročilý' | 'Lehká' | 'Střední' | 'Těžká';
 
@@ -19,6 +19,10 @@ export interface UserProfile {
   avatarBgColor?: string;
   focusSessionsHistory?: any[];
   lastViewedActivityAt?: Timestamp;
+  // --- Ekonomika žolíků a monetizace ---
+  jokers?: number;
+  lastJokerResetDate?: string; // Formát YYYY-MM-DD
+  dailyVideosWatched?: number;
 }
 
 export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď
@@ -140,4 +144,26 @@ export interface LiveLesson {
   studentIds?: string[];
   createdAt: Timestamp;
   updatedAt?: Timestamp;
+}
+
+export interface Course {
+  id: string;
+  title: string;
+  description: string;
+  subject?: string; // 'MA + ČJ' | 'Matematika' | 'Český jazyk'
+  price?: string; // e.g. '3 990 Kč / sezóna'
+  difficulty?: string; // e.g. 'Střední pokročilost (Cermat 9. třída)'
+  schedule?: string; // e.g. 'Čtvrtek 17:00 - 18:30 (1x týdně, 90 min)'
+  instructorName?: string; // e.g. 'Mgr. Jan Novák'
+  startDate?: string; // e.g. '2026-10-01'
+  endDate?: string; // e.g. '2027-04-10'
+  syllabus?: string[]; // Seznam témat / osnova kurzu
+  badge?: string; // e.g. 'Doporučeno • Nejoblíbenější'
+  color?: string; // 'blue' | 'purple' | 'orange' | 'green' | 'rose'
+  meetUrl?: string; // Google Meet odkaz
+  teacherId?: string;
+  studentIds?: string[];
+  studentCount?: number;
+  createdAt?: any;
+  updatedAt?: any;
 }

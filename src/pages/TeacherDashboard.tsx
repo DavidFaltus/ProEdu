@@ -2,11 +2,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Target, BookOpen, MessageSquare, Video } from 'lucide-react';
+import { Target, BookOpen, MessageSquare, Video, GraduationCap } from 'lucide-react';
 import PracticeManager from '../components/admin/PracticeManager';
 import MaterialsManager from '../components/admin/MaterialsManager';
 import InquiriesManager from '../components/admin/InquiriesManager';
 import LiveLessonsManager from '../components/admin/LiveLessonsManager';
+import CoursesManager from '../components/admin/CoursesManager';
 import { getAllInquiries, QuestionInquiry } from '../services/inquiryService';
 import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
@@ -14,7 +15,7 @@ import { LiveLesson } from '../types';
 export default function TeacherDashboard() {
   const { profile: userProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['practices', 'materials', 'inquiries', 'lessons'];
+  const validTabs = ['practices', 'materials', 'inquiries', 'lessons', 'courses'];
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'practices';
 
@@ -116,6 +117,13 @@ export default function TeacherDashboard() {
                 </span>
               )}
             </TabsTrigger>
+            <TabsTrigger 
+              value="courses" 
+              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm data-[state=active]:border-indigo-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
+            >
+              <GraduationCap size={18} />
+              Kurzy
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="practices">
@@ -135,6 +143,10 @@ export default function TeacherDashboard() {
               userId={userProfile?.uid || ''} 
               teacherName={userProfile?.name || 'Učitel'} 
             />
+          </TabsContent>
+
+          <TabsContent value="courses">
+            <CoursesManager userId={userProfile?.uid || ''} />
           </TabsContent>
         </Tabs>
       </div>

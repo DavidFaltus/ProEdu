@@ -3,14 +3,15 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, CheckCircle2, XCircle, Lightbulb, RotateCcw, 
-  BookOpen, ArrowRight, MessageSquare, ChevronLeft, ChevronRight, Send
+  BookOpen, ArrowRight, MessageSquare, ChevronLeft, ChevronRight, Send,
+  Crown, Sparkles, UserPlus
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
 import { 
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter 
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription 
 } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
@@ -22,6 +23,14 @@ import { sanitizeSvg } from '../utils/pdfToSvg';
 import { PracticeSubtopic, PracticeQuestion } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
 import { evaluateStudentAnswer } from '../utils/mathEvaluator';
+import RewardedAdModal from '../components/common/RewardedAdModal';
+import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import { 
+  recordGuestVideo, 
+  recordGuestCompletedSubtopic, 
+  getGuestState, 
+  GUEST_MAX_VIDEOS 
+} from '../services/jokerService';
 
 interface QuestionAnswerState {
   userAnswer: string;
@@ -31,15 +40,26 @@ interface QuestionAnswerState {
   tutorFeedback?: string;
 }
 
-
 export default function PracticeSession() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
-  const { user, profile } = useAuth();
+  const { 
+    user, 
+    profile, 
+    isPremium, 
+    jokers, 
+    consumeOneJoker, 
+    claimVideoReward, 
+    openAuthModal 
+  } = useAuth();
   const navigate = useNavigate();
 
   const [subtopic, setSubtopic] = useState<PracticeSubtopic | null>(null);
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Stavy pro video a paywall
+  const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [isPremiumFeatureModalOpen, setIsPremiumFeatureModalOpen] = useState(false);
 
   // Active question index
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -101,8 +121,14 @@ export default function PracticeSession() {
   const normalize = (str: string) => str.toLowerCase().replace(/\s+/g, '').replace(/,/g, '.');
 
   // Immediate choice selection & check
-  const handleSelectChoice = (option: string) => {
+  const handleSelectChoice = async (option: string) => {
     if (!currentQuestion || isAnswerSubmitted) return;
+
+    if (!isPremium && user && jokers <= 0) {
+      toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
+      setIsVideoModalOpen(true);
+      return;
+    }
 
     const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
@@ -117,14 +143,24 @@ export default function PracticeSession() {
         tutorFeedback: evalResult.tutorFeedback
       }
     }));
+
+    if (!isPremium && user) {
+      await consumeOneJoker();
+    }
   };
 
   // Open-ended answer submission
-  const handleCheckOpenAnswer = () => {
+  const handleCheckOpenAnswer = async () => {
     if (!currentQuestion || isAnswerSubmitted) return;
 
     const answer = (openInputs[currentIndex] || '').trim();
     if (!answer) return;
+
+    if (!isPremium && user && jokers <= 0) {
+      toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
+      setIsVideoModalOpen(true);
+      return;
+    }
 
     const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
@@ -139,6 +175,10 @@ export default function PracticeSession() {
         tutorFeedback: evalResult.tutorFeedback
       }
     }));
+
+    if (!isPremium && user) {
+      await consumeOneJoker();
+    }
   };
 
   // Toggle hint
@@ -167,6 +207,10 @@ export default function PracticeSession() {
   // Final finish and score submission
   const handleFinishPractice = async () => {
     setIsCompleted(true);
+
+    if (!user && subtopic) {
+      recordGuestCompletedSubtopic(subtopic.id);
+    }
 
     if (user && subtopic) {
       const correctCount = Object.values(answersMap).filter(a => a.isCorrect).length;
@@ -465,6 +509,30 @@ export default function PracticeSession() {
         </div>
 
         <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+          {!isPremium && user ? (
+            <button
+              onClick={() => setIsVideoModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-950 border border-amber-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+              title="Klikni pro dobití žolíků sledováním 15s videa"
+            >
+              <span className="text-sm">🃏</span>
+              <span className="font-mono font-black">{jokers}</span>
+              <span className="text-[10px] text-amber-700 underline font-normal hidden sm:inline ml-0.5">+5 za video</span>
+            </button>
+          ) : isPremium ? (
+            <span className="flex items-center gap-1 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black">
+              <span>✨ Premium</span>
+            </span>
+          ) : (
+            <button
+              onClick={() => setIsVideoModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold cursor-pointer"
+            >
+              <span>Host</span>
+              <span className="text-[10px] text-amber-700 font-normal underline">15s video</span>
+            </button>
+          )}
+
           <div className="text-xs font-bold text-gray-500 hidden md:block">
             Otázka <span className="font-black text-[#1E1B18]">{currentIndex + 1}</span> z {questions.length}
           </div>
@@ -588,11 +656,18 @@ export default function PracticeSession() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setIsInquiryModalOpen(true)}
+              onClick={() => {
+                if (!isPremium) {
+                  setIsPremiumFeatureModalOpen(true);
+                } else {
+                  setIsInquiryModalOpen(true);
+                }
+              }}
               className="text-amber-800 hover:text-amber-950 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5"
             >
               <MessageSquare size={15} className="text-amber-600" />
               <span>Doptat se lektora</span>
+              {!isPremium && <Crown size={12} className="text-amber-500 ml-0.5" />}
               {askedInquirySet.has(currentIndex) && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500" title="Dotaz odeslán" />
               )}
@@ -891,6 +966,32 @@ export default function PracticeSession() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 15s Video simulátor pro dobití žolíků */}
+      <RewardedAdModal
+        open={isVideoModalOpen}
+        onOpenChange={setIsVideoModalOpen}
+        onRewardEarned={async () => {
+          if (user) {
+            await claimVideoReward();
+            toast.success('Získal jsi +5 žolíků! Můžeš pokračovat v procvičování.');
+          } else {
+            const res = recordGuestVideo();
+            toast.success(`Host zhlédl video ${res.videosWatched}/${GUEST_MAX_VIDEOS}!`);
+          }
+        }}
+        isGuest={!user}
+        guestVideosWatched={getGuestState().videosWatched}
+      />
+
+      {/* Sjednocený Paywall dialog pro Premium funkce (Dotaz lektorovi) */}
+      <UnifiedPaywallModal
+        isOpen={isPremiumFeatureModalOpen}
+        onClose={() => setIsPremiumFeatureModalOpen(false)}
+        type="premium"
+        title="Komunikace s lektorem vyžaduje Premium"
+        description="Přímá komunikace s lektorem, podrobné vysvětlení nejasných úloh a neomezené procvičování bez čekání na žolíky je součástí balíčku Premium."
+      />
     </div>
   );
 }

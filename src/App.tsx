@@ -28,6 +28,8 @@ import Settings from './pages/Settings';
 import StudyView from './pages/StudyView';
 import PracticeSession from './pages/PracticeSession';
 
+import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
+
 function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 'student' | 'teacher' }) {
   const { user, profile, loading } = useAuth();
 
@@ -53,8 +55,13 @@ function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 's
     );
   }
 
-  if (role && profile?.role !== role) {
-    return <Navigate to="/" replace />;
+  if (role) {
+    if (role === 'teacher' && profile?.role !== 'teacher') {
+      return <Navigate to="/" replace />;
+    }
+    if (role === 'student' && profile?.role === 'teacher') {
+      return <Navigate to="/teacher" replace />;
+    }
   }
 
   return <>{children}</>;
@@ -190,6 +197,7 @@ function AppContent() {
 
       <FloatingTimer />
       <LiveLessonNotificationWatcher />
+      <DevMonetizationToolbar />
       <AuthModal />
       <Toaster />
     </div>

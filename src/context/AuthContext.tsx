@@ -14,12 +14,23 @@ import {
 import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
+import { 
+  checkAndResetDailyJokers, 
+  consumeJoker, 
+  rewardVideoJokers, 
+  DEFAULT_DAILY_JOKERS, 
+  getTodayDateString 
+} from '../services/jokerService';
 
 interface AuthContextType {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
   isAuthReady: boolean;
+  isTeacher: boolean;
+  isPremium: boolean;
+  isCourseUser: boolean;
+  jokers: number;
   isProfileSettingsOpen: boolean;
   setIsProfileSettingsOpen: (open: boolean) => void;
   isAuthModalOpen: boolean;
@@ -31,6 +42,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
   updateUserPassword: (newPassword: string) => Promise<void>;
+  consumeOneJoker: () => Promise<boolean>;
+  claimVideoReward: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -38,6 +51,10 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   isAuthReady: false,
+  isTeacher: false,
+  isPremium: false,
+  isCourseUser: false,
+  jokers: DEFAULT_DAILY_JOKERS,
   isProfileSettingsOpen: false,
   setIsProfileSettingsOpen: () => {},
   isAuthModalOpen: false,
@@ -49,6 +66,8 @@ const AuthContext = createContext<AuthContextType>({
   signOut: async () => {},
   updateProfileData: async () => {},
   updateUserPassword: async () => {},
+  consumeOneJoker: async () => true,
+  claimVideoReward: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -70,15 +89,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Jednorázové čtení místo real-time listeneru — šetří Firestore reads
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
-          setProfile(docSnap.data() as UserProfile);
+          const rawProfile = docSnap.data() as UserProfile;
+          const freshProfile = await checkAndResetDailyJokers(rawProfile);
+          setProfile(freshProfile);
         } else {
           // Rule 4: Role never derived from email in frontend.
-          // Rule 16: Least privilege - default to student.
+          // Rule 16: Least privilege - default to free.
+          const today = getTodayDateString();
           const newProfile: UserProfile = {
             uid: user.uid,
             email: user.email || '',
             name: user.displayName || 'Nový uživatel',
-            role: 'student',
+            role: 'free',
+            jokers: DEFAULT_DAILY_JOKERS,
+            lastJokerResetDate: today,
+            dailyVideosWatched: 0,
             createdAt: Timestamp.now(),
           };
           await setDoc(docRef, newProfile);
@@ -124,14 +149,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateProfileData = async (data: Partial<UserProfile>) => {
-    if (!user) return;
+    // V dev režimu nebo pro učitele umožnit změnu role pro testování
+    const isDev = import.meta.env.DEV;
+    const canChangeRole = isDev || profile?.role === 'teacher';
+
+    const { uid, createdAt, role, ...rest } = data as any;
+    const safeData: any = { ...rest };
+    if (canChangeRole && role) {
+      safeData.role = role;
+    }
+
+    if (!user) {
+      if (safeData.role) {
+        setProfile(prev => prev ? { ...prev, ...safeData } : null);
+      }
+      return;
+    }
+
     const docRef = doc(db, 'users', user.uid);
-    
-    // Rule 5 & 7: Frontend never sets or changes privileged/immutable fields
-    const { role, uid, createdAt, ...safeData } = data as any;
-    
     if (Object.keys(safeData).length > 0) {
-      await updateDoc(docRef, safeData);
+      try {
+        await updateDoc(docRef, safeData);
+      } catch (err: any) {
+        console.warn('Firestore updateDoc warning:', err);
+        // Pokud Firestore odmítne roli v dev módu, necháme proběhnout lokální změnu v aplikaci
+        if (!isDev) throw err;
+      }
     }
     
     // Also update Auth profile if name or photoURL is changed
@@ -146,11 +189,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       
       if (Object.keys(authUpdates).length > 0) {
-        await updateAuthProfile(user, authUpdates);
+        try {
+          await updateAuthProfile(user, authUpdates);
+        } catch (e) {
+          console.warn('updateAuthProfile warning:', e);
+        }
       }
     }
 
     setProfile(prev => prev ? { ...prev, ...safeData } : null);
+  };
+
+  const isTeacher = profile?.role === 'teacher';
+  const isPremium = profile?.role === 'premium' || profile?.role === 'course' || profile?.role === 'teacher';
+  const isCourseUser = profile?.role === 'course' || profile?.role === 'teacher';
+  const jokers = profile?.jokers ?? DEFAULT_DAILY_JOKERS;
+
+  const consumeOneJoker = async (): Promise<boolean> => {
+    if (!profile) return false;
+    if (isPremium) return true;
+    const res = await consumeJoker(profile);
+    if (res.success) {
+      setProfile(prev => prev ? { ...prev, jokers: res.remainingJokers } : null);
+    }
+    return res.success;
+  };
+
+  const claimVideoReward = async () => {
+    if (!profile) return;
+    const res = await rewardVideoJokers(profile);
+    if (res.success) {
+      setProfile(prev => prev ? {
+        ...prev,
+        jokers: res.newJokers,
+        dailyVideosWatched: (prev.dailyVideosWatched || 0) + 1,
+      } : null);
+    }
   };
 
   const updateUserPassword = async (newPassword: string) => {
@@ -163,6 +237,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile, 
     loading, 
     isAuthReady, 
+    isTeacher,
+    isPremium,
+    isCourseUser,
+    jokers,
     isProfileSettingsOpen,
     setIsProfileSettingsOpen,
     isAuthModalOpen,
@@ -173,8 +251,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signUpWithEmail, 
     signOut,
     updateProfileData,
-    updateUserPassword
-  }), [user, profile, loading, isAuthReady, isProfileSettingsOpen, isAuthModalOpen]);
+    updateUserPassword,
+    consumeOneJoker,
+    claimVideoReward,
+  }), [
+    user, 
+    profile, 
+    loading, 
+    isAuthReady, 
+    isTeacher, 
+    isPremium, 
+    isCourseUser, 
+    jokers, 
+    isProfileSettingsOpen, 
+    isAuthModalOpen
+  ]);
 
   return (
     <AuthContext.Provider value={contextValue}>

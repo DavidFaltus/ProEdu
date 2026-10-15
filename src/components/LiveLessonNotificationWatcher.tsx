@@ -7,12 +7,12 @@ import { toast } from 'sonner';
 import { Video, ExternalLink, BellRing, X } from 'lucide-react';
 
 export default function LiveLessonNotificationWatcher() {
-  const { user, profile } = useAuth();
+  const { user, profile, isPremium } = useAuth();
   const notifiedLessonIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    // Only run for authenticated students
-    if (!user?.uid || profile?.role === 'teacher') return;
+    // Only run for authenticated premium/course students (not teachers, not free/guests)
+    if (!user?.uid || profile?.role === 'teacher' || !isPremium) return;
 
     const unsubscribe = subscribeToStudentLiveLessons(
       user.uid,
@@ -120,7 +120,7 @@ export default function LiveLessonNotificationWatcher() {
     );
 
     return () => unsubscribe();
-  }, [user?.uid, profile?.role]);
+  }, [user?.uid, profile?.role, isPremium]);
 
   return null;
 }

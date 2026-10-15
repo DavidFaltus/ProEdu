@@ -80,8 +80,11 @@ const RECOMMENDED_TOPICS = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile } = useAuth();
+  const { user, profile, isPremium } = useAuth();
   const navigate = useNavigate();
+
+  // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele
+  const canViewTutorAndLessons = Boolean(user && profile && isPremium);
 
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
   const [loadingInquiries, setLoadingInquiries] = useState(false);
@@ -164,7 +167,7 @@ export default function StudentDashboard() {
   const isTeacher = profile?.role === 'teacher';
 
   useEffect(() => {
-    if (!user?.uid) {
+    if (!user?.uid || !canViewTutorAndLessons) {
       setLiveLessons([]);
       setLoadingLessons(false);
       return;
@@ -196,10 +199,10 @@ export default function StudentDashboard() {
         );
 
     return () => unsubscribe();
-  }, [user?.uid, isTeacher]);
+  }, [user?.uid, isTeacher, canViewTutorAndLessons]);
 
   const loadInquiries = useCallback(async () => {
-    if (!user?.uid) {
+    if (!user?.uid || !canViewTutorAndLessons) {
       setInquiries([]);
       setLoadingInquiries(false);
       return;
@@ -215,7 +218,7 @@ export default function StudentDashboard() {
     } finally {
       setLoadingInquiries(false);
     }
-  }, [user?.uid, isTeacher]);
+  }, [user?.uid, isTeacher, canViewTutorAndLessons]);
 
   useEffect(() => {
     loadInquiries();
@@ -381,6 +384,9 @@ export default function StudentDashboard() {
 
       {/* DYNAMIC GRID: Dotazy (Left) & Naplánovaná hodina (Right) */}
       {(() => {
+        // Skrýt sekce "Odpověď od lektora" a "Naplánovaná hodina" pro nepřihlášené a Free uživatele
+        if (!canViewTutorAndLessons) return null;
+
         const hasInquiries = !loadingInquiries && inquiries && inquiries.length > 0;
         const activeLessons = isTeacher
           ? liveLessons.filter(l => l.status === 'live' || l.status === 'scheduled')

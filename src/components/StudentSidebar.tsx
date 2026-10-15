@@ -11,7 +11,8 @@ import {
   LogOut,
   CheckSquare,
   Bell,
-  LogIn
+  LogIn,
+  Lock
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -28,7 +29,7 @@ interface StudentSidebarProps {
 }
 
 export default function StudentSidebar({ onNavigate, className }: StudentSidebarProps = {}) {
-  const { user, profile, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
+  const { user, profile, isPremium, isTeacher, jokers, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
   const [isAvatarModalOpen, setIsAvatarModalOpen] = React.useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -49,11 +50,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
     navigate('/');
   };
 
-
-
-  const isTeacher = profile?.role === 'teacher';
-
-  const menuItems: { name: string; path: string; icon: any; active: boolean; onClick?: () => void }[] = [
+  const menuItems: { name: string; path: string; icon: any; active: boolean; locked?: boolean; onClick?: () => void }[] = [
     {
       name: 'Hlavní stránka',
       path: '/',
@@ -70,7 +67,14 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
       name: 'Materiály',
       path: '/learning',
       icon: BookOpen,
-      active: location.pathname.startsWith('/learning')
+      active: location.pathname.startsWith('/learning'),
+      locked: !isPremium,
+    },
+    {
+      name: 'Kurzy',
+      path: '/courses',
+      icon: GraduationCap,
+      active: location.pathname.startsWith('/courses'),
     },
     ...(isTeacher ? [{
       name: 'Administrace',
@@ -117,6 +121,9 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
               >
                 <Icon size={20} className={cn("shrink-0", item.active ? "text-[#1E1B18]" : "text-gray-400")} />
                 <span>{item.name}</span>
+                {item.locked && (
+                  <Lock size={15} className="ml-auto text-amber-600/90 shrink-0" />
+                )}
               </Link>
             );
           })}
@@ -164,6 +171,19 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                     <span className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse" title="Máš nová upozornění!" />
                   )}
                 </h4>
+                <div className="flex items-center gap-1.5 mt-1">
+                  {profile?.role === 'premium' ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-md">✨ Premium</span>
+                  ) : profile?.role === 'course' ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 bg-blue-100 px-1.5 py-0.5 rounded-md">🎓 Kurz</span>
+                  ) : profile?.role === 'teacher' ? (
+                    <span className="text-[10px] font-black uppercase tracking-wider text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded-md">👑 Učitel</span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-gray-600 bg-gray-200/80 px-1.5 py-0.5 rounded-md flex items-center gap-1">
+                      <span>🃏</span> <span>{jokers} žolíků</span>
+                    </span>
+                  )}
+                </div>
               </div>
               
               <button

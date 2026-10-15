@@ -3,18 +3,22 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { 
   Search, FileText, Filter, GraduationCap, Lock, Sparkles, 
-  BookOpen, Eye, ArrowRight, X, Download 
+  BookOpen, Eye, ArrowRight, X, Download, Crown, Check, Play 
 } from 'lucide-react';
 import { Input } from '../components/ui/input';
 import { motion } from 'motion/react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { getAllMaterials, ExistingMaterialItem } from '../services/practiceService';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
+import { toast } from 'sonner';
+import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 
 export default function LearningSheets() {
-  const { user, openAuthModal } = useAuth();
+  const { user, isPremium } = useAuth();
+  const navigate = useNavigate();
   const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -123,7 +127,7 @@ export default function LearningSheets() {
 
       {/* Main Content Area */}
       <div className="relative max-w-6xl mx-auto">
-        <div className={cn("transition-all", !user && "filter blur-md select-none pointer-events-none opacity-50")}>
+        <div className={cn("transition-all", !isPremium && "filter blur-sm select-none pointer-events-none")}>
           {loading ? (
             <div className="text-center py-24 bg-white/60 rounded-[2.5rem]">
               <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
@@ -208,37 +212,6 @@ export default function LearningSheets() {
             </div>
           )}
         </div>
-
-        {/* Locked state overlay for non-authenticated visitors */}
-        {!user && (
-          <div className="absolute inset-0 flex items-center justify-center p-4 z-20 pointer-events-auto">
-            <div className="bg-white/95 backdrop-blur-xl border border-gray-100 shadow-3xl rounded-[2.5rem] p-8 md:p-12 max-w-lg w-full text-center space-y-6">
-              <div className="w-20 h-20 bg-amber-50 border border-amber-200/60 rounded-3xl mx-auto flex items-center justify-center text-amber-600 shadow-inner">
-                <Lock size={36} />
-              </div>
-              <div className="space-y-2">
-                <span className="px-3.5 py-1 bg-amber-100/80 text-amber-900 text-[11px] font-black uppercase tracking-widest rounded-full">
-                  Výukové materiály
-                </span>
-                <h3 className="text-3xl md:text-4xl font-display font-black text-[#1E1B18] tracking-tight">
-                  Odemkni si materiály
-                </h3>
-                <p className="text-gray-500 font-medium text-sm md:text-base leading-relaxed">
-                  Získej přístup k přehledům látky, tahákům z PDF a výukovým listům pro přípravu na zkoušky.
-                </p>
-              </div>
-              <div className="pt-2">
-                <Button
-                  onClick={openAuthModal}
-                  className="w-full h-14 rounded-2xl bg-[#1E1B18] text-[#FAF7F0] hover:bg-[#332f2b] text-base font-black shadow-lg transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Sparkles size={18} className="text-yellow-400" />
-                  Přihlásit se pro přístup
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* SVG Preview Modal */}
@@ -292,6 +265,15 @@ export default function LearningSheets() {
           </div>
         </div>
       )}
+
+      {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
+      <UnifiedPaywallModal
+        isOpen={!isPremium}
+        onClose={() => navigate('/practice')}
+        type="premium"
+        title="ProEdu Premium – Výukové materiály"
+        description="Kompletní výukové listy, grafické přehledy látky, taháky a vzorové postupy k přijímačkám z matematiky i češtiny jsou dostupné v rámci předplatného Premium."
+      />
     </div>
   );
 }

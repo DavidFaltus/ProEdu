@@ -40,8 +40,11 @@ service cloud.firestore {
       return data.uid is string && data.uid.size() <= 128 &&
              data.email is string && data.email.size() <= 256 &&
              data.name is string && data.name.size() <= 128 &&
-             data.role is string && (data.role == 'student' || data.role == 'teacher') &&
-             data.createdAt is timestamp;
+             data.role is string && (data.role == 'student' || data.role == 'free' || data.role == 'premium' || data.role == 'course' || data.role == 'teacher') &&
+             data.createdAt is timestamp &&
+             (!('jokers' in data) || data.jokers == null || data.jokers is int) &&
+             (!('lastJokerResetDate' in data) || data.lastJokerResetDate == null || (data.lastJokerResetDate is string && data.lastJokerResetDate.size() <= 32)) &&
+             (!('dailyVideosWatched' in data) || data.dailyVideosWatched == null || data.dailyVideosWatched is int);
     }
 
     function isValidTest(data) {
@@ -184,9 +187,23 @@ service cloud.firestore {
 
     function isValidCourse(data) {
       return data.title is string && data.title.size() <= 256 &&
-             data.description is string && data.description.size() <= 1000 &&
-             data.teacherId is string && data.teacherId.size() <= 128 &&
-             data.studentIds is list && data.studentIds.size() <= 100;
+             data.description is string && data.description.size() <= 4000 &&
+             (!('teacherId' in data) || data.teacherId == null || (data.teacherId is string && data.teacherId.size() <= 128)) &&
+             (!('studentIds' in data) || data.studentIds == null || (data.studentIds is list && data.studentIds.size() <= 500)) &&
+             (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
+             (!('price' in data) || data.price == null || (data.price is string && data.price.size() <= 128)) &&
+             (!('difficulty' in data) || data.difficulty == null || (data.difficulty is string && data.difficulty.size() <= 128)) &&
+             (!('schedule' in data) || data.schedule == null || (data.schedule is string && data.schedule.size() <= 256)) &&
+             (!('instructorName' in data) || data.instructorName == null || (data.instructorName is string && data.instructorName.size() <= 128)) &&
+             (!('startDate' in data) || data.startDate == null || (data.startDate is string && data.startDate.size() <= 64)) &&
+             (!('endDate' in data) || data.endDate == null || (data.endDate is string && data.endDate.size() <= 64)) &&
+             (!('syllabus' in data) || data.syllabus == null || (data.syllabus is list && data.syllabus.size() <= 100)) &&
+             (!('badge' in data) || data.badge == null || (data.badge is string && data.badge.size() <= 128)) &&
+             (!('color' in data) || data.color == null || (data.color is string && data.color.size() <= 64)) &&
+             (!('meetUrl' in data) || data.meetUrl == null || (data.meetUrl is string && data.meetUrl.size() <= 512)) &&
+             (!('studentCount' in data) || data.studentCount == null || data.studentCount is int) &&
+             (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
     }
 
     function isValidCourseItem(data) {
@@ -252,12 +269,12 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
       allow create: if isAuthenticated() &&
         isOwner(uid) &&
-        request.resource.data.role == 'student' &&
+        (request.resource.data.role == 'student' || request.resource.data.role == 'free') &&
         isValidUser(request.resource.data);
       allow update: if isAuthenticated() &&
         (isOwner(uid) || isAdmin()) &&
         keepsImmutableFields() &&
-        (isAdmin() || request.resource.data.role == resource.data.role) &&
+        (isAdmin() || (isOwner(uid) && request.resource.data.role in ['student', 'free', 'premium', 'course']) || request.resource.data.role == resource.data.role) &&
         isValidUser(request.resource.data);
       allow delete: if false;
     }
@@ -354,11 +371,8 @@ service cloud.firestore {
     }
     
     match /courses/{courseId} {
-      allow read: if isAuthenticated() && (
-        isAdmin() || request.auth.uid in resource.data.studentIds
-      );
-      allow create: if isAdmin() && request.resource.data.teacherId == request.auth.uid && isValidCourse(request.resource.data);
-      allow update: if isAdmin() && isValidCourse(request.resource.data);
+      allow read: if true;
+      allow create, update: if isAdmin() && isValidCourse(request.resource.data);
       allow delete: if isAdmin();
     }
 

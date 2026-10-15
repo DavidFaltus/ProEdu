@@ -19,28 +19,33 @@ function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
 function DialogContent({
   className,
   children,
+  showCloseButton = true,
   ...props
-}: DialogPrimitive.Popup.Props) {
+}: DialogPrimitive.Popup.Props & { showCloseButton?: boolean }) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop
         data-slot="dialog-overlay"
-        className="data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 fixed inset-0 z-50 bg-black/50"
+        className="data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
       />
-      <DialogPrimitive.Popup
-        data-slot="dialog-content"
-        className={cn(
-          "bg-background data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
-          className
-        )}
-        {...props}
-      >
-        {children}
-        <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-disabled:pointer-events-none absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none cursor-pointer">
-          <XIcon className="size-4" />
-          <span className="sr-only">Close</span>
-        </DialogPrimitive.Close>
-      </DialogPrimitive.Popup>
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto pointer-events-none">
+        <DialogPrimitive.Popup
+          data-slot="dialog-content"
+          className={cn(
+            "bg-background data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 relative w-full max-w-[calc(100%-2rem)] rounded-2xl border p-6 shadow-2xl duration-200 pointer-events-auto my-auto sm:max-w-lg",
+            className
+          )}
+          {...props}
+        >
+          {children}
+          {showCloseButton && (
+            <DialogPrimitive.Close className="ring-offset-background focus:ring-ring data-disabled:pointer-events-none absolute top-4 right-4 rounded-xs opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none cursor-pointer">
+              <XIcon className="size-4" />
+              <span className="sr-only">Close</span>
+            </DialogPrimitive.Close>
+          )}
+        </DialogPrimitive.Popup>
+      </div>
     </DialogPrimitive.Portal>
   )
 }
