@@ -345,7 +345,7 @@ export default function PracticeSession() {
             <span className="text-xs font-black uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-900">
               Výsledek procvičování
             </span>
-            <h2 className="text-3xl sm:text-4xl font-display font-black text-[#1E1B18]">
+            <h2 className="text-3xl sm:text-4xl font-playful text-[#1E1B18]">
               {percentage >= 80 ? 'Skvělá práce!' : percentage >= 50 ? 'Dobrá práce!' : 'Trénink dělá mistra!'}
             </h2>
             <p className="text-gray-500 font-medium text-base">
@@ -402,7 +402,7 @@ export default function PracticeSession() {
 
         {/* Detailed Question Review */}
         <div className="space-y-4">
-          <h3 className="font-sans font-black text-2xl text-[#1E1B18] px-2">
+          <h3 className="font-playful text-2xl text-[#1E1B18] px-2">
             Přehled otázek a vysvětlení
           </h3>
 
@@ -485,7 +485,7 @@ export default function PracticeSession() {
   const progressPercent = Math.round((answeredCount / questions.length) * 100);
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 py-6 px-4 sm:px-6">
+    <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 py-2 sm:py-6 px-0.5 sm:px-6">
       {/* Top Header with Breadcrumbs & Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-gray-100 shadow-sm">
         <div className="flex items-center gap-3 min-w-0">

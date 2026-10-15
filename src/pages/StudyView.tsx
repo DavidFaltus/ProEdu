@@ -129,7 +129,7 @@ export default function StudyView() {
             </span>
           </div>
 
-          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-display font-black text-[#1E1B18] tracking-tight pt-1">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-playful text-[#1E1B18] tracking-tight pt-1">
             {subtopic.title}
           </h1>
         </div>

@@ -49,8 +49,8 @@ export default function StudentDashboard() {
   const { user, profile, isPremium } = useAuth();
   const navigate = useNavigate();
 
-  // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele
-  const canViewTutorAndLessons = Boolean(user && profile && isPremium);
+  // Sekce pro lektora a hodiny se načítají pro všechny přihlášené uživatele (zobrazí se, pokud v nich jsou data)
+  const canViewTutorAndLessons = Boolean(user && profile);
 
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
   const [loadingInquiries, setLoadingInquiries] = useState(false);
@@ -255,14 +255,14 @@ export default function StudentDashboard() {
   }, []);
 
   return (
-    <div className="space-y-8 md:space-y-10">
+    <div className="space-y-6 md:space-y-10">
       {/* HEADER SECTION: Greeting on Left, Motivational Quote on Top Right */}
-      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-        <div className="space-y-1.5">
-          <h1 className="text-4xl md:text-5xl font-display font-black text-[#1E1B18] tracking-tight leading-tight">
+      <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
+        <div className="space-y-1 sm:space-y-1.5">
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-playful text-[#1E1B18] tracking-tight leading-tight">
             Ahoj {profile?.name?.split(' ')[0] || (isTeacher ? 'učiteli' : user ? 'studente' : 'Alexi')}, {greeting}
           </h1>
-          <p className="text-gray-500 font-medium text-sm md:text-base">
+          <p className="text-gray-500 font-medium text-xs sm:text-sm md:text-base">
             {isTeacher 
               ? 'Vítej ve svém pracovním prostoru ProEdu. Co máme dnes v plánu?' 
               : 'Vítej ve své studijní zóně ProEdu. Co si dnes procvičíme?'}
@@ -270,9 +270,9 @@ export default function StudentDashboard() {
         </div>
 
         {/* Motivational Quote in Top Right Corner (replacing streak) */}
-        <div className="bg-white/95 backdrop-blur-sm p-4 sm:p-5 rounded-[2rem] shadow-sm border border-gray-100 max-w-lg shrink-0 flex items-start gap-3.5 self-start lg:self-center">
-          <span className="text-2xl sm:text-3xl shrink-0 mt-0.5">💡</span>
-          <div className="space-y-1 min-w-0">
+        <div className="bg-white/95 backdrop-blur-sm p-3.5 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-sm border border-gray-100 w-full lg:max-w-md shrink-0 flex items-start gap-3 sm:gap-3.5 self-start lg:self-center">
+          <span className="text-xl sm:text-3xl shrink-0 mt-0.5">💡</span>
+          <div className="space-y-0.5 sm:space-y-1 min-w-0">
             <p className="font-sans italic text-xs sm:text-sm text-[#1E1B18] leading-snug">
               "{quote.text}"
             </p>
@@ -301,13 +301,13 @@ export default function StudentDashboard() {
           <div className="flex flex-col justify-start h-full space-y-4">
             <div>
               {/* Card Header */}
-              <div className="flex items-center justify-between mb-3.5 pb-2.5 border-b border-gray-100 gap-2.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3.5 pb-2.5 border-b border-gray-100 gap-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner shrink-0">
                     <Sparkles size={16} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-sans font-black text-lg sm:text-xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
+                    <h3 className="font-playful text-xl sm:text-2xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
                     <p className="text-gray-400 text-[11px] font-semibold truncate">
                       {user ? 'Přizpůsobeno podle tvých dosavadních výsledků a cílů' : 'Témata pro nejlepší výsledky u zkoušek'}
                     </p>
@@ -318,7 +318,7 @@ export default function StudentDashboard() {
                   variant="outline"
                   size="sm"
                   onClick={() => navigate('/practice')}
-                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1.5 cursor-pointer shadow-2xs shrink-0"
+                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs shrink-0 self-start sm:self-auto"
                 >
                   <span>Katalog témat</span>
                   <ArrowRight size={12} />
@@ -365,13 +365,13 @@ export default function StudentDashboard() {
                       <div
                         key={item.subtopicId}
                         onClick={() => navigate(`/practice/session/${item.subtopicId}`)}
-                        className="group p-2.5 sm:p-3 rounded-xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-sm transition-all flex items-center justify-between gap-3 cursor-pointer"
+                        className="group p-3 sm:p-3.5 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-sm transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer"
                       >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs transition-transform group-hover:scale-105", item.bg)}>
+                        <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
+                          <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs transition-transform group-hover:scale-105 mt-0.5 sm:mt-0", item.bg)}>
                             {item.icon}
                           </div>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded", item.tagClass)}>
                                 {item.subject}
@@ -381,16 +381,16 @@ export default function StudentDashboard() {
                                 {item.badge.text}
                               </span>
                             </div>
-                            <h4 className="font-bold text-gray-800 text-xs sm:text-sm mt-0.5 truncate group-hover:text-black leading-snug">
+                            <h4 className="font-playful text-gray-900 text-base sm:text-lg mt-0.5 group-hover:text-black leading-snug line-clamp-1 sm:line-clamp-2">
                               {item.title}
                             </h4>
-                            <p className="text-[10px] font-medium text-gray-400 truncate max-w-xs sm:max-w-sm">
+                            <p className="text-[11px] font-medium text-gray-400 truncate max-w-xs sm:max-w-sm">
                               {item.reasonText}
                             </p>
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0">
+                        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto pt-1 sm:pt-0 border-t border-gray-200/40 sm:border-0 justify-end">
                           {item.hasStudyMaterial && (
                             <Button
                               size="sm"
@@ -400,9 +400,9 @@ export default function StudentDashboard() {
                                 navigate(`/study/${item.subtopicId}`);
                               }}
                               title="Prostudovat teorii před testem"
-                              className="rounded-lg border-gray-200 hover:border-black text-gray-700 font-bold text-[11px] h-7.5 px-2 shrink-0 hidden sm:flex items-center gap-1 cursor-pointer bg-white"
+                              className="flex-1 sm:flex-none rounded-xl border-gray-200 hover:border-black text-gray-700 font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white"
                             >
-                              <BookOpen size={12} />
+                              <BookOpen size={13} />
                               <span>Teorie</span>
                             </Button>
                           )}
@@ -413,7 +413,7 @@ export default function StudentDashboard() {
                               e.stopPropagation();
                               navigate(`/practice/session/${item.subtopicId}`);
                             }}
-                            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-3 h-8 shrink-0 flex items-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs"
+                            className="flex-1 sm:flex-none rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-4 h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs"
                           >
                             <Play size={11} className="fill-current text-[#F5C400]" />
                             <span>Procvičit</span>

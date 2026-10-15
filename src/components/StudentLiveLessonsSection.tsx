@@ -211,7 +211,7 @@ export default function StudentLiveLessonsSection({
 
   return (
     <Card className={cn(
-      "rounded-[2.5rem] border-none shadow-xl bg-white p-6 sm:p-8 space-y-6 relative overflow-hidden transition-all duration-300",
+      "rounded-[1.75rem] sm:rounded-[2.5rem] border-none shadow-xl bg-white p-4 sm:p-6 md:p-8 space-y-6 relative overflow-hidden transition-all duration-300",
       hasActiveLiveLesson && "ring-4 ring-red-500/10 border-2 border-red-500/70"
     )}>
       {hasActiveLiveLesson && (
@@ -231,7 +231,7 @@ export default function StudentLiveLessonsSection({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
+              <h3 className="font-playful text-2xl sm:text-3xl text-[#1E1B18]">
                 {hasActiveLiveLesson ? 'Připojit se na hodinu' : 'Naplánovaná hodina'}
               </h3>
               {hasActiveLiveLesson && (

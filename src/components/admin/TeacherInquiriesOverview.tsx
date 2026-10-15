@@ -225,7 +225,7 @@ export default function TeacherInquiriesOverview({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
+              <h3 className="font-playful text-2xl sm:text-3xl text-[#1E1B18]">
                 Dotaz od studenta
               </h3>
               {pendingCount > 0 && (

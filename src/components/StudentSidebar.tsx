@@ -85,18 +85,29 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
   ];
 
   return (
-    <aside className={cn("w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-6 h-screen sticky top-0 shadow-sm z-30", className)}>
+    <aside className={cn("w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-5 sm:p-6 h-full md:h-[100dvh] md:sticky md:top-0 shadow-sm z-30 overflow-y-auto overscroll-contain", className)}>
       <div className="flex-1 flex flex-col min-h-0">
         {/* Logo and Brand */}
-        <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0">
-          <img 
-            src="/photo/logo2.svg" 
-            alt="ProEdu" 
-            className="h-[51px] w-auto group-hover:scale-105 transition-transform"
-            referrerPolicy="no-referrer"
-          />
-          <span className="font-playful text-3xl text-[#F5C400] leading-none mt-4">-cator</span>
-        </Link>
+        <div className="flex items-center justify-between">
+          <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0">
+            <img 
+              src="/photo/logo2.svg" 
+              alt="ProEdu" 
+              className="h-[46px] md:h-[51px] w-auto group-hover:scale-105 transition-transform"
+              referrerPolicy="no-referrer"
+            />
+            <span className="font-playful text-3xl text-[#F5C400] leading-none mt-3">-cator</span>
+          </Link>
+          {onNavigate && (
+            <button
+              onClick={onNavigate}
+              className="md:hidden p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              aria-label="Zavřít menu"
+            >
+              ✕
+            </button>
+          )}
+        </div>
 
         {/* Navigation Links */}
         <nav className="flex-1 flex flex-col justify-between pt-6 min-h-0">

@@ -72,7 +72,7 @@ export default function FloatingTimer() {
 
   return (
     <div 
-      className="fixed bottom-6 right-6 z-50 flex flex-col items-end"
+      className="fixed bottom-18 sm:bottom-6 right-3.5 sm:right-6 z-40 sm:z-50 flex flex-col items-end"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

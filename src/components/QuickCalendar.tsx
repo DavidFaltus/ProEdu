@@ -286,7 +286,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
   const hasItemsToDisplay = hasEventsForSelectedDay || !!nextActivity;
 
   return (
-    <div className="grid lg:grid-cols-[1fr_310px] gap-5 bg-white rounded-[1.75rem] p-4 sm:p-5 shadow-md border border-gray-100 overflow-hidden h-full">
+    <div className="grid lg:grid-cols-[1fr_310px] gap-4 sm:gap-5 bg-white rounded-[1.75rem] p-3.5 sm:p-5 shadow-md border border-gray-100 overflow-hidden h-full">
       {/* Calendar Grid Side */}
       <div className="space-y-4 flex flex-col justify-between h-full">
         <div>
@@ -295,7 +295,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
               <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-brand-blue shadow-inner">
                 <CalendarIcon size={16} />
               </div>
-              <h3 className="text-xl font-display font-black text-gray-900 capitalize">
+              <h3 className="text-xl sm:text-2xl font-playful text-gray-900 capitalize">
                 {format(currentDate, 'MMMM yyyy', { locale: cs })}
               </h3>
             </div>
@@ -309,7 +309,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
             </div>
           </div>
 
-          <div className="grid grid-cols-7 gap-1.5 mb-1">
+          <div className="grid grid-cols-7 gap-1 sm:gap-1.5 mb-1">
             {daysOfWeek.map(day => (
               <div key={day} className="text-center text-[9px] font-black text-gray-400 uppercase tracking-widest py-1">
                 {day}
@@ -317,7 +317,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
             ))}
           </div>
 
-          <div className="grid grid-cols-7 gap-1.5">
+          <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
             {calendarDays.map((day, idx) => {
               const dayTodos = getTodosForDay(day);
               const dayLessons = getLessonsForDay(day);
@@ -407,7 +407,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-display font-black text-brand-blue lining-nums leading-none">
+            <span className="text-3xl sm:text-4xl font-playful font-black text-brand-blue lining-nums leading-none">
               {safeFormat(displayDate, 'd')}
             </span>
             <div className="flex flex-col">

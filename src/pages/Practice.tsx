@@ -72,7 +72,7 @@ export default function Practice() {
         <motion.h1 
           initial={{ opacity: 0, y: -10 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-4xl md:text-5xl lg:text-6xl font-display font-extrabold text-[#1E1B18] tracking-tight"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-[#1E1B18] tracking-tight"
         >
           Procvičování témat
         </motion.h1>
@@ -110,7 +110,7 @@ export default function Practice() {
               
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className={`text-2xl sm:text-3xl font-display font-black tracking-tight ${
+                  <h3 className={`text-2xl sm:text-3xl font-playful font-black tracking-tight ${
                     isActive ? 'text-white' : 'text-[#1E1B18]'
                   }`}>
                     {sub.title}
@@ -176,7 +176,7 @@ export default function Practice() {
                       <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-md">
                         Hlavní téma
                       </span>
-                      <h3 className="text-2xl sm:text-3xl font-display font-black text-[#1E1B18] mt-1">
+                      <h3 className="text-2xl sm:text-3xl font-playful text-[#1E1B18] mt-1">
                         {topic.title}
                       </h3>
                       {topic.description && (
@@ -231,7 +231,7 @@ export default function Practice() {
                           >
                             <div className="space-y-1.5 flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="font-bold text-lg text-gray-900 leading-tight">
+                                <h4 className="font-playful text-xl text-gray-900 leading-tight">
                                   {subtopic.title}
                                 </h4>
                                 {isFirstDemo && !user && (

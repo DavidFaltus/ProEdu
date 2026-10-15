@@ -67,71 +67,71 @@ export default function TeacherDashboard() {
   const bothExist = hasInquiries && hasLessons;
 
   return (
-    <div className="min-h-screen bg-[#FAF6EE] p-4 sm:p-8 font-sans pb-32">
-      <div className="max-w-7xl mx-auto space-y-8">
-        <div>
-          <h1 className="text-4xl font-black text-gray-900 tracking-tight font-playful mb-2">
-            Učitelský panel
-          </h1>
-          <p className="text-gray-500 font-semibold">
-            Vítejte zpět, {userProfile?.name || 'Učiteli'}. Zde můžete spravovat svůj obsah a komunikovat se studenty.
-          </p>
-        </div>
+    <div className="w-full max-w-7xl mx-auto space-y-6 sm:space-y-8">
+      <div>
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-gray-900 tracking-tight font-playful mb-2">
+          Učitelský panel
+        </h1>
+        <p className="text-gray-500 font-semibold text-xs sm:text-sm">
+          Vítejte zpět, {userProfile?.name || 'Učiteli'}. Zde můžete spravovat svůj obsah a komunikovat se studenty.
+        </p>
+      </div>
 
-
-        {/* Management Tabs */}
-        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-          <TabsList className="flex flex-wrap gap-2 bg-transparent h-auto p-0 mb-8 w-full justify-start border-b border-gray-200 rounded-none pb-4">
-            <TabsTrigger 
-              value="practices" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-sm data-[state=active]:border-[#B80053]/20 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <Target size={18} />
-              Procvičování
-            </TabsTrigger>
-            <TabsTrigger 
-              value="materials" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#0F5238] data-[state=active]:shadow-sm data-[state=active]:border-[#0F5238]/20 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <BookOpen size={18} />
-              Studijní materiály
-            </TabsTrigger>
-            <TabsTrigger 
-              value="students" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <Users size={18} />
-              Studenti
-            </TabsTrigger>
-            <TabsTrigger 
-              value="inquiries" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-purple-600 data-[state=active]:shadow-sm data-[state=active]:border-purple-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <MessageSquare size={18} />
-              Dotazy studentů {inquiries.filter(i => i.status === 'pending').length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white">
-                  {inquiries.filter(i => i.status === 'pending').length}
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger 
-              value="lessons" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-red-600 data-[state=active]:shadow-sm data-[state=active]:border-red-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <Video size={18} />
-              Lekce {lessons.filter(l => l.status === 'live').length > 0 && (
-                <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-600 text-white animate-pulse">
-                  Živě
-                </span>
-              )}
-            </TabsTrigger>
-            <TabsTrigger 
-              value="courses" 
-              className="rounded-xl data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm data-[state=active]:border-indigo-200 border border-transparent px-4 py-2.5 flex items-center gap-2 font-bold transition-all"
-            >
-              <GraduationCap size={18} />
-              Kurzy
-            </TabsTrigger>
+      {/* Management Tabs */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList className="flex flex-nowrap overflow-x-auto gap-2 bg-transparent h-auto p-0 mb-6 sm:mb-8 w-full justify-start border-b border-gray-200 rounded-none pb-3 overscroll-x-contain scrollbar-hide">
+          <TabsTrigger 
+            value="practices" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-sm data-[state=active]:border-[#B80053]/20 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <Target size={16} />
+            <span>Procvičování</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="materials" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#0F5238] data-[state=active]:shadow-sm data-[state=active]:border-[#0F5238]/20 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <BookOpen size={16} />
+            <span>Studijní materiály</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="students" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <Users size={16} />
+            <span>Studenti</span>
+          </TabsTrigger>
+          <TabsTrigger 
+            value="inquiries" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-purple-600 data-[state=active]:shadow-sm data-[state=active]:border-purple-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <MessageSquare size={16} />
+            <span>Dotazy</span>
+            {inquiries.filter(i => i.status === 'pending').length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white">
+                {inquiries.filter(i => i.status === 'pending').length}
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger 
+            value="lessons" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-red-600 data-[state=active]:shadow-sm data-[state=active]:border-red-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <Video size={16} />
+            <span>Lekce</span>
+            {lessons.filter(l => l.status === 'live').length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-red-600 text-white animate-pulse">
+                Živě
+              </span>
+            )}
+          </TabsTrigger>
+          <TabsTrigger 
+            value="courses" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm data-[state=active]:border-indigo-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <GraduationCap size={16} />
+            <span>Kurzy</span>
+          </TabsTrigger>
           </TabsList>
 
           <TabsContent value="practices">
@@ -161,7 +161,6 @@ export default function TeacherDashboard() {
             <CoursesManager userId={userProfile?.uid || ''} />
           </TabsContent>
         </Tabs>
-      </div>
     </div>
   );
 }

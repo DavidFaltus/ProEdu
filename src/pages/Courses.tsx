@@ -74,7 +74,7 @@ export default function Courses() {
           </span>
         </motion.div>
 
-        <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-4xl md:text-5xl lg:text-6xl font-display font-black text-[#1E1B18] tracking-tight">
+        <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-[#1E1B18] tracking-tight">
           {isTeacher ? 'Nabídka a správa kurzů' : isCourseUser ? 'Tvoje online kurzy' : 'Aktuální nabídka kurzů'}
         </motion.h1>
 
@@ -109,7 +109,7 @@ export default function Courses() {
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider rounded-full border border-white/15">
               <Sparkles size={12} /> Živá výuka s lektory
             </span>
-            <h2 className="text-2xl sm:text-3xl font-display font-black text-white">
+            <h2 className="text-2xl sm:text-3xl font-playful text-white">
               Odemkni si živou online výuku s lektorem
             </h2>
             <p className="text-gray-300 text-sm sm:text-base max-w-xl leading-relaxed">
@@ -201,7 +201,7 @@ export default function Courses() {
                             )}
                           </div>
                           
-                          <h3 className="text-xl font-display font-black text-[#1E1B18] group-hover:text-indigo-600 transition-colors leading-snug">
+                          <h3 className="text-xl font-playful text-[#1E1B18] group-hover:text-indigo-600 transition-colors leading-snug">
                             {course.title}
                           </h3>
                         </div>

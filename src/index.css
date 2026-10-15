@@ -3,15 +3,16 @@
 
 @font-face {
     font-family: 'LePetitCochon';
-    src: url('./assets/Petit Cochon.ttf') format('truetype');
+    src: url('./assets/fonts/PetitCochon.ttf') format('truetype'),
+         url('./assets/Petit Cochon.ttf') format('truetype');
     font-weight: normal;
     font-style: normal;
 }
 @theme {
   --font-sans: "Plus Jakarta Sans", "PT Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Oswald", "Plus Jakarta Sans", sans-serif;
+  --font-display: "LePetitCochon", "Plus Jakarta Sans", sans-serif;
   --font-playful: "LePetitCochon", sans-serif;
-  --font-headline: "Plus Jakarta Sans", sans-serif;
+  --font-headline: "LePetitCochon", "Plus Jakarta Sans", sans-serif;
   --font-body: "Plus Jakarta Sans", sans-serif;
   --font-label: "Plus Jakarta Sans", sans-serif;
   
@@ -56,7 +57,7 @@
   }
   
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display text-gray-800;
+    @apply font-playful text-gray-800;
   }
 
   .handwritten {

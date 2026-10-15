@@ -75,12 +75,12 @@ export default function DevMonetizationToolbar() {
 
   return (
     <>
-      <div className="fixed bottom-4 right-4 z-50 select-none font-sans">
+      <div className="fixed bottom-18 sm:bottom-4 left-3.5 sm:left-auto sm:right-4 z-40 sm:z-50 select-none font-sans">
         {/* Minimalizovaný stav (Pill) */}
         {!isOpen ? (
           <button
             onClick={() => setIsOpen(true)}
-            className="flex items-center gap-2 px-3.5 py-2 bg-gray-900/90 hover:bg-black text-white text-xs font-bold rounded-full shadow-2xl border border-yellow-400/50 backdrop-blur-md transition-all hover:scale-105"
+            className="flex items-center gap-1.5 sm:gap-2 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-gray-900/90 hover:bg-black text-white text-[11px] sm:text-xs font-bold rounded-full shadow-2xl border border-yellow-400/50 backdrop-blur-md transition-all hover:scale-105"
             title="Otevřít nástroje pro monetizaci a testování rolí"
           >
             <Wrench className="w-3.5 h-3.5 text-yellow-400" />
@@ -96,7 +96,7 @@ export default function DevMonetizationToolbar() {
           <motion.div
             initial={{ opacity: 0, scale: 0.95, y: 10 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            className="w-80 bg-gray-900/95 border-2 border-yellow-400/60 text-white rounded-3xl p-4 shadow-2xl backdrop-blur-lg space-y-4"
+            className="w-80 max-w-[calc(100vw-1.75rem)] bg-gray-900/95 border-2 border-yellow-400/60 text-white rounded-3xl p-4 shadow-2xl backdrop-blur-lg space-y-4"
           >
             {/* Hlavička */}
             <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
