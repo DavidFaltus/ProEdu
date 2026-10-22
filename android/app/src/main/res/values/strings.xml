@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ProEdu</string>
+    <string name="title_activity_main">ProEdu</string>
+    <string name="package_name">com.proedu.app</string>
+    <string name="custom_url_scheme">com.proedu.app</string>
+</resources>

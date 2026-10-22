@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "772809169754",
+    "project_id": "gen-lang-client-0972842509",
+    "storage_bucket": "gen-lang-client-0972842509.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:772809169754:android:fa6604d7f8ae9a9e41f163",
+        "android_client_info": {
+          "package_name": "com.proedu.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "772809169754-323gpp9oc0tfcf725ugee2tou6153r6i.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCgbvdpUf5bv2zY-wqZgrnf1Gn6PW9PsJs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "772809169754-323gpp9oc0tfcf725ugee2tou6153r6i.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
