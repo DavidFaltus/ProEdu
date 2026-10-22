@@ -33,6 +33,8 @@ const TodoPage = React.lazy(() => import('./pages/TodoPage'));
 const Settings = React.lazy(() => import('./pages/Settings'));
 const StudyView = React.lazy(() => import('./pages/StudyView'));
 const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
+const Terms = React.lazy(() => import('./pages/Terms'));
+const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
 
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
 
@@ -323,6 +325,12 @@ function AppContent() {
               />
               <Route path="/contact" element={<Contact />} />
               <Route path="/login" element={<Login />} />
+
+              {/* Právní dokumenty */}
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/podminky" element={<Terms />} />
+              <Route path="/gdpr" element={<PrivacyPolicy />} />
+              <Route path="/privacy" element={<PrivacyPolicy />} />
 
               {/* Fallback na hlavní stránku */}
               <Route path="*" element={<Navigate to="/" replace />} />

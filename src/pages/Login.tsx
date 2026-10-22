@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -186,6 +186,16 @@ export default function Login() {
                 {isLogin ? 'Zaregistrujte se' : 'Přihlaste se'}
               </button>
             </p>
+
+            <div className="mt-6 pt-4 border-t border-gray-100 flex items-center justify-center gap-3 text-xs text-gray-400 font-medium">
+              <Link to="/terms" className="hover:text-gray-700 hover:underline">
+                Obchodní podmínky
+              </Link>
+              <span>•</span>
+              <Link to="/gdpr" className="hover:text-gray-700 hover:underline">
+                GDPR
+              </Link>
+            </div>
           </CardContent>
         </Card>
       </motion.div>

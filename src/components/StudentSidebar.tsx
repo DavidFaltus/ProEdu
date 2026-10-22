@@ -307,6 +307,33 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
             </button>
           </div>
         )}
+
+        {/* Legal links */}
+        <div className="pt-2 flex items-center justify-center gap-2 text-[11px] text-gray-400 font-medium select-none">
+          <Link
+            to="/terms"
+            onClick={onNavigate}
+            className="hover:text-gray-700 hover:underline transition-colors"
+          >
+            Podmínky
+          </Link>
+          <span>•</span>
+          <Link
+            to="/gdpr"
+            onClick={onNavigate}
+            className="hover:text-gray-700 hover:underline transition-colors"
+          >
+            GDPR
+          </Link>
+          <span>•</span>
+          <Link
+            to="/contact"
+            onClick={onNavigate}
+            className="hover:text-gray-700 hover:underline transition-colors"
+          >
+            Kontakt
+          </Link>
+        </div>
       </div>
 
 

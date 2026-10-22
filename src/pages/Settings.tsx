@@ -388,6 +388,20 @@ export default function Settings() {
           </div>
         </div>
       </section>
+
+      <div className="pt-6 pb-12 flex items-center justify-center gap-4 text-xs text-gray-400 font-medium">
+        <Link to="/terms" className="hover:text-gray-700 hover:underline">
+          Obchodní podmínky
+        </Link>
+        <span>•</span>
+        <Link to="/gdpr" className="hover:text-gray-700 hover:underline">
+          Zásady ochrany osobních údajů (GDPR)
+        </Link>
+        <span>•</span>
+        <Link to="/contact" className="hover:text-gray-700 hover:underline">
+          Kontakt
+        </Link>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
@@ -235,6 +236,26 @@ export default function AuthModal() {
             </svg>
             Přihlásit se účtem Google
           </Button>
+
+          <p className="text-[11px] text-center text-gray-500 mt-4 leading-relaxed">
+            Pokračováním vyjadřujete souhlas s{' '}
+            <Link
+              to="/terms"
+              onClick={() => setIsAuthModalOpen(false)}
+              className="text-gray-800 underline font-semibold hover:text-black"
+            >
+              obchodními podmínkami
+            </Link>
+            {' '}a{' '}
+            <Link
+              to="/gdpr"
+              onClick={() => setIsAuthModalOpen(false)}
+              className="text-gray-800 underline font-semibold hover:text-black"
+            >
+              ochranou osobních údajů (GDPR)
+            </Link>
+            .
+          </p>
         </div>
       </DialogContent>
     </Dialog>
