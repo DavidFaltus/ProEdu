@@ -6,6 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 import { db } from '../../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
+import { trackPaywallImpression, trackPaywallCtaClick } from '../../services/analyticsService';
 
 export type PaywallType = 'premium' | 'course';
 
@@ -92,11 +93,14 @@ export default function UnifiedPaywallModal({
       }
     }
     if (isOpen) {
+      trackPaywallImpression(type, { title: title || (type === 'course' ? 'Kurzy' : 'Premium') });
       loadDbCourses();
     }
-  }, [isOpen, type]);
+  }, [isOpen, type, title]);
 
   const handleActivate = async () => {
+    trackPaywallCtaClick('activate', type === 'course' ? selectedCourseId : selectedPlan);
+
     if (!user) {
       onClose();
       openAuthModal();

@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
 import { useNotifications } from '../hooks/useNotifications';
 import NotificationPopover from './NotificationPopover';
+import { trackSectionClick } from '../services/analyticsService';
 
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
@@ -29,7 +30,7 @@ interface StudentSidebarProps {
 }
 
 export default function StudentSidebar({ onNavigate, className }: StudentSidebarProps = {}) {
-  const { user, profile, isPremium, isTeacher, jokers, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
+  const { user, profile, loading, isPremium, isTeacher, jokers, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
   const [isAvatarModalOpen, setIsAvatarModalOpen] = React.useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -89,7 +90,14 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
       <div className="flex-1 flex flex-col min-h-0">
         {/* Logo and Brand */}
         <div className="flex items-center justify-between">
-          <Link to="/" onClick={onNavigate} className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0">
+          <Link 
+            to="/" 
+            onClick={() => {
+              trackSectionClick('sidebar_logo', '/');
+              if (onNavigate) onNavigate();
+            }} 
+            className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0"
+          >
             <img 
               src="/photo/logo2.svg" 
               alt="ProEdu" 
@@ -123,6 +131,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                   key={item.name}
                   to={item.path}
                   onClick={() => {
+                    trackSectionClick(`sidebar_${item.name}`, item.path);
                     if (item.onClick) item.onClick();
                     if (onNavigate) onNavigate();
                   }}
@@ -146,7 +155,10 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
             <div className="mt-auto pt-4">
               <Link
                 to="/settings"
-                onClick={onNavigate}
+                onClick={() => {
+                  trackSectionClick('sidebar_settings', '/settings');
+                  if (onNavigate) onNavigate();
+                }}
                 className={cn(
                   "w-full flex items-center gap-4 px-4 py-3.5 rounded-[1.25rem] text-sm tracking-wide transition-all select-none cursor-pointer",
                   location.pathname === '/settings'
@@ -164,7 +176,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
       {/* User Profile Card Footer */}
       <div className="border-t border-gray-100 pt-5 mt-4 flex flex-col gap-2 relative shrink-0">
-        {user ? (
+        {user || profile ? (
           <>
             <div className="bg-[#FAF7F0] p-3.5 rounded-[1.5rem] border border-gray-200/60 shadow-2xs space-y-2.5">
               {/* Řádek 1: Avatar, Jméno a Akční tlačítka (Notifikace + Odhlášení) */}
@@ -235,35 +247,28 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
               {/* Řádek 2: Role / Odznáček plánu a žolíky */}
               <div className="pt-2 border-t border-gray-200/50 flex items-center justify-between gap-1.5">
                 {profile?.role === 'premium' ? (
-                  <span className="text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 px-2.5 py-0.5 rounded-lg border border-amber-200/60 flex items-center gap-1">
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 py-1 px-2.5 rounded-lg border border-amber-200/60 flex items-center justify-center gap-1 shadow-2xs">
                     ✨ Premium účet
                   </span>
                 ) : profile?.role === 'course' ? (
-                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 px-2.5 py-0.5 rounded-lg border border-blue-200/60 flex items-center gap-1">
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1 shadow-2xs">
                     🎓 Kurz student
                   </span>
                 ) : profile?.role === 'teacher' ? (
-                  <span className="text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 px-2.5 py-0.5 rounded-lg border border-purple-200/60 flex items-center gap-1">
-                    👑 Učitel / Lektor
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1 shadow-2xs">
+                    👑 Učitel
                   </span>
                 ) : (
                   <div className="flex items-center justify-between w-full">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-gray-600 bg-gray-100/80 px-2 py-0.5 rounded-lg border border-gray-200/70">
+                      Základní plán
+                    </span>
                     <span className="text-[10px] font-bold text-gray-700 bg-white px-2 py-0.5 rounded-lg border border-gray-200/70 flex items-center gap-1.5 shadow-2xs">
                       <span>🃏</span>
                       <span className="font-mono font-black text-gray-900">{jokers}</span>
                       <span className="text-gray-500 font-semibold">žolíků</span>
                     </span>
-                    <span className="text-[10px] font-semibold text-gray-400">
-                      Základní plán
-                    </span>
                   </div>
-                )}
-
-                {profile?.role && profile.role !== 'free' && profile.role !== 'student' && (
-                  <span className="text-[10px] font-semibold text-emerald-600 flex items-center gap-1 shrink-0">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                    Aktivní
-                  </span>
                 )}
               </div>
             </div>
@@ -278,6 +283,17 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
               triggerRef={notificationBtnRef}
             />
           </>
+        ) : loading ? (
+          <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] border border-gray-200/50 space-y-2.5 animate-pulse">
+            <div className="flex items-center gap-2.5">
+              <div className="w-10 h-10 rounded-full bg-gray-200/70 shrink-0" />
+              <div className="space-y-1.5 flex-1 min-w-0">
+                <div className="h-3.5 bg-gray-200/70 rounded w-3/4" />
+                <div className="h-2.5 bg-gray-200/50 rounded w-1/2" />
+              </div>
+            </div>
+            <div className="h-4 bg-gray-200/60 rounded-lg w-full" />
+          </div>
         ) : (
           <div className="bg-[#FAF7F0] p-4 rounded-[1.5rem] border border-gray-200/50 space-y-2.5 text-center">
             <p className="text-xs text-gray-500 font-bold">Pro plný přístup se přihlas</p>

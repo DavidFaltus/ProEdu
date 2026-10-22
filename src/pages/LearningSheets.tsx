@@ -15,6 +15,7 @@ import { getAllMaterials, ExistingMaterialItem } from '../services/practiceServi
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
 import { toast } from 'sonner';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import { trackSectionClick } from '../services/analyticsService';
 
 export default function LearningSheets() {
   const { user, isPremium } = useAuth();
@@ -188,7 +189,14 @@ export default function LearningSheets() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setPreviewMaterial(mat)}
+                          onClick={() => {
+                            trackSectionClick('material_preview_click', `/study/${mat.id}`, {
+                              materialId: mat.id,
+                              title: mat.title,
+                              subject: mat.subject
+                            });
+                            setPreviewMaterial(mat);
+                          }}
                           className="flex-1 rounded-xl h-10 text-xs font-bold border-gray-200 hover:border-black flex items-center justify-center gap-1.5 cursor-pointer bg-white"
                         >
                           <Eye size={14} />
@@ -196,7 +204,15 @@ export default function LearningSheets() {
                         </Button>
                       )}
 
-                      <Link to={`/study/${mat.id}`} className="flex-1">
+                      <Link 
+                        to={`/study/${mat.id}`} 
+                        onClick={() => trackSectionClick('material_study_click', `/study/${mat.id}`, {
+                          materialId: mat.id,
+                          title: mat.title,
+                          subject: mat.subject
+                        })}
+                        className="flex-1"
+                      >
                         <Button
                           size="sm"
                           className="w-full rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"

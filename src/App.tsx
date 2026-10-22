@@ -13,6 +13,7 @@ import { Menu, X, LayoutDashboard, Play, BookOpen, GraduationCap, Bell, Lock, Lo
 import { useNotifications } from './hooks/useNotifications';
 import NotificationPopover from './components/NotificationPopover';
 import { cn } from './lib/utils';
+import { trackPageView, trackSectionClick } from './services/analyticsService';
 
 // Pages
 import Login from './pages/Login';
@@ -92,10 +93,15 @@ function DashboardRedirect() {
 function AppContent() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
-  const { user, profile, isPremium, isTeacher, jokers, openAuthModal } = useAuth();
+  const { user, profile, loading, isPremium, isTeacher, jokers, openAuthModal } = useAuth();
   const { notifications, unreadCount, markAllAsRead } = useNotifications();
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
   const notificationBtnRef = React.useRef<HTMLButtonElement>(null);
+
+  // Automatické měření zobrazení stránek při každé změně v React Routeru
+  React.useEffect(() => {
+    trackPageView(location.pathname + location.search);
+  }, [location.pathname, location.search]);
 
   const handleToggleNotifications = async () => {
     const nextState = !isNotificationsOpen;
@@ -160,7 +166,7 @@ function AppContent() {
 
         {/* Action icons right: Jokers, Notifications, Avatar / Login, Hamburger */}
         <div className="flex items-center gap-2 shrink-0">
-          {user ? (
+          {user || profile ? (
             <>
               {profile?.role !== 'premium' && profile?.role !== 'course' && profile?.role !== 'teacher' && (
                 <div 
@@ -220,6 +226,8 @@ function AppContent() {
                 )}
               </button>
             </>
+          ) : loading ? (
+            <div className="w-8 h-8 rounded-full bg-gray-200/70 animate-pulse border border-gray-200" />
           ) : (
             <button
               onClick={openAuthModal}
@@ -327,6 +335,7 @@ function AppContent() {
             <Link
               key={item.label}
               to={item.path}
+              onClick={() => trackSectionClick(`mobile_nav_${item.label}`, item.path)}
               className={cn(
                 "flex flex-col items-center justify-center min-w-[56px] py-1 px-2 rounded-2xl transition-all relative select-none",
                 item.active 

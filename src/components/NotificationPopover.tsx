@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState, useLayoutEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { 
   Bell, 
@@ -113,6 +114,63 @@ export default function NotificationPopover({
 }: NotificationPopoverProps) {
   const navigate = useNavigate();
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [coords, setCoords] = useState<{
+    top?: number;
+    bottom?: number;
+    left?: number;
+    right?: number;
+    maxHeight?: number;
+    arrowLeft?: number;
+    isBottomHalf?: boolean;
+  }>({});
+
+  const updatePosition = useCallback(() => {
+    if (!triggerRef?.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const popoverWidth = Math.min(370, window.innerWidth - 32);
+
+    const isBottomHalf = rect.top > window.innerHeight / 2;
+
+    let top: number | undefined;
+    let bottom: number | undefined;
+    let left: number | undefined;
+    let right: number | undefined;
+
+    if (isBottomHalf) {
+      // Desktop: přiblížit k levé straně obrazovky s elegantním odsazením 20px
+      bottom = window.innerHeight - rect.top + 12;
+      left = Math.max(16, Math.min(20, window.innerWidth - popoverWidth - 16));
+    } else {
+      // Mobil: otevírat dolů pod horní lištu, zarovnat k pravému okraji
+      top = rect.bottom + 12;
+      const idealRight = window.innerWidth - rect.right - 4;
+      right = Math.max(12, Math.min(idealRight, window.innerWidth - popoverWidth - 12));
+    }
+
+    // Výpočet pozice středu zvonečku pro kapičku
+    const actualLeft = left !== undefined ? left : (window.innerWidth - (right || 0) - popoverWidth);
+    const bellCenterX = rect.left + rect.width / 2;
+    const rawArrowLeft = bellCenterX - actualLeft;
+    const arrowLeft = Math.max(34, Math.min(popoverWidth - 34, rawArrowLeft));
+
+    const maxHeight = isBottomHalf
+      ? Math.max(260, Math.min(480, rect.top - 28))
+      : Math.max(260, Math.min(480, window.innerHeight - rect.bottom - 28));
+
+    setCoords({ top, bottom, left, right, maxHeight, arrowLeft, isBottomHalf });
+  }, [triggerRef]);
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      updatePosition();
+      window.addEventListener('resize', updatePosition);
+      window.addEventListener('scroll', updatePosition, true);
+      return () => {
+        window.removeEventListener('resize', updatePosition);
+        window.removeEventListener('scroll', updatePosition, true);
+      };
+    }
+  }, [isOpen, updatePosition]);
 
   // Close on Escape or click outside
   useEffect(() => {
@@ -154,7 +212,7 @@ export default function NotificationPopover({
     }
   }, [isOpen, onMarkAllAsRead]);
 
-  if (!isOpen) return null;
+  if (!isOpen || typeof document === 'undefined') return null;
 
   const handleNotificationClick = async (item: AppNotification) => {
     onClose();
@@ -168,20 +226,53 @@ export default function NotificationPopover({
     }
   };
 
-  return (
-    <div
-      ref={popoverRef}
-      className={cn(
-        "absolute bottom-[calc(100%+12px)] left-0 z-50",
-        "w-[340px] sm:w-[370px] max-w-[calc(100vw-2rem)]",
-        "bg-white rounded-[2rem] shadow-2xl border border-gray-100/90",
-        "flex flex-col overflow-hidden animate-in fade-in zoom-in-95 duration-200"
-      )}
-      style={{
-        boxShadow: '0 20px 45px -10px rgba(0, 0, 0, 0.18), 0 0 1px 1px rgba(0, 0, 0, 0.05)'
-      }}
-    >
-      {/* Header */}
+  return createPortal(
+    <>
+      {/* Průhledný overlay pro spolehlivé zavření kliknutím mimo */}
+      <div 
+        className="fixed inset-0 z-[9998] bg-black/5 sm:bg-transparent pointer-events-auto"
+        onClick={onClose}
+        aria-hidden="true"
+      />
+
+      <div
+        ref={popoverRef}
+        role="dialog"
+        aria-label="Upozornění"
+        className={cn(
+          "fixed z-[9999]",
+          "w-[340px] sm:w-[370px] max-w-[calc(100vw-24px)]",
+          "animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
+        )}
+        style={{
+          ...(coords.top !== undefined ? { top: `${coords.top}px` } : {}),
+          ...(coords.bottom !== undefined ? { bottom: `${coords.bottom}px` } : {}),
+          ...(coords.left !== undefined ? { left: `${coords.left}px` } : {}),
+          ...(coords.right !== undefined ? { right: `${coords.right}px` } : {}),
+          filter: 'drop-shadow(0 20px 30px rgba(0, 0, 0, 0.16))'
+        }}
+      >
+        {/* Kapička nahoře (pokud se popover otevírá směrem dolů pod zvoneček) */}
+        {!coords.isBottomHalf && coords.arrowLeft !== undefined && (
+          <div 
+            className="absolute -top-[9px] z-30 pointer-events-none"
+            style={{ left: `${coords.arrowLeft - 13}px` }}
+          >
+            <svg width="26" height="10" viewBox="0 0 26 10">
+              <path d="M0,10 C6,10 9,4 13,0 C17,4 20,10 26,10 Z" fill="#FAF7F0" />
+              <path d="M0,10 C6,10 9,4 13,0 C17,4 20,10 26,10" fill="none" stroke="#E5E7EB" strokeWidth="1.2" />
+            </svg>
+          </div>
+        )}
+
+        {/* Hlavní tělo popoveru s oříznutými rohy */}
+        <div 
+          className="bg-white rounded-[2rem] border border-gray-100/90 flex flex-col overflow-hidden w-full shadow-2xl"
+          style={{
+            ...(coords.maxHeight ? { maxHeight: `${coords.maxHeight}px` } : {})
+          }}
+        >
+          {/* Header */}
       <div className="p-4 sm:p-5 bg-[#FAF7F0] border-b border-gray-100 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-[#F5C400] text-[#1E1B18] flex items-center justify-center font-bold shadow-xs">
@@ -222,7 +313,7 @@ export default function NotificationPopover({
       </div>
 
       {/* List */}
-      <div className="max-h-[380px] overflow-y-auto divide-y divide-gray-50">
+      <div className="overflow-y-auto divide-y divide-gray-50 flex-1 min-h-0">
         {notifications.length === 0 ? (
           <div className="py-12 px-6 text-center space-y-3">
             <div className="w-14 h-14 mx-auto rounded-3xl bg-amber-50 text-amber-500 flex items-center justify-center text-2xl shadow-inner">
@@ -304,7 +395,7 @@ export default function NotificationPopover({
 
       {/* Footer */}
       {notifications.length > 0 && (
-        <div className="p-3 bg-gray-50/70 border-t border-gray-100 flex items-center justify-center">
+        <div className="p-3 bg-white border-t border-gray-100 flex items-center justify-center shrink-0">
           <p className="text-[11px] font-semibold text-gray-400 flex items-center gap-1.5">
             <Sparkles size={12} className="text-[#F5C400]" />
             Kliknutím na položku přejdeš přímo k obsahu
@@ -312,5 +403,21 @@ export default function NotificationPopover({
         </div>
       )}
     </div>
-  );
+
+    {/* Kapička dole (pokud se popover otevírá směrem nahoru k tlačítku zvonečku v sidebaru) */}
+    {coords.isBottomHalf && coords.arrowLeft !== undefined && (
+      <div 
+        className="absolute -bottom-[9px] z-30 pointer-events-none"
+        style={{ left: `${coords.arrowLeft - 13}px` }}
+      >
+        <svg width="26" height="10" viewBox="0 0 26 10">
+          <path d="M0,0 C6,0 9,6 13,10 C17,6 20,0 26,0 Z" fill="#FFFFFF" />
+          <path d="M0,0 C6,0 9,6 13,10 C17,6 20,0 26,0" fill="none" stroke="#E5E7EB" strokeWidth="1.2" />
+        </svg>
+      </div>
+    )}
+  </div>
+</>,
+document.body
+);
 }

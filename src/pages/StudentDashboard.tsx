@@ -11,6 +11,7 @@ import QuickCalendar from '../components/QuickCalendar';
 import { getStudentInquiries, getAllInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
 import StudentInquiriesSection from '../components/StudentInquiriesSection';
 import StudentLiveLessonsSection from '../components/StudentLiveLessonsSection';
+import JokerZoneSection from '../components/JokerZoneSection';
 import TeacherInquiriesOverview from '../components/admin/TeacherInquiriesOverview';
 import TeacherLessonsOverview from '../components/admin/TeacherLessonsOverview';
 import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons } from '../services/liveLessonService';
@@ -26,6 +27,7 @@ import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
+import { trackSectionClick } from '../services/analyticsService';
 
 const MOTIVATIONAL_QUOTES = [
   { text: "Učení je jediná věc, kterou se mysl nikdy nevyčerpá, nikdy se jí nebojí a nikdy nelituje.", author: "Leonardo da Vinci" },
@@ -52,7 +54,7 @@ export default function StudentDashboard() {
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
   const isTeacher = profile?.role === 'teacher';
-  const isFreeOrGuest = !user || !profile || profile.role === 'free' || (!isPremium && !isTeacher);
+  const isFreeOrGuest = (!user && !profile) || profile?.role === 'free' || (!isPremium && !isTeacher);
   const canViewTutorAndLessons = !isFreeOrGuest;
 
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
@@ -318,7 +320,10 @@ export default function StudentDashboard() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => navigate('/practice')}
+                  onClick={() => {
+                    trackSectionClick('dashboard_catalog_btn', '/practice');
+                    navigate('/practice');
+                  }}
                   className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs shrink-0 self-start sm:self-auto"
                 >
                   <span>Katalog témat</span>
@@ -365,7 +370,14 @@ export default function StudentDashboard() {
                     return (
                       <div
                         key={item.subtopicId}
-                        onClick={() => navigate(`/practice/session/${item.subtopicId}`)}
+                        onClick={() => {
+                          trackSectionClick('dashboard_recommended_card', `/practice/session/${item.subtopicId}`, {
+                            subtopicId: item.subtopicId,
+                            title: item.title,
+                            subject: item.subject
+                          });
+                          navigate(`/practice/session/${item.subtopicId}`);
+                        }}
                         className="group p-3 sm:p-3.5 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-sm transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer"
                       >
                         <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
@@ -398,6 +410,11 @@ export default function StudentDashboard() {
                               variant="outline"
                               onClick={(e) => {
                                 e.stopPropagation();
+                                trackSectionClick('dashboard_recommended_theory', `/study/${item.subtopicId}`, {
+                                  subtopicId: item.subtopicId,
+                                  title: item.title,
+                                  subject: item.subject
+                                });
                                 navigate(`/study/${item.subtopicId}`);
                               }}
                               title="Prostudovat teorii před testem"
@@ -412,6 +429,11 @@ export default function StudentDashboard() {
                             size="sm"
                             onClick={(e) => {
                               e.stopPropagation();
+                              trackSectionClick('dashboard_recommended_practice_btn', `/practice/session/${item.subtopicId}`, {
+                                subtopicId: item.subtopicId,
+                                title: item.title,
+                                subject: item.subject
+                              });
                               navigate(`/practice/session/${item.subtopicId}`);
                             }}
                             className="flex-1 sm:flex-none rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-4 h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs"
@@ -429,6 +451,9 @@ export default function StudentDashboard() {
           </div>
         </Card>
       </div>
+
+      {/* JOKER BONUS & STREAK ZONE (For Free tier, Students, and Guests) */}
+      <JokerZoneSection />
 
       {/* DYNAMIC GRID: Dotazy (Left) & Naplánovaná hodina (Right) */}
       {(() => {

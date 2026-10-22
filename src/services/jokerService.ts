@@ -1,9 +1,16 @@
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, updateDoc, deleteField } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserProfile } from '../types';
 
 export const DEFAULT_DAILY_JOKERS = 20;
+export const BASE_JOKER_CAP = 20;
+export const MAX_STREAK_DAYS = 10;
+export const MAX_JOKER_CAP = 30; // 20 + 10 dní streaku
+export const DAILY_GRANT_JOKERS = 5;
 export const VIDEO_REWARD_JOKERS = 5;
+export const REFERRAL_REWARD_JOKERS = 50;
+export const SURVEY_REWARD_JOKERS = 20;
+export const MAX_REFERRALS = 5;
 export const GUEST_MAX_VIDEOS = 3;
 
 const GUEST_STORAGE_KEY = 'proedu_guest_monetization';
@@ -22,6 +29,26 @@ export function getTodayDateString(): string {
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+/**
+ * Vrátí včerejší datum ve formátu YYYY-MM-DD podle lokálního času
+ */
+export function getYesterdayDateString(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * Vypočítá maximální limit žolíků na základě streaku (20 až 30)
+ */
+export function calculateMaxJokersCap(streak: number = 0): number {
+  const safeStreak = Math.max(0, Math.min(MAX_STREAK_DAYS, streak || 0));
+  return Math.min(MAX_JOKER_CAP, BASE_JOKER_CAP + safeStreak);
 }
 
 /**
@@ -99,7 +126,7 @@ export function hasUnlimitedJokers(role?: string): boolean {
 }
 
 /**
- * Provede Lazy Reset žolíků při prvním denním přístupu
+ * Provede denní příděl +5 žolíků (do limitu 20–30 dle streaku) a kontrolu platnosti streaku
  */
 export async function checkAndResetDailyJokers(profile: UserProfile): Promise<UserProfile> {
   if (hasUnlimitedJokers(profile.role)) {
@@ -107,11 +134,49 @@ export async function checkAndResetDailyJokers(profile: UserProfile): Promise<Us
   }
 
   const today = getTodayDateString();
-  if (profile.lastJokerResetDate !== today) {
-    const updates = {
-      jokers: DEFAULT_DAILY_JOKERS,
+  const yesterday = getYesterdayDateString();
+
+  // Kontrola, zda streak nevypršel (pokud uživatel vynechal včerejšek i dnešek bez procvičování)
+  let effectiveStreak = profile.streak || 0;
+  if (
+    profile.lastStreakPracticeDate &&
+    profile.lastStreakPracticeDate !== today &&
+    profile.lastStreakPracticeDate !== yesterday
+  ) {
+    effectiveStreak = 0;
+  }
+
+  const currentCap = calculateMaxJokersCap(effectiveStreak);
+  const isNewGrantDay = profile.lastDailyGrantDate !== today;
+
+  if (isNewGrantDay || effectiveStreak !== (profile.streak || 0)) {
+    const existingJokers = profile.jokers !== undefined ? profile.jokers : BASE_JOKER_CAP;
+    // Denní příděl +5 žolíků nepřekročí kapacitu danou streakem.
+    // Pokud uživatel má více žolíků (např. z bonusů), nic se mu nestrhává, ale +5 se již nepřičte.
+    const newJokers = isNewGrantDay
+      ? (existingJokers >= currentCap ? existingJokers : Math.min(currentCap, existingJokers + DAILY_GRANT_JOKERS))
+      : existingJokers;
+
+    const shouldResetStreakDate = effectiveStreak === 0 && profile.lastStreakPracticeDate !== today && profile.lastStreakPracticeDate !== yesterday;
+    const updates: Record<string, any> = {
+      jokers: newJokers,
+      streak: effectiveStreak,
+      lastDailyGrantDate: today,
       lastJokerResetDate: today,
-      dailyVideosWatched: 0,
+      dailyVideosWatched: isNewGrantDay ? 0 : (profile.dailyVideosWatched || 0),
+    };
+
+    if (shouldResetStreakDate) {
+      updates.lastStreakPracticeDate = deleteField();
+    }
+
+    const localProfileUpdates: Partial<UserProfile> = {
+      jokers: newJokers,
+      streak: effectiveStreak,
+      lastDailyGrantDate: today,
+      lastJokerResetDate: today,
+      dailyVideosWatched: isNewGrantDay ? 0 : (profile.dailyVideosWatched || 0),
+      ...(shouldResetStreakDate ? { lastStreakPracticeDate: undefined } : {}),
     };
 
     try {
@@ -119,18 +184,64 @@ export async function checkAndResetDailyJokers(profile: UserProfile): Promise<Us
       await updateDoc(userRef, updates);
       return {
         ...profile,
-        ...updates,
+        ...localProfileUpdates,
       };
     } catch (err) {
-      console.error('Chyba při lazy resetu žolíků:', err);
+      console.error('Chyba při denním přídělu / kontrole streaku:', err);
       return {
         ...profile,
-        ...updates,
+        ...localProfileUpdates,
       };
     }
   }
 
   return profile;
+}
+
+/**
+ * Zaznamená úspěšné procvičování a prodlouží 10denní streak
+ */
+export async function recordPracticeStreak(
+  profile: UserProfile
+): Promise<{ updatedProfile: UserProfile; streakIncreased: boolean; newStreak: number }> {
+  if (!profile || !profile.uid || profile.uid === 'guest-preview' || profile.role === 'teacher') {
+    return { updatedProfile: profile, streakIncreased: false, newStreak: profile?.streak || 0 };
+  }
+
+  const today = getTodayDateString();
+  const yesterday = getYesterdayDateString();
+
+  // Pokud už dnes procvičoval, streak se již pro dnešek nezvyšuje
+  if (profile.lastStreakPracticeDate === today) {
+    return { updatedProfile: profile, streakIncreased: false, newStreak: profile.streak || 0 };
+  }
+
+  let newStreak = 1;
+  if (profile.lastStreakPracticeDate === yesterday) {
+    newStreak = Math.min(MAX_STREAK_DAYS, (profile.streak || 0) + 1);
+  }
+
+  const updates = {
+    streak: newStreak,
+    lastStreakPracticeDate: today,
+  };
+
+  try {
+    const userRef = doc(db, 'users', profile.uid);
+    await updateDoc(userRef, updates);
+    return {
+      updatedProfile: { ...profile, ...updates },
+      streakIncreased: true,
+      newStreak,
+    };
+  } catch (err) {
+    console.error('Chyba při aktualizaci streaku:', err);
+    return {
+      updatedProfile: { ...profile, ...updates },
+      streakIncreased: true,
+      newStreak,
+    };
+  }
 }
 
 /**
@@ -160,13 +271,26 @@ export async function consumeJoker(
 }
 
 /**
- * Přičte žolíky po zhlédnutí 15s videa (+5)
+ * Přičte žolíky po zhlédnutí 15s videa (+5 do limitu 20–30 dle streaku)
  */
 export async function rewardVideoJokers(
   profile: UserProfile
-): Promise<{ success: boolean; newJokers: number }> {
-  const currentJokers = profile.jokers !== undefined ? profile.jokers : DEFAULT_DAILY_JOKERS;
-  const newJokers = currentJokers + VIDEO_REWARD_JOKERS;
+): Promise<{ success: boolean; newJokers: number; reachedCap: boolean; cap: number; added: number }> {
+  const currentCap = calculateMaxJokersCap(profile.streak || 0);
+  const currentJokers = profile.jokers !== undefined ? profile.jokers : BASE_JOKER_CAP;
+
+  if (currentJokers >= currentCap) {
+    return {
+      success: false,
+      newJokers: currentJokers,
+      reachedCap: true,
+      cap: currentCap,
+      added: 0,
+    };
+  }
+
+  const newJokers = Math.min(currentCap, currentJokers + VIDEO_REWARD_JOKERS);
+  const added = newJokers - currentJokers;
   const newVideos = (profile.dailyVideosWatched || 0) + 1;
 
   try {
@@ -179,5 +303,62 @@ export async function rewardVideoJokers(
     console.error('Chyba při přičítání žolíků za video:', err);
   }
 
-  return { success: true, newJokers };
+  return {
+    success: true,
+    newJokers,
+    reachedCap: newJokers >= currentCap,
+    cap: currentCap,
+    added,
+  };
+}
+
+/**
+ * API volání pro uplatnění referral kódu
+ */
+export async function claimReferralCodeApi(
+  referralCode: string,
+  idToken: string
+): Promise<{ success: boolean; reward: number; newJokers: number; referrerName: string }> {
+  const response = await fetch('/api/referrals/claim', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ referralCode }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se uplatnit kód doporučení.');
+  }
+
+  return data;
+}
+
+/**
+ * API volání pro odeslání dotazníku "Odkud jste o nás slyšeli ?"
+ */
+export async function submitSurveyAnswerApi(
+  answer: string,
+  customAnswer: string | undefined,
+  school: string,
+  grade: string,
+  idToken: string
+): Promise<{ success: boolean; reward: number; newJokers: number; school?: string; grade?: string }> {
+  const response = await fetch('/api/survey/submit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ answer, customAnswer, school, grade }),
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se odeslat odpověď na dotazník.');
+  }
+
+  return data;
 }

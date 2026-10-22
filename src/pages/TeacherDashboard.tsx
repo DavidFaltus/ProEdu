@@ -2,13 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Target, BookOpen, MessageSquare, Video, GraduationCap, Users } from 'lucide-react';
+import { Target, BookOpen, MessageSquare, Video, GraduationCap, Users, BarChart3 } from 'lucide-react';
 import PracticeManager from '../components/admin/PracticeManager';
 import MaterialsManager from '../components/admin/MaterialsManager';
 import InquiriesManager from '../components/admin/InquiriesManager';
 import LiveLessonsManager from '../components/admin/LiveLessonsManager';
 import CoursesManager from '../components/admin/CoursesManager';
 import StudentsProgressManager from '../components/admin/StudentsProgressManager';
+import SurveyResponsesManager from '../components/admin/SurveyResponsesManager';
 import { getAllInquiries, QuestionInquiry } from '../services/inquiryService';
 import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
@@ -16,7 +17,7 @@ import { LiveLesson } from '../types';
 export default function TeacherDashboard() {
   const { profile: userProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses'];
+  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys'];
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'practices';
 
@@ -132,6 +133,13 @@ export default function TeacherDashboard() {
             <GraduationCap size={16} />
             <span>Kurzy</span>
           </TabsTrigger>
+          <TabsTrigger 
+            value="surveys" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <BarChart3 size={16} />
+            <span>Dotazníky</span>
+          </TabsTrigger>
           </TabsList>
 
           <TabsContent value="practices">
@@ -159,6 +167,10 @@ export default function TeacherDashboard() {
 
           <TabsContent value="courses">
             <CoursesManager userId={userProfile?.uid || ''} />
+          </TabsContent>
+
+          <TabsContent value="surveys">
+            <SurveyResponsesManager />
           </TabsContent>
         </Tabs>
     </div>

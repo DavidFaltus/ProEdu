@@ -23,6 +23,16 @@ export interface UserProfile {
   jokers?: number;
   lastJokerResetDate?: string; // Formát YYYY-MM-DD
   dailyVideosWatched?: number;
+  lastStreakPracticeDate?: string; // Formát YYYY-MM-DD pro streak
+  lastDailyGrantDate?: string; // Formát YYYY-MM-DD pro denní příděl +5 žolíků
+  referralCode?: string; // Kód doporučení
+  referredBy?: string; // UID uživatele, který tohoto studenta pozval
+  referralsCount?: number; // Počet úspěšně pozvaných přátel (max 5)
+  surveyCompleted?: boolean; // Zda byl vyplněn dotazník "Odkud jste o nás slyšeli ?"
+  surveyAnswer?: string; // Vybraná odpověď z dotazníku
+  surveyAnswerCustom?: string; // Doplňující text při volbě "Jiné"
+  surveySchool?: string; // Škola, na kterou student chodí
+  surveyGrade?: string; // Ročník, do kterého student chodí
 }
 
 export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď

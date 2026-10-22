@@ -31,6 +31,11 @@ import {
   getGuestState, 
   GUEST_MAX_VIDEOS 
 } from '../services/jokerService';
+import { 
+  trackPracticeStart, 
+  trackPracticeAnswer, 
+  trackPracticeComplete 
+} from '../services/analyticsService';
 
 interface QuestionAnswerState {
   userAnswer: string;
@@ -49,6 +54,7 @@ export default function PracticeSession() {
     jokers, 
     consumeOneJoker, 
     claimVideoReward, 
+    recordPracticeSessionStreak,
     openAuthModal 
   } = useAuth();
   const navigate = useNavigate();
@@ -82,6 +88,7 @@ export default function PracticeSession() {
   const sliderButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
 
   const [isCompleted, setIsCompleted] = useState(false);
+  const sessionStartTimeRef = useRef<number>(Date.now());
 
   useEffect(() => {
     async function loadData() {
@@ -94,6 +101,16 @@ export default function PracticeSession() {
         const qData = await getQuestionsForSubtopic(subtopicId);
         const sampled = sampleQuestionsForPractice(qData, subData?.practiceConfig);
         setQuestions(sampled);
+        sessionStartTimeRef.current = Date.now();
+
+        if (subData) {
+          trackPracticeStart({
+            subtopicId: subData.id,
+            subtopicTitle: subData.title,
+            subject: subData.subjectId,
+            questionCount: sampled.length,
+          });
+        }
       } catch (err) {
         console.error('Failed to load practice questions:', err);
       } finally {
@@ -133,6 +150,14 @@ export default function PracticeSession() {
     const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
 
+    trackPracticeAnswer({
+      subtopicId: subtopic?.id || subtopicId || '',
+      questionId: currentQuestion.id,
+      questionIndex: currentIndex,
+      isCorrect: evalResult.isCorrect,
+      usedHint,
+    });
+
     setAnswersMap(prev => ({
       ...prev,
       [currentIndex]: {
@@ -164,6 +189,14 @@ export default function PracticeSession() {
 
     const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer);
     const usedHint = !!showHintMap[currentIndex];
+
+    trackPracticeAnswer({
+      subtopicId: subtopic?.id || subtopicId || '',
+      questionId: currentQuestion.id,
+      questionIndex: currentIndex,
+      isCorrect: evalResult.isCorrect,
+      usedHint,
+    });
 
     setAnswersMap(prev => ({
       ...prev,
@@ -208,15 +241,26 @@ export default function PracticeSession() {
   const handleFinishPractice = async () => {
     setIsCompleted(true);
 
+    const correctCount = Object.values(answersMap).filter(a => a.isCorrect).length;
+    const total = questions.length;
+    const percentage = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+    const durationSeconds = Math.round((Date.now() - sessionStartTimeRef.current) / 1000);
+
+    trackPracticeComplete({
+      subtopicId: subtopic?.id || subtopicId || '',
+      subtopicTitle: subtopic?.title || '',
+      subject: subtopic?.subjectId || '',
+      totalQuestions: total,
+      correctCount,
+      scorePercentage: percentage,
+      durationSeconds,
+    });
+
     if (!user && subtopic) {
       recordGuestCompletedSubtopic(subtopic.id);
     }
 
     if (user && subtopic) {
-      const correctCount = Object.values(answersMap).filter(a => a.isCorrect).length;
-      const total = questions.length;
-      const percentage = Math.round((correctCount / total) * 100);
-
       const answersRecord: Record<string, string> = {};
       questions.forEach((q, idx) => {
         if (answersMap[idx]) {
@@ -238,6 +282,14 @@ export default function PracticeSession() {
       } catch (err) {
         console.error('Failed to record attempt:', err);
       }
+
+      if (Object.keys(answersMap).length > 0) {
+        try {
+          await recordPracticeSessionStreak();
+        } catch (streakErr) {
+          console.error('Failed to update streak:', streakErr);
+        }
+      }
     }
   };
 
@@ -247,6 +299,7 @@ export default function PracticeSession() {
     setOpenInputs({});
     setShowHintMap({});
     setIsCompleted(false);
+    sessionStartTimeRef.current = Date.now();
   };
 
   // Inquiry submission handler (Decision Q3 = Option A)

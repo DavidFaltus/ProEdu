@@ -26,7 +26,8 @@ service cloud.firestore {
         unchanged('createdAt') &&
         unchanged('createdBy') &&
         unchanged('studentId') &&
-        unchanged('testId');
+        unchanged('testId') &&
+        (!('referredBy' in resource.data) || unchanged('referredBy'));
     }
 
     function keepsLessonImmutableFields() {
@@ -44,7 +45,18 @@ service cloud.firestore {
              data.createdAt is timestamp &&
              (!('jokers' in data) || data.jokers == null || data.jokers is int) &&
              (!('lastJokerResetDate' in data) || data.lastJokerResetDate == null || (data.lastJokerResetDate is string && data.lastJokerResetDate.size() <= 32)) &&
-             (!('dailyVideosWatched' in data) || data.dailyVideosWatched == null || data.dailyVideosWatched is int);
+             (!('dailyVideosWatched' in data) || data.dailyVideosWatched == null || data.dailyVideosWatched is int) &&
+             (!('streak' in data) || data.streak == null || (data.streak is int && data.streak >= 0 && data.streak <= 100)) &&
+             (!('lastStreakPracticeDate' in data) || data.lastStreakPracticeDate == null || (data.lastStreakPracticeDate is string && data.lastStreakPracticeDate.size() <= 32)) &&
+             (!('lastDailyGrantDate' in data) || data.lastDailyGrantDate == null || (data.lastDailyGrantDate is string && data.lastDailyGrantDate.size() <= 32)) &&
+             (!('referralCode' in data) || data.referralCode == null || (data.referralCode is string && data.referralCode.size() <= 64)) &&
+             (!('referredBy' in data) || data.referredBy == null || (data.referredBy is string && data.referredBy.size() <= 128)) &&
+             (!('referralsCount' in data) || data.referralsCount == null || (data.referralsCount is int && data.referralsCount >= 0 && data.referralsCount <= 5)) &&
+             (!('surveyCompleted' in data) || data.surveyCompleted == null || data.surveyCompleted is bool) &&
+             (!('surveyAnswer' in data) || data.surveyAnswer == null || (data.surveyAnswer is string && data.surveyAnswer.size() <= 128)) &&
+             (!('surveyAnswerCustom' in data) || data.surveyAnswerCustom == null || (data.surveyAnswerCustom is string && data.surveyAnswerCustom.size() <= 256)) &&
+             (!('surveySchool' in data) || data.surveySchool == null || (data.surveySchool is string && data.surveySchool.size() <= 200)) &&
+             (!('surveyGrade' in data) || data.surveyGrade == null || (data.surveyGrade is string && data.surveyGrade.size() <= 100));
     }
 
     function isValidTest(data) {
@@ -416,6 +428,16 @@ service cloud.firestore {
                     isValidLiveLesson(request.resource.data);
       allow delete: if isAdmin() &&
                     resource.data.teacherId == request.auth.uid;
+    }
+
+    match /referrals/{referralId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.referrerUid == request.auth.uid || resource.data.refereeUid == request.auth.uid);
+      allow write: if false;
+    }
+
+    match /surveyResponses/{responseId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow write: if false;
     }
   }
 }

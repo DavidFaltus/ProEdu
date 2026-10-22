@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dia
 import { Button } from '../ui/button';
 import { useAuth } from '../../context/AuthContext';
 import { GUEST_MAX_VIDEOS } from '../../services/jokerService';
+import { trackRewardedVideoStart, trackRewardedVideoComplete } from '../../services/analyticsService';
 
 interface RewardedAdModalProps {
   open: boolean;
@@ -45,6 +46,7 @@ export default function RewardedAdModal({
     setSecondsLeft(TOTAL_SECONDS);
     setIsCompleted(false);
     setIsClaimed(false);
+    trackRewardedVideoStart(isGuest ? 'guest_joker' : 'user_joker');
 
     const interval = setInterval(() => {
       setSecondsLeft((prev) => {
@@ -62,6 +64,7 @@ export default function RewardedAdModal({
 
   const handleClaimReward = () => {
     setIsClaimed(true);
+    trackRewardedVideoComplete(isGuest ? 'guest_joker' : 'user_joker');
     onRewardEarned();
     onOpenChange(false);
   };

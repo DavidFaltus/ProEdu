@@ -13,6 +13,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card'
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import { Course } from '../types';
 import { DEFAULT_FLAGSHIP_COURSES, getAllCourses } from '../services/courseService';
+import { trackSectionClick } from '../services/analyticsService';
 
 export default function Courses() {
   const { profile, user, isCourseUser, isTeacher } = useAuth();
@@ -165,6 +166,11 @@ export default function Courses() {
                 >
                   <Link
                     to={`/courses/${course.id}`}
+                    onClick={() => trackSectionClick('course_card_click', `/courses/${course.id}`, {
+                      courseId: course.id,
+                      courseTitle: course.title,
+                      isEnrolled,
+                    })}
                     className="block h-full group"
                   >
                     <Card className="h-full rounded-[2.5rem] border border-gray-200/80 bg-white transition-all duration-300 relative overflow-hidden flex flex-col justify-between shadow-md hover:shadow-2xl hover:-translate-y-1 group-hover:border-indigo-400">

@@ -17,6 +17,7 @@ import {
 import { PracticeTopic, PracticeSubtopic } from '../types';
 import { toast } from 'sonner';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import { trackPracticeSubjectChange, trackSectionClick } from '../services/analyticsService';
 
 const getSubjectIcon = (id: string) => {
   if (id === 'Matematika') return <Calculator className="w-8 h-8" />;
@@ -95,7 +96,10 @@ export default function Practice() {
               key={sub.id}
               whileHover={{ scale: 1.015 }}
               whileTap={{ scale: 0.985 }}
-              onClick={() => setActiveSubject(sub.id as any)}
+              onClick={() => {
+                setActiveSubject(sub.id as any);
+                trackPracticeSubjectChange(sub.id);
+              }}
               className={`cursor-pointer rounded-3xl p-5 sm:p-6 border transition-all relative overflow-hidden flex items-center gap-5 sm:gap-6 ${
                 isActive 
                   ? `border-transparent bg-gradient-to-br ${sub.gradient} text-white shadow-xl shadow-teal-900/10 ring-4 ring-offset-2 ring-emerald-500/20` 
@@ -200,6 +204,13 @@ export default function Practice() {
                         const isStudyLocked = !isPremium;
 
                         const handlePracticeClick = (e: React.MouseEvent) => {
+                          trackSectionClick('practice_start_btn', `/practice/session/${subtopic.id}`, {
+                            subtopicId: subtopic.id,
+                            subtopicTitle: subtopic.title,
+                            subject: activeSubject,
+                            isLocked: isLockedForGuest
+                          });
+
                           if (isLockedForGuest) {
                             e.preventDefault();
                             openAuthModal();
@@ -208,6 +219,13 @@ export default function Practice() {
                         };
 
                         const handleStudyClick = (e: React.MouseEvent) => {
+                          trackSectionClick('practice_study_btn', `/study/${subtopic.id}`, {
+                            subtopicId: subtopic.id,
+                            subtopicTitle: subtopic.title,
+                            subject: activeSubject,
+                            isLocked: isStudyLocked
+                          });
+
                           if (isStudyLocked) {
                             e.preventDefault();
                             if (!user) {
