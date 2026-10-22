@@ -9,3 +9,10 @@ coverage/
 foto/
 .firebase/
 scratch/
+
+# Secrets & Android builds
+*google-services.json
+*.jks
+*.keystore
+*.apk
+*.aab
