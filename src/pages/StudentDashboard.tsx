@@ -49,8 +49,11 @@ export default function StudentDashboard() {
   const { user, profile, isPremium } = useAuth();
   const navigate = useNavigate();
 
-  // Sekce pro lektora a hodiny se načítají pro všechny přihlášené uživatele (zobrazí se, pokud v nich jsou data)
-  const canViewTutorAndLessons = Boolean(user && profile);
+  // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
+  // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
+  const isTeacher = profile?.role === 'teacher';
+  const isFreeOrGuest = !user || !profile || profile.role === 'free' || (!isPremium && !isTeacher);
+  const canViewTutorAndLessons = !isFreeOrGuest;
 
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
   const [loadingInquiries, setLoadingInquiries] = useState(false);
@@ -157,8 +160,6 @@ export default function StudentDashboard() {
     }
   };
 
-  const isTeacher = profile?.role === 'teacher';
-
   useEffect(() => {
     if (!user?.uid || !canViewTutorAndLessons) {
       setLiveLessons([]);
@@ -203,7 +204,7 @@ export default function StudentDashboard() {
     setLoadingInquiries(true);
     try {
       const data = isTeacher
-        ? await getAllInquiries()
+        ? await getAllInquiries(user.uid)
         : await getStudentInquiries(user.uid);
       setInquiries(data);
     } catch (err) {
@@ -434,7 +435,11 @@ export default function StudentDashboard() {
         // Skrýt sekce "Odpověď od lektora" a "Naplánovaná hodina" pro nepřihlášené a Free uživatele
         if (!canViewTutorAndLessons) return null;
 
-        const hasInquiries = !loadingInquiries && inquiries && inquiries.length > 0;
+        // Pro učitele/admina zobrazovat sekci dotazů vždy (včetně prázdného stavu); pro studenta jen pokud má dotazy
+        const hasInquiries = isTeacher 
+          ? !loadingInquiries 
+          : (!loadingInquiries && inquiries && inquiries.length > 0);
+
         const activeLessons = isTeacher
           ? liveLessons.filter(l => l.status === 'live' || l.status === 'scheduled')
           : liveLessons;

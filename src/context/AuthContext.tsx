@@ -70,6 +70,20 @@ const AuthContext = createContext<AuthContextType>({
   claimVideoReward: async () => {},
 });
 
+const checkIsDevModeActive = (): boolean => {
+  if (typeof window === 'undefined') return Boolean(import.meta.env.DEV);
+  return Boolean(
+    import.meta.env.DEV || 
+    localStorage.getItem('proedu_dev_mode') === 'true'
+  );
+};
+
+const getDevRoleOverride = (): UserRole | null => {
+  if (typeof window === 'undefined') return null;
+  if (!checkIsDevModeActive()) return null;
+  return (localStorage.getItem('proedu_dev_role_override') as UserRole) || null;
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -91,6 +105,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (docSnap.exists()) {
           const rawProfile = docSnap.data() as UserProfile;
           const freshProfile = await checkAndResetDailyJokers(rawProfile);
+          const override = getDevRoleOverride();
+          if (override) {
+            freshProfile.role = override;
+          }
           setProfile(freshProfile);
         } else {
           // Rule 4: Role never derived from email in frontend.
@@ -106,11 +124,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             dailyVideosWatched: 0,
             createdAt: Timestamp.now(),
           };
+          const override = getDevRoleOverride();
+          if (override) {
+            newProfile.role = override;
+          }
           await setDoc(docRef, newProfile);
           setProfile(newProfile);
         }
       } else {
-        setProfile(null);
+        const override = getDevRoleOverride();
+        if (override) {
+          setProfile({
+            uid: 'guest-preview',
+            email: 'host@proedu.cz',
+            name: `Host (${override.toUpperCase()})`,
+            role: override,
+            jokers: DEFAULT_DAILY_JOKERS,
+            createdAt: Timestamp.now(),
+          });
+        } else {
+          setProfile(null);
+        }
       }
       setLoading(false);
       setIsAuthReady(true);
@@ -145,23 +179,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('proedu_dev_role_override');
+    }
     await firebaseSignOut(auth);
+    setProfile(null);
   };
 
   const updateProfileData = async (data: Partial<UserProfile>) => {
     // V dev režimu nebo pro učitele umožnit změnu role pro testování
-    const isDev = import.meta.env.DEV;
-    const canChangeRole = isDev || profile?.role === 'teacher';
+    const isDevModeActive = checkIsDevModeActive();
+    const canChangeRole = isDevModeActive || profile?.role === 'teacher';
 
     const { uid, createdAt, role, ...rest } = data as any;
     const safeData: any = { ...rest };
     if (canChangeRole && role) {
       safeData.role = role;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('proedu_dev_role_override', role);
+      }
     }
 
     if (!user) {
       if (safeData.role) {
-        setProfile(prev => prev ? { ...prev, ...safeData } : null);
+        setProfile(prev => prev ? { ...prev, ...safeData } : {
+          uid: 'guest-preview',
+          email: 'host@proedu.cz',
+          name: `Host (${safeData.role.toUpperCase()})`,
+          role: safeData.role,
+          jokers: DEFAULT_DAILY_JOKERS,
+          createdAt: Timestamp.now(),
+        });
       }
       return;
     }
@@ -171,9 +219,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         await updateDoc(docRef, safeData);
       } catch (err: any) {
-        console.warn('Firestore updateDoc warning:', err);
-        // Pokud Firestore odmítne roli v dev módu, necháme proběhnout lokální změnu v aplikaci
-        if (!isDev) throw err;
+        console.warn('Firestore updateDoc note (falling back to local dev state):', err);
+        // Pokud Firestore odmítne roli v dev módu, necháme proběhnout lokální změnu v aplikaci bez chyby
+        if (!isDevModeActive && profile?.role !== 'teacher') throw err;
       }
     }
     

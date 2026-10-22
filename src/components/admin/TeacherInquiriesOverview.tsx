@@ -26,7 +26,39 @@ export default function TeacherInquiriesOverview({
   const [editingReplyId, setEditingReplyId] = useState<string | null>(null);
 
   if (!inquiries || inquiries.length === 0) {
-    return null;
+    return (
+      <Card className="rounded-[1.75rem] sm:rounded-[2.5rem] border-none shadow-xl bg-white p-5 sm:p-8 space-y-4 w-full">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
+              <MessageSquare size={20} />
+            </div>
+            <div>
+              <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
+                Dotazy od studentů
+              </h3>
+              <p className="text-gray-400 text-xs font-semibold">
+                Žádné nevyřízené dotazy
+              </p>
+            </div>
+          </div>
+
+          {onNavigateToTab && (
+            <button
+              onClick={() => onNavigateToTab('inquiries')}
+              className="text-xs font-bold text-brand-blue hover:underline flex items-center gap-1 cursor-pointer"
+            >
+              <span>Správa v administraci</span>
+              <ArrowRight size={13} />
+            </button>
+          )}
+        </div>
+
+        <div className="bg-[#FAF7F0] rounded-2xl p-5 text-center text-gray-500 font-medium text-xs sm:text-sm border border-gray-200/60">
+          Nemáte žádné čekající dotazy od studentů. Jakmile student odešle dotaz z procvičování, zobrazí se zde.
+        </div>
+      </Card>
+    );
   }
 
   // Sort: pending first, then newest createdAt desc

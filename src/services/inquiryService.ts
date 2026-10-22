@@ -102,7 +102,7 @@ export async function markInquiryAsRead(inquiryId: string): Promise<void> {
   });
 }
 
-export async function getAllInquiries(): Promise<QuestionInquiry[]> {
+export async function getAllInquiries(fallbackStudentId?: string): Promise<QuestionInquiry[]> {
   try {
     const snap = await getDocs(collection(db, 'questionInquiries'));
     const items: QuestionInquiry[] = [];
@@ -116,7 +116,10 @@ export async function getAllInquiries(): Promise<QuestionInquiry[]> {
     });
     return items;
   } catch (err) {
-    console.error('Failed to get all inquiries:', err);
+    console.warn('getAllInquiries warning (attempting fallback to user inquiries):', err);
+    if (fallbackStudentId) {
+      return getStudentInquiries(fallbackStudentId);
+    }
     return [];
   }
 }

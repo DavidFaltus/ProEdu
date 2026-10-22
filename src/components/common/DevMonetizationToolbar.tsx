@@ -48,6 +48,7 @@ export default function DevMonetizationToolbar() {
   const handleDisableDevMode = () => {
     try {
       localStorage.setItem('proedu_dev_mode', 'false');
+      localStorage.removeItem('proedu_dev_role_override');
     } catch {}
     setIsDevMode(false);
     setIsOpen(false);
@@ -58,10 +59,6 @@ export default function DevMonetizationToolbar() {
   const currentJokers = profile?.jokers !== undefined ? profile.jokers : DEFAULT_DAILY_JOKERS;
 
   const handleRoleChange = async (newRole: UserRole) => {
-    if (!user) {
-      toast.info('Pro změnu role v databázi je potřeba být přihlášen. Můžeš se přihlásit jako student@student.cz.');
-      return;
-    }
     try {
       await updateProfileData({ role: newRole });
       toast.success(`Role změněna na: ${newRole.toUpperCase()}`);
@@ -204,10 +201,16 @@ export default function DevMonetizationToolbar() {
                 </Button>
               </div>
 
-              {user && (
+              {(user || profile) && (
                 <button
-                  onClick={() => signOut()}
-                  className="w-full text-center text-[10px] text-gray-400 hover:text-red-300 py-1"
+                  onClick={async () => {
+                    if (typeof window !== 'undefined') {
+                      localStorage.removeItem('proedu_dev_role_override');
+                    }
+                    await signOut();
+                    toast.info('Nyní testujete jako neregistrovaný Host.');
+                  }}
+                  className="w-full text-center text-[10px] text-gray-400 hover:text-red-300 py-1 cursor-pointer"
                 >
                   Odhlásit se a testovat jako neregistrovaný Host
                 </button>
