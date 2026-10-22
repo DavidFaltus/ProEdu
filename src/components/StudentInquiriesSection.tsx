@@ -153,7 +153,7 @@ export default function StudentInquiriesSection({
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-gray-500">
               <HelpCircle size={15} className="text-amber-600" />
-              <span className="text-xs font-playful tracking-wider text-gray-700">Otázka / Zadání úlohy</span>
+              <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Otázka / Zadání úlohy</span>
             </div>
 
             {/* Toggle question details button */}
@@ -307,7 +307,7 @@ export default function StudentInquiriesSection({
 
         {/* Student's Question / Comment */}
         <div className="bg-[#FAF7F0] rounded-2xl p-4 sm:p-5 border border-gray-200/60 space-y-1">
-          <span className="text-xs font-playful tracking-wide text-gray-500 block">
+          <span className="text-[11px] font-black uppercase tracking-wider text-gray-400 block">
             Tvůj dotaz pro lektora:
           </span>
           <p className="text-sm font-semibold text-gray-800 whitespace-pre-wrap leading-relaxed">
@@ -319,7 +319,7 @@ export default function StudentInquiriesSection({
         {isAnswered ? (
           <div className="bg-emerald-50/90 border border-emerald-200 rounded-2xl p-4 sm:p-5 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-playful text-emerald-950 flex items-center gap-1.5">
+              <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
                 <Sparkles size={14} className="text-emerald-600" />
                 <span>Odpověď od {inquiry.repliedByName || 'lektora'}</span>
                 {inquiry.repliedAt && (
@@ -373,7 +373,7 @@ export default function StudentInquiriesSection({
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-playful text-2xl sm:text-3xl text-[#1E1B18]">
+                <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
                   Odpověď od lektora
                 </h3>
                 {unreadCount > 0 && (

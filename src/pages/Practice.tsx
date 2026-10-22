@@ -110,7 +110,7 @@ export default function Practice() {
               
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className={`text-2xl sm:text-3xl font-playful font-black tracking-tight ${
+                  <h3 className={`text-2xl sm:text-3xl font-sans font-black tracking-tight ${
                     isActive ? 'text-white' : 'text-[#1E1B18]'
                   }`}>
                     {sub.title}
@@ -231,7 +231,7 @@ export default function Practice() {
                           >
                             <div className="space-y-1.5 flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="font-playful text-xl text-gray-900 leading-tight">
+                                <h4 className="font-bold text-lg text-gray-900 leading-tight">
                                   {subtopic.title}
                                 </h4>
                                 {isFirstDemo && !user && (

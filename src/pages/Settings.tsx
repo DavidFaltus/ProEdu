@@ -166,7 +166,7 @@ export default function Settings() {
         <motion.h1 
           initial={{ opacity: 0, y: -20 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-5xl md:text-6xl font-display font-black text-[#1E1B18]"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful font-black text-[#1E1B18]"
         >
           Nastavení profilu
         </motion.h1>
@@ -379,7 +379,7 @@ export default function Settings() {
       <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] max-w-2xl mx-auto w-full">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
         <div className="relative z-10 space-y-4">
-          <h2 className="text-4xl font-display font-bold">Potřebuješ s něčím pomoci?</h2>
+          <h2 className="text-4xl font-sans font-bold">Potřebuješ s něčím pomoci?</h2>
           <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám na podporu a my ti rádi pomůžeme vyřešit jakýkoliv problém s tvým účtem.</p>
           <div className="pt-4">
             <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">

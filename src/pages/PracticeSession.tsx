@@ -345,7 +345,7 @@ export default function PracticeSession() {
             <span className="text-xs font-black uppercase tracking-wider px-3 py-1 rounded-full bg-amber-100 text-amber-900">
               Výsledek procvičování
             </span>
-            <h2 className="text-3xl sm:text-4xl font-playful text-[#1E1B18]">
+            <h2 className="text-2xl sm:text-3xl font-sans font-black text-[#1E1B18]">
               {percentage >= 80 ? 'Skvělá práce!' : percentage >= 50 ? 'Dobrá práce!' : 'Trénink dělá mistra!'}
             </h2>
             <p className="text-gray-500 font-medium text-base">
@@ -402,7 +402,7 @@ export default function PracticeSession() {
 
         {/* Detailed Question Review */}
         <div className="space-y-4">
-          <h3 className="font-playful text-2xl text-[#1E1B18] px-2">
+          <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18] px-2">
             Přehled otázek a vysvětlení
           </h3>
 

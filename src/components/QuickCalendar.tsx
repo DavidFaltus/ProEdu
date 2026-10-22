@@ -295,7 +295,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
               <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-brand-blue shadow-inner">
                 <CalendarIcon size={16} />
               </div>
-              <h3 className="text-xl sm:text-2xl font-playful text-gray-900 capitalize">
+              <h3 className="text-lg sm:text-xl font-bold text-gray-900 capitalize">
                 {format(currentDate, 'MMMM yyyy', { locale: cs })}
               </h3>
             </div>
@@ -407,7 +407,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
           </div>
 
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl sm:text-4xl font-playful font-black text-brand-blue lining-nums leading-none">
+            <span className="text-3xl sm:text-4xl font-sans font-black text-brand-blue lining-nums leading-none">
               {safeFormat(displayDate, 'd')}
             </span>
             <div className="flex flex-col">

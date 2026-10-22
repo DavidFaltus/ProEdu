@@ -307,7 +307,7 @@ export default function StudentDashboard() {
                     <Sparkles size={16} />
                   </div>
                   <div className="min-w-0">
-                    <h3 className="font-playful text-xl sm:text-2xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
+                    <h3 className="font-sans font-black text-lg sm:text-xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
                     <p className="text-gray-400 text-[11px] font-semibold truncate">
                       {user ? 'Přizpůsobeno podle tvých dosavadních výsledků a cílů' : 'Témata pro nejlepší výsledky u zkoušek'}
                     </p>
@@ -381,7 +381,7 @@ export default function StudentDashboard() {
                                 {item.badge.text}
                               </span>
                             </div>
-                            <h4 className="font-playful text-gray-900 text-base sm:text-lg mt-0.5 group-hover:text-black leading-snug line-clamp-1 sm:line-clamp-2">
+                            <h4 className="font-bold text-gray-800 text-xs sm:text-sm mt-0.5 group-hover:text-black leading-snug line-clamp-1 sm:line-clamp-2">
                               {item.title}
                             </h4>
                             <p className="text-[11px] font-medium text-gray-400 truncate max-w-xs sm:max-w-sm">

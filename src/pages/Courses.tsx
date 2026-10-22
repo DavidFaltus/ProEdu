@@ -109,7 +109,7 @@ export default function Courses() {
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider rounded-full border border-white/15">
               <Sparkles size={12} /> Živá výuka s lektory
             </span>
-            <h2 className="text-2xl sm:text-3xl font-playful text-white">
+            <h2 className="text-2xl sm:text-3xl font-sans font-black text-white">
               Odemkni si živou online výuku s lektorem
             </h2>
             <p className="text-gray-300 text-sm sm:text-base max-w-xl leading-relaxed">
@@ -201,7 +201,7 @@ export default function Courses() {
                             )}
                           </div>
                           
-                          <h3 className="text-xl font-playful text-[#1E1B18] group-hover:text-indigo-600 transition-colors leading-snug">
+                          <h3 className="text-xl font-sans font-bold text-[#1E1B18] group-hover:text-indigo-600 transition-colors leading-snug">
                             {course.title}
                           </h3>
                         </div>

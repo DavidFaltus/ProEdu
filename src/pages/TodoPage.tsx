@@ -6,7 +6,7 @@ export default function TodoPage() {
   
   return (
     <div className="page-container">
-      <h1 className="text-3xl font-bold mb-4">Moje úkoly</h1>
+      <h1 className="text-3xl sm:text-4xl md:text-5xl font-playful font-black text-[#1E1B18] mb-4">Moje úkoly</h1>
       <p>Tato sekce se připravuje...</p>
     </div>
   );

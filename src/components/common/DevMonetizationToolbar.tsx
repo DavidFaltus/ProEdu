@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Wrench, ChevronDown, ChevronUp, Play, RotateCcw, 
   Trash2, Shield, Sparkles, GraduationCap, UserCheck, 
-  Crown, Zap 
+  Crown, Zap, EyeOff 
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { useAuth } from '../../context/AuthContext';
@@ -17,13 +17,42 @@ export default function DevMonetizationToolbar() {
   const [isOpen, setIsOpen] = useState(false);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 
-  // Zobrazovat v dev režimu NEBO pro učitele
-  const isDev = import.meta.env.DEV;
-  const isTeacher = profile?.role === 'teacher';
+  // Na live serveru skryté, aktivace přes URL parametr (?dev=1 nebo ?debug=1)
+  const [isDevMode, setIsDevMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const devParam = params.get('dev') || params.get('debug');
+      if (devParam === '1' || devParam === 'true') {
+        localStorage.setItem('proedu_dev_mode', 'true');
+        return true;
+      }
+      if (devParam === '0' || devParam === 'false') {
+        localStorage.setItem('proedu_dev_mode', 'false');
+        return false;
+      }
+      const stored = localStorage.getItem('proedu_dev_mode');
+      if (stored === 'false') return false;
+      if (stored === 'true') return true;
+      // V lokálním vývojovém prostředí (dev) je výchozí zapnuto
+      return Boolean(import.meta.env.DEV);
+    } catch {
+      return Boolean(import.meta.env.DEV);
+    }
+  });
 
-  if (!isDev && !isTeacher) {
+  if (!isDevMode) {
     return null;
   }
+
+  const handleDisableDevMode = () => {
+    try {
+      localStorage.setItem('proedu_dev_mode', 'false');
+    } catch {}
+    setIsDevMode(false);
+    setIsOpen(false);
+    toast.info('Testovací dev lišta byla vypnuta. Pro opětovné zapnutí zadejte do URL adresy ?dev=1');
+  };
 
   const currentRole = profile?.role || 'host (neregistrovaný)';
   const currentJokers = profile?.jokers !== undefined ? profile.jokers : DEFAULT_DAILY_JOKERS;
@@ -106,12 +135,22 @@ export default function DevMonetizationToolbar() {
                   Dev Testovací Lišta
                 </h4>
               </div>
-              <button
-                onClick={() => setIsOpen(false)}
-                className="text-gray-400 hover:text-white p-1 rounded-lg"
-              >
-                <ChevronDown className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={handleDisableDevMode}
+                  title="Vypnout a skrýt dev lištu"
+                  className="text-gray-400 hover:text-red-300 p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                >
+                  <EyeOff className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  onClick={() => setIsOpen(false)}
+                  title="Minimalizovat"
+                  className="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-white/5 transition-colors cursor-pointer"
+                >
+                  <ChevronDown className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Přepínač rolí */}
@@ -233,6 +272,16 @@ export default function DevMonetizationToolbar() {
               >
                 <Trash2 className="w-3 h-3 mr-1" />
                 Smazat localStorage hosta (vyzkoušet od nuly)
+              </Button>
+
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleDisableDevMode}
+                className="w-full h-7 text-[10px] text-gray-400 hover:text-white hover:bg-white/10 rounded-lg flex items-center justify-center gap-1.5"
+              >
+                <EyeOff className="w-3 h-3 text-gray-400" />
+                Vypnout dev lištu (pro zapnutí ?dev=1)
               </Button>
             </div>
           </motion.div>

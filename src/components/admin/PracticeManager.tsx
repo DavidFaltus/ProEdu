@@ -2,12 +2,21 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
-  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal
+  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Input } from '../ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { 
+  DropdownMenu, 
+  DropdownMenuTrigger, 
+  DropdownMenuContent, 
+  DropdownMenuGroup,
+  DropdownMenuItem, 
+  DropdownMenuSeparator, 
+  DropdownMenuLabel 
+} from '../ui/dropdown-menu';
 import { toast } from 'sonner';
 import { 
   getTopics, getSubtopics, getQuestionsForSubtopic, 
@@ -915,37 +924,39 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t border-gray-100 sm:border-0">
                     <Button
                       onClick={() => handleOpenNewSubtopic(topic.id)}
                       size="sm"
-                      className="rounded-xl bg-gray-100 hover:bg-[#1E1B18] hover:text-white text-gray-800 font-bold text-xs h-9 px-3.5 transition-colors cursor-pointer"
+                      className="flex-1 sm:flex-initial rounded-xl bg-gray-100 hover:bg-[#1E1B18] hover:text-white text-gray-800 font-bold text-xs h-9 px-3.5 transition-colors cursor-pointer justify-center"
                     >
                       <Plus size={14} className="mr-1" /> Přidat podtéma
                     </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setEditingTopic(topic);
-                        setIsTopicModalOpen(true);
-                      }}
-                      className="rounded-xl h-9 w-9 p-0 text-gray-500 hover:text-black cursor-pointer"
-                      title="Upravit téma"
-                    >
-                      <Edit2 size={15} />
-                    </Button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditingTopic(topic);
+                          setIsTopicModalOpen(true);
+                        }}
+                        className="rounded-xl h-9 w-9 p-0 text-gray-500 hover:text-black cursor-pointer"
+                        title="Upravit téma"
+                      >
+                        <Edit2 size={15} />
+                      </Button>
 
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteTopic(topic.id, topic.title)}
-                      className="rounded-xl h-9 w-9 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
-                      title="Smazat téma"
-                    >
-                      <Trash2 size={15} />
-                    </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteTopic(topic.id, topic.title)}
+                        className="rounded-xl h-9 w-9 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                        title="Smazat téma"
+                      >
+                        <Trash2 size={15} />
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -995,8 +1006,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               )}
                             </div>
 
-                            {/* Subtopic Action Buttons */}
-                            <div className="flex items-center gap-2 shrink-0 self-end md:self-center pl-6 md:pl-0">
+                            {/* Desktop Subtopic Action Buttons */}
+                            <div className="hidden md:flex items-center gap-2 shrink-0 self-center">
                               <Button
                                 onClick={() => handleOpenNewQuestion(sub)}
                                 size="sm"
@@ -1057,6 +1068,84 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               >
                                 <Trash2 size={14} />
                               </Button>
+                            </div>
+
+                            {/* Mobile Subtopic Action Bar */}
+                            <div className="flex md:hidden items-center gap-2 w-full pt-2.5 border-t border-gray-200/70 justify-between">
+                              <Button
+                                onClick={() => handleOpenNewQuestion(sub)}
+                                size="sm"
+                                className="flex-1 rounded-xl bg-[#1E1B18] text-white hover:bg-[#332f2b] font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                              >
+                                <Plus size={14} />
+                                <span>Přidat procvičování</span>
+                              </Button>
+
+                              <DropdownMenu>
+                                <DropdownMenuTrigger
+                                  className="rounded-xl h-9 w-9 p-0 bg-white border border-gray-200 hover:border-black text-gray-700 hover:text-black shrink-0 cursor-pointer flex items-center justify-center transition-all shadow-2xs hover:bg-gray-50"
+                                  title="Další možnosti úpravy podtématu"
+                                  aria-label="Další možnosti úpravy podtématu"
+                                >
+                                  <MoreVertical size={16} />
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end" className="w-56 rounded-2xl bg-white p-1.5 shadow-xl border border-gray-100 z-50 space-y-0.5">
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-wider text-gray-400 px-2 py-1">
+                                      Úprava obsahu
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onClick={() => handleOpenStudyContent(sub)}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-amber-50 hover:text-amber-900 cursor-pointer transition-colors"
+                                    >
+                                      <BookOpen size={14} className="text-amber-600" />
+                                      <span>Upravit Studium</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleOpenPracticeConfig(sub)}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-indigo-50 hover:text-indigo-900 cursor-pointer transition-colors"
+                                    >
+                                      <SlidersHorizontal size={14} className="text-indigo-600" />
+                                      <span>Upravit Procvičování</span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+
+                                  <DropdownMenuSeparator className="my-1 bg-gray-100" />
+
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-wider text-gray-400 px-2 py-1">
+                                      Správa podtématu
+                                    </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onClick={() => window.open(`/study/${sub.id}`, '_blank', 'noopener,noreferrer')}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-gray-100 cursor-pointer transition-colors"
+                                    >
+                                      <Eye size={14} className="text-gray-500" />
+                                      <span>Náhled studia</span>
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleOpenEditSubtopic(sub)}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-gray-100 cursor-pointer transition-colors"
+                                    >
+                                      <Edit2 size={14} className="text-gray-500" />
+                                      <span>Upravit název a popis</span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+
+                                  <DropdownMenuSeparator className="my-1 bg-gray-100" />
+
+                                  <DropdownMenuGroup>
+                                    <DropdownMenuItem
+                                      variant="destructive"
+                                      onClick={() => handleDeleteSubtopic(sub.id, sub.title)}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 hover:text-rose-700 cursor-pointer transition-colors"
+                                    >
+                                      <Trash2 size={14} className="text-rose-600" />
+                                      <span>Smazat podtéma</span>
+                                    </DropdownMenuItem>
+                                  </DropdownMenuGroup>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </div>
 
@@ -1208,7 +1297,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       {/* MODAL 2: CREATE / EDIT SUBTOPIC (METADATA)                     */}
       {/* ------------------------------------------------------------- */}
       <Dialog open={isSubtopicModalOpen} onOpenChange={setIsSubtopicModalOpen}>
-        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl">
+        <DialogContent className="rounded-3xl p-5 sm:p-8 w-full sm:max-w-xl bg-white max-h-[90vh] overflow-y-auto shadow-2xl">
           <DialogHeader>
             <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
               {editingSubtopic?.id ? 'Upravit podtéma' : 'Nové podtéma'}
@@ -1278,7 +1367,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       {/* MODAL 2B: EDIT STUDY CONTENT & MATERIAL                        */}
       {/* ------------------------------------------------------------- */}
       <Dialog open={isStudyContentModalOpen} onOpenChange={setIsStudyContentModalOpen}>
-        <DialogContent className="rounded-3xl p-6 sm:p-10 w-full sm:max-w-5xl lg:max-w-6xl xl:max-w-7xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
+        <DialogContent className="rounded-3xl p-4 sm:p-10 w-full sm:max-w-5xl lg:max-w-6xl xl:max-w-7xl bg-white max-h-[92vh] overflow-y-auto shadow-2xl">
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs shrink-0">
@@ -1686,7 +1775,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       {/* MODAL 2C: EDIT PRACTICE CONFIGURATION ("Upravit Procvičování") */}
       {/* ------------------------------------------------------------- */}
       <Dialog open={isPracticeConfigModalOpen} onOpenChange={setIsPracticeConfigModalOpen}>
-        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl">
+        <DialogContent className="rounded-3xl p-5 sm:p-8 w-full sm:max-w-xl bg-white max-h-[90vh] overflow-y-auto shadow-2xl">
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">

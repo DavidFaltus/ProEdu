@@ -397,7 +397,7 @@ export default function Garden() {
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-gradient-to-br from-[#D5F7E5] to-[#BCEECF] rounded-[2.5rem] p-8 min-h-[400px] relative overflow-hidden border border-green-200/30 shadow-md flex flex-col">
             <div className="flex justify-between items-center mb-6 z-10 relative">
-              <h3 className="font-playful text-3xl text-[#0F5238] m-0 leading-none">Moje úroda</h3>
+              <h3 className="font-sans font-black text-2xl sm:text-3xl text-[#0F5238] m-0 leading-none">Moje úroda</h3>
               <div className="px-4 py-1.5 bg-white/60 backdrop-blur-sm rounded-full flex items-center gap-2 border border-white/20 text-[#0F5238] font-bold">
                 <Sprout size={16} />
                 <span>{sessions.length} rostlinek</span>
@@ -518,7 +518,7 @@ export default function Garden() {
       <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] w-full">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
         <div className="relative z-10 space-y-4">
-          <h2 className="text-4xl font-display font-bold">Nevíš si rady s výběrem?</h2>
+          <h2 className="text-4xl font-sans font-bold">Nevíš si rady s výběrem?</h2>
           <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, jak nejlépe zvýšit svou produktivitu.</p>
           <div className="pt-4">
             <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">

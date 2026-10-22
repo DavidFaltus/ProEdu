@@ -231,7 +231,7 @@ export default function StudentLiveLessonsSection({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="font-playful text-2xl sm:text-3xl text-[#1E1B18]">
+              <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
                 {hasActiveLiveLesson ? 'Připojit se na hodinu' : 'Naplánovaná hodina'}
               </h3>
               {hasActiveLiveLesson && (

@@ -20,7 +20,7 @@ export default function Contact() {
         <motion.h1 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-5xl md:text-6xl font-display font-bold text-gray-900"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful font-bold text-gray-900"
         >
           Budeme v <span className="text-brand-orange">kontaktu</span>
         </motion.h1>
@@ -91,7 +91,7 @@ export default function Contact() {
             <div className="h-4 bg-brand-orange" />
             <CardContent className="p-10 space-y-8">
               <div className="space-y-2">
-                <h2 className="text-3xl font-display font-bold text-gray-900">Napište nám</h2>
+                <h2 className="text-3xl font-sans font-bold text-gray-900">Napište nám</h2>
                 <p className="text-gray-500">Vyplňte formulář a my se vám ozveme co nejdříve.</p>
               </div>
 
