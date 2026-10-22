@@ -1,4 +1,5 @@
 import { db } from '../lib/firebase';
+import { cacheManager } from '../lib/cacheManager';
 import { 
   collection, 
   doc, 
@@ -102,19 +103,21 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
 ];
 
 export async function getAllCourses(): Promise<Course[]> {
-  try {
-    const snap = await getDocs(collection(db, 'courses'));
-    if (snap.empty) {
-      // Pokud je kolekce prázdná, inicializujeme výchozí kurzy
-      await seedDefaultCourses();
-      const newSnap = await getDocs(collection(db, 'courses'));
-      return newSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
+  return cacheManager.getOrFetch('courses:all', async () => {
+    try {
+      const snap = await getDocs(collection(db, 'courses'));
+      if (snap.empty) {
+        // Pokud je kolekce prázdná, inicializujeme výchozí kurzy
+        await seedDefaultCourses();
+        const newSnap = await getDocs(collection(db, 'courses'));
+        return newSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
+      }
+      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
+    } catch (err) {
+      console.warn('Nepodařilo se načíst kurzy z Firestore, vráceny výchozí:', err);
+      return DEFAULT_FLAGSHIP_COURSES as Course[];
     }
-    return snap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
-  } catch (err) {
-    console.warn('Nepodařilo se načíst kurzy z Firestore, vráceny výchozí:', err);
-    return DEFAULT_FLAGSHIP_COURSES as Course[];
-  }
+  }, 15 * 60 * 1000);
 }
 
 export async function getCourseById(id: string): Promise<Course | null> {
@@ -145,6 +148,7 @@ export async function createCourse(data: Omit<Course, 'id'>, teacherId?: string)
   };
 
   const docRef = await addDoc(collection(db, 'courses'), courseData);
+  cacheManager.invalidate('courses');
   return docRef.id;
 }
 
@@ -169,11 +173,13 @@ export async function updateCourse(id: string, data: Partial<Course>): Promise<v
       createdAt: serverTimestamp()
     });
   }
+  cacheManager.invalidate('courses');
 }
 
 export async function deleteCourse(id: string): Promise<void> {
   const docRef = doc(db, 'courses', id);
   await deleteDoc(docRef);
+  cacheManager.invalidate('courses');
 }
 
 export async function seedDefaultCourses(): Promise<void> {
@@ -189,4 +195,5 @@ export async function seedDefaultCourses(): Promise<void> {
       });
     }
   }
+  cacheManager.invalidate('courses');
 }

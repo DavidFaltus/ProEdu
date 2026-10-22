@@ -18,7 +18,7 @@ import { Card } from './ui/card';
 import { QuestionInquiry } from '../services/inquiryService';
 import { getQuestionById } from '../services/practiceService';
 import { PracticeQuestion } from '../types';
-import { sanitizeSvg } from '../utils/pdfToSvg';
+import { sanitizeSvg } from '../utils/svgUtils';
 import { useNavigate } from 'react-router-dom';
 
 interface StudentInquiriesSectionProps {

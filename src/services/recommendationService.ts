@@ -1,4 +1,4 @@
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { PracticeSubtopic } from '../types';
 import { getSubtopics } from './practiceService';
@@ -175,7 +175,7 @@ export async function getPersonalizedRecommendations(
     if (userId) {
       try {
         const testsSnap = await getDocs(
-          query(collection(db, 'tests'), where('studentId', '==', userId))
+          query(collection(db, 'tests'), where('studentId', '==', userId), limit(30))
         );
 
         testsSnap.docs.forEach((d) => {

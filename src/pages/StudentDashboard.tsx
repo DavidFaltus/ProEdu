@@ -24,7 +24,7 @@ import {
   getGoogleCalendarWebUrl 
 } from '../services/calendarService';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
 import { trackSectionClick } from '../services/analyticsService';
@@ -97,7 +97,8 @@ export default function StudentDashboard() {
     if (!user?.uid) return;
     const qTodos = query(
       collection(db, 'todos'),
-      where('studentId', '==', user.uid)
+      where('studentId', '==', user.uid),
+      limit(50)
     );
     const unsub = onSnapshot(
       qTodos,

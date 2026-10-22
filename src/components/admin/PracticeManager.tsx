@@ -32,7 +32,8 @@ import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyS
 import { auth } from '../../lib/firebase';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
-import { convertFileToSvg, sanitizeSvg } from '../../utils/pdfToSvg';
+import { convertFileToSvg } from '../../utils/pdfToSvg';
+import { sanitizeSvg } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
 import QuickFormulaToolbar from './QuickFormulaToolbar';
 import { validateLatexSyntax } from '../../utils/mathPreprocessor';

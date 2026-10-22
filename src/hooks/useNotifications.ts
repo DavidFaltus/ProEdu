@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, Timestamp, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { safeToDate } from '../lib/utils';
@@ -76,11 +76,13 @@ export function useNotifications() {
     const unsubs: (() => void)[] = [];
 
     if (!isTeacher) {
-      // 1. Student Todos assigned by teacher
+      // 1. Student Todos assigned by teacher (active only, bounded)
       try {
         const qTodos = query(
           collection(db, 'todos'),
-          where('studentId', '==', uid)
+          where('studentId', '==', uid),
+          where('completed', '==', false),
+          limit(20)
         );
         const unsubTodos = onSnapshot(
           qTodos,
@@ -97,11 +99,12 @@ export function useNotifications() {
         console.warn('Failed to subscribe to todos notifications', err);
       }
 
-      // 2. Student Assigned Tests (pending or graded)
+      // 2. Student Assigned Tests (pending or graded, bounded)
       try {
         const qTests = query(
           collection(db, 'assignedTests'),
-          where('studentId', '==', uid)
+          where('studentId', '==', uid),
+          limit(20)
         );
         const unsubTests = onSnapshot(
           qTests,
@@ -116,9 +119,14 @@ export function useNotifications() {
         console.warn('Failed to subscribe to tests notifications', err);
       }
 
-      // 3. Learning sheets
+      // 3. Learning sheets (recent sheets only, bounded to avoid broad reads)
       try {
-        const qSheets = query(collection(db, 'learningSheets'));
+        const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+        const qSheets = query(
+          collection(db, 'learningSheets'),
+          where('createdAt', '>=', Timestamp.fromDate(twoWeeksAgo)),
+          limit(10)
+        );
         const unsubSheets = onSnapshot(
           qSheets,
           (snap) => {
@@ -132,11 +140,12 @@ export function useNotifications() {
         console.warn('Failed to subscribe to sheets notifications', err);
       }
 
-      // 4. Student Inquiries (answered)
+      // 4. Student Inquiries (answered, bounded)
       try {
         const qInquiries = query(
           collection(db, 'questionInquiries'),
-          where('studentId', '==', uid)
+          where('studentId', '==', uid),
+          limit(20)
         );
         const unsubInquiries = onSnapshot(
           qInquiries,
@@ -166,12 +175,13 @@ export function useNotifications() {
       }
 
     } else {
-      // Teacher Notifications
+      // Teacher Notifications (bounded to latest 25 items)
       // 1. Pending student inquiries waiting for answer
       try {
         const qInquiries = query(
           collection(db, 'questionInquiries'),
-          where('status', '==', 'pending')
+          where('status', '==', 'pending'),
+          limit(25)
         );
         const unsubInquiries = onSnapshot(
           qInquiries,
@@ -190,7 +200,8 @@ export function useNotifications() {
       try {
         const qTests = query(
           collection(db, 'assignedTests'),
-          where('status', '==', 'submitted')
+          where('status', '==', 'submitted'),
+          limit(25)
         );
         const unsubTests = onSnapshot(
           qTests,

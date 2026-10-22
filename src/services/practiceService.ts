@@ -3,7 +3,7 @@ import {
   query, where, Timestamp 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import * as XLSX from 'xlsx';
+import { cacheManager } from '../lib/cacheManager';
 import { 
   PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig 
 } from '../types';
@@ -37,22 +37,24 @@ function getEffectiveUserId(userId?: string): string {
 
 export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
   try {
-    const collRef = collection(db, 'customTopics');
-    const snap = await getDocs(collRef);
-    
-    let topics: PracticeTopic[] = snap.docs.map(d => {
-      const data = d.data();
-      return {
-        id: d.id,
-        title: data.title || data.name || 'Bez názvu',
-        subjectId: data.subjectId || 'Matematika',
-        description: data.description || '',
-        order: typeof data.order === 'number' ? data.order : 0,
-        createdAt: data.createdAt,
-        createdBy: data.createdBy
-      } as PracticeTopic;
-    });
+    const allTopics = await cacheManager.getOrFetch('topics:all', async () => {
+      const collRef = collection(db, 'customTopics');
+      const snap = await getDocs(collRef);
+      return snap.docs.map(d => {
+        const data = d.data();
+        return {
+          id: d.id,
+          title: data.title || data.name || 'Bez názvu',
+          subjectId: data.subjectId || 'Matematika',
+          description: data.description || '',
+          order: typeof data.order === 'number' ? data.order : 0,
+          createdAt: data.createdAt,
+          createdBy: data.createdBy
+        } as PracticeTopic;
+      });
+    }, 10 * 60 * 1000);
 
+    let topics = allTopics;
     if (subjectId) {
       topics = topics.filter(t => t.subjectId === subjectId);
     }
@@ -102,6 +104,7 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
       order: typeof topicData.order === 'number' ? topicData.order : 0,
       updatedAt: now
     });
+    cacheManager.invalidate('topics');
     return topicData.id;
   } else {
     const newDoc = await addDoc(collRef, {
@@ -113,6 +116,7 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
       createdAt: now,
       createdBy: effectiveUserId
     });
+    cacheManager.invalidate('topics');
     return newDoc.id;
   }
 }
@@ -125,6 +129,7 @@ export async function deleteTopic(topicId: string): Promise<void> {
   }
 
   await deleteDoc(doc(db, 'customTopics', topicId));
+  cacheManager.invalidate('topics');
 }
 
 // -------------------------------------------------------------
@@ -267,10 +272,13 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
 
 export async function getSubtopics(topicId?: string, subjectId?: string): Promise<PracticeSubtopic[]> {
   try {
-    const collRef = collection(db, PRACTICE_SUBTOPICS_COLLECTION);
-    const snap = await getDocs(collRef);
-    let subtopics: PracticeSubtopic[] = snap.docs.map(mapDocToSubtopic);
+    const allSubtopics = await cacheManager.getOrFetch('subtopics:all', async () => {
+      const collRef = collection(db, PRACTICE_SUBTOPICS_COLLECTION);
+      const snap = await getDocs(collRef);
+      return snap.docs.map(mapDocToSubtopic);
+    }, 10 * 60 * 1000);
 
+    let subtopics: PracticeSubtopic[] = allSubtopics;
     if (topicId) {
       subtopics = subtopics.filter(s => s.topicId === topicId);
     } else if (subjectId) {
@@ -361,6 +369,7 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
     const { createdBy, createdAt, ...updateFields } = payload;
     const sanitizedUpdateFields = removeUndefinedFields(updateFields);
     await updateDoc(docRef, sanitizedUpdateFields);
+    cacheManager.invalidate('subtopics');
     return subtopicData.id;
   } else {
     const normalized = normalizeSubtopicPayload(subtopicData);
@@ -370,6 +379,7 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
       createdBy: effectiveUserId
     });
     const newDoc = await addDoc(collRef, sanitizedDoc);
+    cacheManager.invalidate('subtopics');
     return newDoc.id;
   }
 }
@@ -439,18 +449,21 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
   if (materialData.id) {
     const docRef = doc(db, LEARNING_SHEETS_COLLECTION, materialData.id);
     await updateDoc(docRef, payload);
+    cacheManager.invalidate('materials');
     return materialData.id;
   } else {
     const newDoc = await addDoc(collRef, {
       ...payload,
       createdAt: now
     });
+    cacheManager.invalidate('materials');
     return newDoc.id;
   }
 }
 
 export async function deleteMaterial(materialId: string): Promise<void> {
   await deleteDoc(doc(db, LEARNING_SHEETS_COLLECTION, materialId));
+  cacheManager.invalidate('materials');
 }
 
 export async function getMaterialById(materialId: string): Promise<ExistingMaterialItem | null> {
@@ -480,35 +493,37 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
 }
 
 export async function getAllMaterials(): Promise<ExistingMaterialItem[]> {
-  try {
-    const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
-    const snap = await getDocs(collRef);
-    return snap.docs.map(d => {
-      const data = d.data();
-      let parsedContent: any = {};
-      if (data.content && typeof data.content === 'string') {
-        try {
-          parsedContent = JSON.parse(data.content);
-        } catch {
-          parsedContent = { studyTheory: data.content };
+  return cacheManager.getOrFetch('materials:all', async () => {
+    try {
+      const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
+      const snap = await getDocs(collRef);
+      return snap.docs.map(d => {
+        const data = d.data();
+        let parsedContent: any = {};
+        if (data.content && typeof data.content === 'string') {
+          try {
+            parsedContent = JSON.parse(data.content);
+          } catch {
+            parsedContent = { studyTheory: data.content };
+          }
         }
-      }
-      return {
-        id: d.id,
-        title: data.title || 'Materiál',
-        subject: data.subject || 'Matematika',
-        topic: data.topic || '',
-        svgUrl: data.fileUrl || null,
-        svgContent: parsedContent.svgContent || null,
-        studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' ? data.content : ''),
-        hasStudyMaterial: true,
-        createdAt: data.createdAt
-      };
-    });
-  } catch (err) {
-    console.error('Error fetching materials:', err);
-    return [];
-  }
+        return {
+          id: d.id,
+          title: data.title || 'Materiál',
+          subject: data.subject || 'Matematika',
+          topic: data.topic || '',
+          svgUrl: data.fileUrl || null,
+          svgContent: parsedContent.svgContent || null,
+          studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' ? data.content : ''),
+          hasStudyMaterial: true,
+          createdAt: data.createdAt
+        };
+      });
+    } catch (err) {
+      console.error('Error fetching materials:', err);
+      return [];
+    }
+  }, 10 * 60 * 1000);
 }
 
 export async function deleteSubtopic(subtopicId: string): Promise<void> {
@@ -519,6 +534,7 @@ export async function deleteSubtopic(subtopicId: string): Promise<void> {
       await deleteDoc(qDoc.ref);
     }
     await deleteDoc(doc(db, PRACTICE_SUBTOPICS_COLLECTION, subtopicId));
+    cacheManager.invalidate('subtopics');
   } catch (error) {
     console.error('Error deleting subtopic:', error);
     throw error;
@@ -768,6 +784,7 @@ export interface PracticeImportStats {
 }
 
 export async function parsePracticeQuestionsExcelFile(file: File): Promise<PracticeExcelParseResult> {
+  const XLSX = await import('xlsx');
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array' });
 
@@ -1215,6 +1232,7 @@ export interface StudyImportStats {
 }
 
 export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelParseResult> {
+  const XLSX = await import('xlsx');
   const data = await file.arrayBuffer();
   const workbook = XLSX.read(data, { type: 'array' });
 

@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
 import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { cn } from '../lib/utils';
 
 const SEEDS = [
@@ -86,7 +86,8 @@ export default function Garden() {
       query(
         collection(db, 'todos'),
         where('studentId', '==', user.uid),
-        where('completed', '==', false)
+        where('completed', '==', false),
+        limit(30)
       ),
       (snap) => {
         setTodos(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));

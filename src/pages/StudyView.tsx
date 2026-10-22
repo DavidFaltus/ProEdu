@@ -11,7 +11,7 @@ import { useAuth } from '../context/AuthContext';
 import { getSubtopicById, getQuestionsForSubtopic, getTopicById } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
-import { sanitizeSvg } from '../utils/pdfToSvg';
+import { sanitizeSvg } from '../utils/svgUtils';
 import { cn } from '../lib/utils';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 

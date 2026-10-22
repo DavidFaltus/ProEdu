@@ -19,7 +19,7 @@ import {
   getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice 
 } from '../services/practiceService';
 import { submitInquiry } from '../services/inquiryService';
-import { sanitizeSvg } from '../utils/pdfToSvg';
+import { sanitizeSvg } from '../utils/svgUtils';
 import { PracticeSubtopic, PracticeQuestion } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
 import { evaluateStudentAnswer } from '../utils/mathEvaluator';

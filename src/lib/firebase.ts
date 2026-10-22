@@ -6,7 +6,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 
 const resolvedFirebaseConfig = {
   ...firebaseConfig,
-  measurementId: (import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string) || firebaseConfig.measurementId || ''
+  measurementId: (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_MEASUREMENT_ID as string) || firebaseConfig.measurementId || ''
 };
 
 export const app = initializeApp(resolvedFirebaseConfig);

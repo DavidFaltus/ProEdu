@@ -15,22 +15,24 @@ import NotificationPopover from './components/NotificationPopover';
 import { cn } from './lib/utils';
 import { trackPageView, trackSectionClick } from './services/analyticsService';
 
-// Pages
-import Login from './pages/Login';
-import StudentDashboard from './pages/StudentDashboard';
-import TeacherDashboard from './pages/TeacherDashboard';
-import TestTaker from './pages/TestTaker';
-import TestReview from './pages/TestReview';
-import LearningSheets from './pages/LearningSheets';
-import Practice from './pages/Practice';
-import Contact from './pages/Contact';
-import Courses from './pages/Courses';
-import CourseDetail from './pages/CourseDetail';
-import Garden from './pages/Garden';
-import TodoPage from './pages/TodoPage';
-import Settings from './pages/Settings';
-import StudyView from './pages/StudyView';
-import PracticeSession from './pages/PracticeSession';
+import RouteSkeleton from './components/common/RouteSkeleton';
+
+// Lazy-loaded Pages (Code-splitting for near-instant initial page loads)
+const Login = React.lazy(() => import('./pages/Login'));
+const StudentDashboard = React.lazy(() => import('./pages/StudentDashboard'));
+const TeacherDashboard = React.lazy(() => import('./pages/TeacherDashboard'));
+const TestTaker = React.lazy(() => import('./pages/TestTaker'));
+const TestReview = React.lazy(() => import('./pages/TestReview'));
+const LearningSheets = React.lazy(() => import('./pages/LearningSheets'));
+const Practice = React.lazy(() => import('./pages/Practice'));
+const Contact = React.lazy(() => import('./pages/Contact'));
+const Courses = React.lazy(() => import('./pages/Courses'));
+const CourseDetail = React.lazy(() => import('./pages/CourseDetail'));
+const Garden = React.lazy(() => import('./pages/Garden'));
+const TodoPage = React.lazy(() => import('./pages/TodoPage'));
+const Settings = React.lazy(() => import('./pages/Settings'));
+const StudyView = React.lazy(() => import('./pages/StudyView'));
+const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
 
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
 
@@ -267,63 +269,65 @@ function AppContent() {
       {/* Main Content Area */}
       <main className="flex-grow flex flex-col h-[calc(100dvh-56px)] md:h-[100dvh] overflow-y-auto relative overscroll-y-contain">
         <div className="flex-grow p-3.5 sm:p-5 md:p-8 lg:p-10 max-w-[1600px] w-full mx-auto pb-[calc(env(safe-area-inset-bottom,0px)+5.5rem)] md:pb-24">
-          <Routes>
-            {/* Hlavní stránka = Nástěnka studenta */}
-            <Route path="/" element={<StudentDashboard />} />
-            <Route path="/student" element={<Navigate to="/" replace />} />
-            <Route path="/dashboard" element={<DashboardRedirect />} />
+          <React.Suspense fallback={<RouteSkeleton />}>
+            <Routes>
+              {/* Hlavní stránka = Nástěnka studenta */}
+              <Route path="/" element={<StudentDashboard />} />
+              <Route path="/student" element={<Navigate to="/" replace />} />
+              <Route path="/dashboard" element={<DashboardRedirect />} />
 
-            {/* Procvičování & Materiály & Výuka */}
-            <Route path="/practice" element={<Practice />} />
-            <Route path="/practice/session/:subtopicId" element={<PracticeSession />} />
-            <Route path="/learning" element={<LearningSheets />} />
-            <Route path="/courses" element={<Courses />} />
-            <Route path="/courses/:id" element={<CourseDetail />} />
-            <Route path="/garden" element={<PrivateRoute role="student"><Garden /></PrivateRoute>} />
-            <Route path="/todo" element={<PrivateRoute role="student"><TodoPage /></PrivateRoute>} />
-            <Route path="/study/:subtopicId" element={<StudyView />} />
-            <Route
-              path="/test/:id"
-              element={
-                <PrivateRoute>
-                  <TestTaker />
-                </PrivateRoute>
-              }
-            />
-            <Route
-              path="/review/:id"
-              element={
-                <PrivateRoute>
-                  <TestReview />
-                </PrivateRoute>
-              }
-            />
+              {/* Procvičování & Materiály & Výuka */}
+              <Route path="/practice" element={<Practice />} />
+              <Route path="/practice/session/:subtopicId" element={<PracticeSession />} />
+              <Route path="/learning" element={<LearningSheets />} />
+              <Route path="/courses" element={<Courses />} />
+              <Route path="/courses/:id" element={<CourseDetail />} />
+              <Route path="/garden" element={<PrivateRoute role="student"><Garden /></PrivateRoute>} />
+              <Route path="/todo" element={<PrivateRoute role="student"><TodoPage /></PrivateRoute>} />
+              <Route path="/study/:subtopicId" element={<StudyView />} />
+              <Route
+                path="/test/:id"
+                element={
+                  <PrivateRoute>
+                    <TestTaker />
+                  </PrivateRoute>
+                }
+              />
+              <Route
+                path="/review/:id"
+                element={
+                  <PrivateRoute>
+                    <TestReview />
+                  </PrivateRoute>
+                }
+              />
 
-            {/* Administrace pro učitele */}
-            <Route
-              path="/teacher"
-              element={
-                <PrivateRoute role="teacher">
-                  <TeacherDashboard />
-                </PrivateRoute>
-              }
-            />
+              {/* Administrace pro učitele */}
+              <Route
+                path="/teacher"
+                element={
+                  <PrivateRoute role="teacher">
+                    <TeacherDashboard />
+                  </PrivateRoute>
+                }
+              />
 
-            {/* Nastavení, Kontakt a Přihlášení */}
-            <Route
-              path="/settings"
-              element={
-                <PrivateRoute>
-                  <Settings />
-                </PrivateRoute>
-              }
-            />
-            <Route path="/contact" element={<Contact />} />
-            <Route path="/login" element={<Login />} />
+              {/* Nastavení, Kontakt a Přihlášení */}
+              <Route
+                path="/settings"
+                element={
+                  <PrivateRoute>
+                    <Settings />
+                  </PrivateRoute>
+                }
+              />
+              <Route path="/contact" element={<Contact />} />
+              <Route path="/login" element={<Login />} />
 
-            {/* Fallback na hlavní stránku */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
+              {/* Fallback na hlavní stránku */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </React.Suspense>
         </div>
       </main>
 

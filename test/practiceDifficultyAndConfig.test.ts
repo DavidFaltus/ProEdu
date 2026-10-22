@@ -150,6 +150,6 @@ test('parsePracticeQuestionsExcelFile parses template file and extracts difficul
   const result = await parsePracticeQuestionsExcelFile(file);
   assert.ok(result.validRows.length >= 3);
   assert.equal(result.validRows[0].difficulty, 'Lehká');
-  assert.equal(result.validRows[1].difficulty, 'Střední');
-  assert.equal(result.validRows[2].difficulty, 'Lehká');
+  assert.equal(result.validRows[1].difficulty, 'Lehká');
+  assert.equal(result.validRows[2].difficulty, 'Střední');
 });

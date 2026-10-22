@@ -1,17 +1,16 @@
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Configure worker for PDF.js
-if (typeof window !== 'undefined') {
-  try {
-    // Primary: Vite module worker
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-      'pdfjs-dist/build/pdf.worker.mjs',
-      import.meta.url
-    ).href;
-  } catch {
-    // Fallback: CDN
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+async function getPdfJs() {
+  const pdfjsLib = await import('pdfjs-dist');
+  if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.mjs',
+        import.meta.url
+      ).href;
+    } catch {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+    }
   }
+  return pdfjsLib;
 }
 
 export interface ConvertedSvgResult {
@@ -24,15 +23,8 @@ export interface ConvertedSvgResult {
   height: number;
 }
 
-/**
- * Sanitizes SVG string to prevent XSS (removes <script> tags and event handlers)
- */
-export function sanitizeSvg(rawSvg: string): string {
-  return rawSvg
-    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
-    .replace(/on\w+="[^"]*"/gi, '')
-    .replace(/on\w+='[^']*'/gi, '');
-}
+import { sanitizeSvg } from './svgUtils';
+export { sanitizeSvg };
 
 /**
  * Converts a PDF or SVG file into a clean, standalone SVG string.
@@ -140,6 +132,7 @@ export async function convertFileToSvg(
   }
 
   onProgress?.('Načítám PDF soubor...');
+  const pdfjsLib = await getPdfJs();
   const arrayBuffer = await file.arrayBuffer();
 
   const loadingTask = pdfjsLib.getDocument({

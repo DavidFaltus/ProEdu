@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../lib/firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 import { 
   BookOpen, Calendar, GraduationCap, Users, ArrowRight, 
@@ -25,41 +23,24 @@ export default function Courses() {
 
   useEffect(() => {
     let isMounted = true;
-    const q = collection(db, 'courses');
-
-    const unsub = onSnapshot(q, (snapshot) => {
-      if (!snapshot.empty) {
-        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Course));
+    async function loadCourses() {
+      try {
+        const data = await getAllCourses();
         if (isMounted) {
-          setCourses(docs);
+          setCourses(data);
           setLoading(false);
         }
-      } else {
-        // Fallback nebo automatický seed pokud je databáze zatím prázdná
-        getAllCourses().then(data => {
-          if (isMounted) {
-            setCourses(data);
-            setLoading(false);
-          }
-        }).catch(err => {
-          console.warn('Fallback error:', err);
-          if (isMounted) {
-            setCourses(DEFAULT_FLAGSHIP_COURSES as Course[]);
-            setLoading(false);
-          }
-        });
+      } catch (err) {
+        console.warn('Courses fetch fallback error:', err);
+        if (isMounted) {
+          setCourses(DEFAULT_FLAGSHIP_COURSES as Course[]);
+          setLoading(false);
+        }
       }
-    }, (err) => {
-      console.warn('Courses listener notice:', err);
-      if (isMounted) {
-        setCourses(DEFAULT_FLAGSHIP_COURSES as Course[]);
-        setLoading(false);
-      }
-    });
-
+    }
+    loadCourses();
     return () => {
       isMounted = false;
-      unsub();
     };
   }, []);
 
