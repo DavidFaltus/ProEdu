@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { useTimer } from '../context/TimerContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Play, Pause, RotateCcw, Sprout, Loader2, Coffee, Tag, CheckSquare, Calendar } from 'lucide-react';
+import { Play, Pause, RotateCcw, Sprout, Loader2, Coffee, Tag } from 'lucide-react';
+import { CalendarBlueIcon, CorrectCyanIcon } from '../components/common/CustomIcon';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -237,7 +238,7 @@ export default function Garden() {
               <div className="w-full bg-gray-50 p-3 rounded-xl border border-gray-100 text-left space-y-1">
                 {selectedTodoTitle && (
                   <div className="flex items-center gap-2 text-xs font-bold text-gray-600">
-                    <CheckSquare size={14} className="text-green-500" />
+                    <CorrectCyanIcon size={15} />
                     <span className="truncate">{selectedTodoTitle}</span>
                   </div>
                 )}
@@ -461,7 +462,7 @@ export default function Garden() {
           {sessions.length > 0 && (
             <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-6">
               <div className="flex items-center gap-3 mb-6">
-                <Calendar size={20} className="text-green-500" />
+                <CalendarBlueIcon size={22} />
                 <h4 className="font-sans font-black text-xl text-gray-900">Historie soustředění</h4>
               </div>
 

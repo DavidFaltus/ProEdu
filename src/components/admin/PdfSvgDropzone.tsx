@@ -6,6 +6,7 @@ import {
 import { Button } from '../ui/button';
 import { convertFileToSvg, ConvertedSvgResult } from '../../utils/pdfToSvg';
 import { toast } from 'sonner';
+import { MaterialYellowIcon, StarYellowIcon } from '../common/CustomIcon';
 
 interface PdfSvgDropzoneProps {
   valueSvgString?: string;
@@ -134,7 +135,7 @@ export default function PdfSvgDropzone({
         <div className="bg-emerald-50/60 border border-emerald-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4 transition-all">
           <div className="flex items-center gap-3.5 min-w-0 w-full sm:w-auto">
             <div className="w-12 h-12 rounded-xl bg-emerald-100 text-emerald-800 flex items-center justify-center shrink-0 shadow-sm">
-              <FileText size={24} />
+              <MaterialYellowIcon size={26} />
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -218,7 +219,7 @@ export default function PdfSvgDropzone({
               .SVG
             </span>
             <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md flex items-center gap-1">
-              <Sparkles size={11} /> Ukládá se do databáze
+              <StarYellowIcon size={12} /> Ukládá se do databáze
             </span>
           </div>
         </div>
@@ -230,7 +231,7 @@ export default function PdfSvgDropzone({
           <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <FileText size={18} className="text-emerald-600" />
+                <MaterialYellowIcon size={20} />
                 <h4 className="font-bold text-gray-900 text-base truncate">
                   Náhled grafického listu ({fileName || 'SVG'})
                 </h4>

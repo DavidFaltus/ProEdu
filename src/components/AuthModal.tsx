@@ -6,7 +6,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Lock, Mail, User as UserIcon, Sparkles, LogIn, ArrowRight } from 'lucide-react';
+import { Lock, LogIn, ArrowRight } from 'lucide-react';
+import { StarYellowIcon, MailBlueIcon, TeamBlueIcon } from './common/CustomIcon';
 import { toast } from 'sonner';
 
 export default function AuthModal() {
@@ -93,7 +94,7 @@ export default function AuthModal() {
         <div className="bg-gradient-to-r from-[#1E1B18] to-[#3a3530] p-6 text-white text-center relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-amber-400/10 rounded-full blur-2xl" />
           <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black uppercase tracking-wider text-amber-300 mb-2">
-            <Sparkles size={14} /> ProEdu vzdělávání
+            <StarYellowIcon size={15} /> ProEdu vzdělávání
           </div>
           <DialogTitle className="text-2xl font-display font-black tracking-tight text-white">
             {isLogin ? 'Přihlášení k účtu' : 'Vytvořit nový účet'}
@@ -138,7 +139,7 @@ export default function AuthModal() {
               <div className="space-y-1.5">
                 <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">Jméno a příjmení</Label>
                 <div className="relative">
-                  <UserIcon className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                  <TeamBlueIcon className="absolute left-3.5 top-1/2 -translate-y-1/2" size={16} />
                   <Input
                     type="text"
                     required
@@ -154,7 +155,7 @@ export default function AuthModal() {
             <div className="space-y-1.5">
               <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">E-mail</Label>
               <div className="relative">
-                <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                <MailBlueIcon className="absolute left-3.5 top-1/2 -translate-y-1/2" size={16} />
                 <Input
                   type="email"
                   required

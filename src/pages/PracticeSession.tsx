@@ -2,10 +2,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  ArrowLeft, CheckCircle2, XCircle, Lightbulb, RotateCcw, 
-  BookOpen, ArrowRight, MessageSquare, ChevronLeft, ChevronRight, Send,
-  Crown, Sparkles, UserPlus
+  ArrowLeft, RotateCcw, 
+  ArrowRight, ChevronLeft, ChevronRight, Send
 } from 'lucide-react';
+import {
+  BookCyanIcon,
+  StarPinkIcon,
+  HeartPinkIcon,
+  CorrectCyanIcon,
+  WrongPinkIcon,
+  BulbYellowIcon,
+  DialogCyanIcon,
+  BubbleYellowIcon,
+} from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -351,7 +360,7 @@ export default function PracticeSession() {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center space-y-4">
         <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-2xl">
-          📝
+          <BookCyanIcon size={32} />
         </div>
         <h2 className="text-3xl font-display font-black text-[#1E1B18]">Zatím žádné otázky</h2>
         <p className="text-gray-500">
@@ -391,7 +400,7 @@ export default function PracticeSession() {
           <div className="absolute top-0 right-0 w-64 h-64 bg-amber-100/30 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
 
           <div className="w-20 h-20 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-3xl shadow-inner">
-            {percentage >= 80 ? '🏆' : percentage >= 50 ? '👏' : '💪'}
+            {percentage >= 50 ? <StarPinkIcon size={42} /> : <HeartPinkIcon size={42} />}
           </div>
 
           <div className="space-y-2">
@@ -437,7 +446,7 @@ export default function PracticeSession() {
                   variant="outline"
                   className="rounded-xl font-bold h-12 px-6 flex items-center gap-2 cursor-pointer"
                 >
-                  <BookOpen size={16} /> Zopakovat teorii
+                  <BookCyanIcon size={18} /> Zopakovat teorii
                 </Button>
               </Link>
             )}
@@ -491,11 +500,11 @@ export default function PracticeSession() {
                       </span>
                     ) : isCorrect ? (
                       <span className="flex items-center gap-1.5 text-xs font-black text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full shrink-0">
-                        <CheckCircle2 size={16} /> Správně {res.usedHint && '(s nápovědou)'}
+                        <CorrectCyanIcon size={16} /> Správně {res.usedHint && '(s nápovědou)'}
                       </span>
                     ) : (
                       <span className="flex items-center gap-1.5 text-xs font-black text-rose-700 bg-rose-50 px-3 py-1 rounded-full shrink-0">
-                        <XCircle size={16} /> Chyba
+                        <WrongPinkIcon size={16} /> Chyba
                       </span>
                     )}
                   </div>
@@ -517,7 +526,7 @@ export default function PracticeSession() {
                     </div>
                     {q.explanation && (
                       <div className="mt-2 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 font-medium leading-relaxed">
-                        <span className="font-bold text-gray-800 block mb-0.5">💡 Vysvětlení:</span>
+                        <span className="font-bold text-gray-800 flex items-center gap-1.5 mb-0.5"><BulbYellowIcon size={15} /> Vysvětlení:</span>
                         <MathRenderer content={q.explanation} />
                       </div>
                     )}
@@ -572,8 +581,9 @@ export default function PracticeSession() {
               <span className="text-[11px] text-amber-800 font-semibold hidden sm:inline">žolíků</span>
             </div>
           ) : isPremium ? (
-            <span className="flex items-center gap-1 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
-              <span>✨ Premium</span>
+            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
+              <StarPinkIcon size={14} />
+              <span>Premium</span>
             </span>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold select-none">
@@ -713,9 +723,9 @@ export default function PracticeSession() {
               }}
               className="text-amber-800 hover:text-amber-950 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5"
             >
-              <MessageSquare size={15} className="text-amber-600" />
+              <DialogCyanIcon size={16} />
               <span>Doptat se lektora</span>
-              {!isPremium && <Crown size={12} className="text-amber-500 ml-0.5" />}
+              {!isPremium && <StarPinkIcon size={13} className="ml-0.5" />}
               {askedInquirySet.has(currentIndex) && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500" title="Dotaz odeslán" />
               )}
@@ -729,7 +739,7 @@ export default function PracticeSession() {
                 onClick={handleToggleHint}
                 className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5"
               >
-                <Lightbulb size={15} />
+                <BulbYellowIcon size={16} />
                 <span>{isHintOpen ? 'Skrýt nápovědu' : 'Nápověda'}</span>
               </Button>
             )}
@@ -746,7 +756,7 @@ export default function PracticeSession() {
               className="overflow-hidden relative z-10"
             >
               <div className="p-4 sm:p-5 bg-amber-50 border border-amber-200 rounded-2xl text-xs sm:text-sm text-amber-900 font-medium flex items-start gap-3 shadow-xs">
-                <span className="text-xl">💡</span>
+                <BulbYellowIcon size={20} className="shrink-0 mt-0.5" />
                 <div className="leading-relaxed flex-1">
                   <MathRenderer content={currentQuestion.hint} />
                 </div>
@@ -757,9 +767,9 @@ export default function PracticeSession() {
 
         {/* Question Text */}
         <div className="py-2 relative z-10">
-          <h2 className="text-2xl sm:text-3xl font-display font-black text-gray-900 leading-snug">
+          <div className="text-2xl sm:text-3xl font-display font-black text-gray-900 leading-snug">
             <MathRenderer content={currentQuestion.question} />
-          </h2>
+          </div>
         </div>
 
         {/* Optional Question Image / SVG (pod zadáním - přímo na stránku jako materiál) */}
@@ -890,14 +900,14 @@ export default function PracticeSession() {
             <div className="flex items-center gap-2 font-black text-base">
               {currentAnswer.isCorrect ? (
                 <>
-                  <CheckCircle2 size={20} className="text-emerald-600 shrink-0" />
+                  <CorrectCyanIcon size={22} className="shrink-0" />
                   <span>
                     Výborně, správná odpověď! {currentAnswer.usedHint && '(použita nápověda)'}
                   </span>
                 </>
               ) : (
                 <>
-                  <XCircle size={20} className="text-rose-600 shrink-0" />
+                  <WrongPinkIcon size={22} className="shrink-0" />
                   <span className="flex items-center gap-1.5 flex-wrap">
                     <span>Bohužel nesprávně. Správně je:</span>
                     <strong className="inline-flex items-center">
@@ -911,14 +921,14 @@ export default function PracticeSession() {
             {/* Didactic tutor feedback (e.g. unreduced fraction) */}
             {currentAnswer.tutorFeedback && (
               <div className="p-3 bg-amber-100/80 border border-amber-300 rounded-xl text-amber-950 font-bold text-xs sm:text-sm flex items-center gap-2 shadow-2xs">
-                <span className="text-base shrink-0">💡</span>
+                <BulbYellowIcon size={18} className="shrink-0" />
                 <span>{currentAnswer.tutorFeedback}</span>
               </div>
             )}
 
             {currentQuestion.explanation && (
               <div className="text-xs sm:text-sm font-medium leading-relaxed pt-1 border-t border-gray-200/50">
-                <div className="font-bold text-gray-700 mb-0.5">💡 Vysvětlení:</div>
+                <div className="font-bold text-gray-700 mb-0.5 flex items-center gap-1.5"><BulbYellowIcon size={15} /> Vysvětlení:</div>
                 <MathRenderer content={currentQuestion.explanation} />
               </div>
             )}
@@ -955,7 +965,7 @@ export default function PracticeSession() {
         <DialogContent className="rounded-[2.5rem] p-6 sm:p-8 max-w-lg bg-white border border-gray-100 shadow-2xl">
           <DialogHeader className="space-y-1">
             <DialogTitle className="text-xl font-display font-black text-[#1E1B18] flex items-center gap-2.5">
-              <MessageSquare className="text-amber-600" size={22} />
+              <BubbleYellowIcon size={24} />
               Dotaz k otázce {currentIndex + 1}
             </DialogTitle>
           </DialogHeader>
@@ -965,7 +975,9 @@ export default function PracticeSession() {
               <span className="font-bold text-gray-400 block text-[10px] uppercase tracking-wider mb-1">
                 Zadání úlohy:
               </span>
-              <p className="line-clamp-3">{currentQuestion.question}</p>
+              <div className="line-clamp-3">
+                <MathRenderer content={currentQuestion.question} />
+              </div>
               {currentQuestion.svgContent ? (
                 <div 
                   className="mt-2 pt-2 border-t border-gray-200/50 flex justify-center max-h-36 overflow-hidden [&>svg]:max-h-36 [&>svg]:w-auto [&>svg]:max-w-full"

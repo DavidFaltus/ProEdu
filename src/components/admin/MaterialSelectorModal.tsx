@@ -6,6 +6,7 @@ import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Input } from '../ui/input';
 import { getAllMaterials, ExistingMaterialItem } from '../../services/practiceService';
+import { MaterialYellowIcon, BookCyanIcon } from '../common/CustomIcon';
 
 interface MaterialSelectorModalProps {
   isOpen: boolean;
@@ -60,7 +61,7 @@ export default function MaterialSelectorModal({
         <DialogHeader className="px-6 pt-6 pb-3 border-b border-gray-100">
 
           <div className="flex items-center gap-2 text-amber-600">
-            <BookOpen size={20} />
+            <MaterialYellowIcon size={22} />
             <DialogTitle className="text-xl font-bold text-gray-900 font-display">
               Výběr z existujících studijních materiálů
             </DialogTitle>
@@ -109,7 +110,7 @@ export default function MaterialSelectorModal({
             </div>
           ) : filteredMaterials.length === 0 ? (
             <div className="py-12 text-center space-y-2 bg-white rounded-2xl border border-dashed border-gray-200 p-6">
-              <FileText size={36} className="text-gray-300 mx-auto" />
+              <BookCyanIcon size={36} className="mx-auto" />
               <p className="text-sm font-bold text-gray-700">Nenalezen žádný materiál</p>
               <p className="text-xs text-gray-400">
                 {search ? 'Zkuste změnit vyhledávací dotaz.' : 'V databázi zatím nejsou uloženy jiné materiály.'}

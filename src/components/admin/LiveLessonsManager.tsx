@@ -28,6 +28,7 @@ import {
 import { getGoogleAccessToken, createGoogleMeetCalendarEvent } from '../../services/calendarService';
 import { auth } from '../../lib/firebase';
 import { cn } from '../../lib/utils';
+import { TeamBlueIcon, CalendarBlueIcon, CorrectCyanIcon, StarYellowIcon } from '../common/CustomIcon';
 
 interface LiveLessonsManagerProps {
   userId: string;
@@ -376,7 +377,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
 
       {/* Info notice about Google Meet & students without Google accounts */}
       <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-4 flex items-start gap-3 text-amber-900 text-xs sm:text-sm">
-        <UserCheck className="shrink-0 mt-0.5 text-amber-600" size={18} />
+        <TeamBlueIcon className="shrink-0 mt-0.5" size={20} />
         <div>
           <span className="font-bold">Podpora pro studenty bez Google účtu:</span> Studenti bez účtu Google se mohou snadno připojit z počítače nebo notebooku. Po otevření odkazu zadají své jméno a kliknou na <em>„Požádat o připojení“ (Knocking)</em>. Vám se v běžícím Google Meet hovoru zobrazí vyskakovací okno, kde je jedním kliknutím vpustíte.
         </div>
@@ -459,12 +460,12 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                       </span>
                       {lesson.targetAudience === 'individual' ? (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-purple-50 text-purple-700 border border-purple-200 flex items-center gap-1">
-                          <UserCheck size={11} />
+                          <TeamBlueIcon size={12} />
                           {lesson.studentIds?.length || 0} studentů
                         </span>
                       ) : (
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 flex items-center gap-1">
-                          <Users size={11} />
+                          <TeamBlueIcon size={12} />
                           Všichni
                         </span>
                       )}
@@ -508,7 +509,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                     )}
                     {lesson.targetAudience === 'individual' && lesson.studentIds && lesson.studentIds.length > 0 && (
                       <div className="flex items-center gap-1.5 text-[11px] text-purple-700 bg-purple-50/80 px-2.5 py-1.5 rounded-xl border border-purple-100">
-                        <UserCheck size={13} className="shrink-0" />
+                        <TeamBlueIcon size={14} className="shrink-0" />
                         <span className="truncate">
                           <strong>Přiřazeno:</strong> {lesson.studentIds.map(id => allStudents.find(s => s.id === id)?.name || 'Student').join(', ')}
                         </span>
@@ -519,7 +520,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                   {/* Date, Time & Duration */}
                   <div className="flex flex-wrap items-center gap-y-1 gap-x-4 text-xs text-gray-600 bg-gray-50 p-2.5 rounded-xl border border-gray-100">
                     <div className="flex items-center gap-1.5 font-bold">
-                      <Calendar size={14} className="text-gray-400" />
+                      <CalendarBlueIcon size={14} />
                       {format(lessonDate, 'd. MMMM yyyy', { locale: cs })}
                     </div>
                     <div className="flex items-center gap-1.5 font-bold">
@@ -601,7 +602,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                             onClick={() => handleFinishLesson(lesson)}
                             className="h-8 text-xs font-bold text-green-700 border-green-200 hover:bg-green-50 rounded-lg"
                           >
-                            <CheckCircle2 size={14} className="mr-1" />
+                            <CorrectCyanIcon size={14} className="mr-1" />
                             Ukončit
                           </Button>
                           <Button
@@ -732,7 +733,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                       : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                   )}
                 >
-                  <Users size={16} />
+                  <TeamBlueIcon size={16} />
                   Všichni studenti
                 </button>
 
@@ -746,7 +747,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                       : "bg-white text-gray-700 border-gray-200 hover:bg-gray-50"
                   )}
                 >
-                  <UserCheck size={16} />
+                  <TeamBlueIcon size={16} />
                   Konkrétní studenti {selectedStudentIds.length > 0 && `(${selectedStudentIds.length})`}
                 </button>
               </div>
@@ -873,7 +874,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
 
                             <div className="shrink-0">
                               {isSelected ? (
-                                <CheckSquare size={18} className="text-blue-600" />
+                                <CorrectCyanIcon size={18} />
                               ) : (
                                 <Square size={18} className="text-gray-300" />
                               )}
@@ -902,7 +903,7 @@ export default function LiveLessonsManager({ userId, teacherName }: LiveLessonsM
                   disabled={isGeneratingMeet}
                   className="h-7 text-xs font-bold border-blue-200 text-blue-700 bg-blue-50/80 hover:bg-blue-100 rounded-lg flex items-center gap-1.5"
                 >
-                  <Sparkles size={13} className={isGeneratingMeet ? 'animate-spin' : ''} />
+                  <StarYellowIcon size={14} className={isGeneratingMeet ? 'animate-spin' : ''} />
                   {isGeneratingMeet ? 'Vytvářím schůzku...' : 'Vygenerovat přes Google Kalendář'}
                 </Button>
               </div>

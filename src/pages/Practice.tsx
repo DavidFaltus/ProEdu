@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
-  Calculator, BookMarked, BookOpen, Play, Sparkles, Plus, 
-  ArrowRight, CheckCircle2, ChevronRight, FileText, GraduationCap, Lock, Crown
+  Play, Plus, 
+  ArrowRight, ChevronRight, Lock
 } from 'lucide-react';
+import { BrainPinkIcon, BrainWhiteIcon, BookCyanIcon, BookWhiteIcon } from '../components/common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { 
@@ -19,9 +20,11 @@ import { toast } from 'sonner';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import { trackPracticeSubjectChange, trackSectionClick } from '../services/analyticsService';
 
-const getSubjectIcon = (id: string) => {
-  if (id === 'Matematika') return <Calculator className="w-8 h-8" />;
-  return <BookMarked className="w-8 h-8" />;
+const getSubjectIcon = (id: string, isActive: boolean) => {
+  if (id === 'Matematika') {
+    return isActive ? <BrainWhiteIcon className="w-9 h-9" /> : <BrainPinkIcon className="w-9 h-9" />;
+  }
+  return isActive ? <BookWhiteIcon className="w-9 h-9" /> : <BookCyanIcon className="w-9 h-9" />;
 };
 
 export default function Practice() {
@@ -109,7 +112,7 @@ export default function Practice() {
               <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
                 isActive ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'
               }`}>
-                {getSubjectIcon(sub.id)}
+                {getSubjectIcon(sub.id, isActive)}
               </div>
               
               <div className="min-w-0 flex-1">
@@ -145,7 +148,7 @@ export default function Practice() {
           </div>
         ) : topics.length === 0 ? (
           <div className="text-center py-16 bg-white/80 rounded-[2.5rem] border border-dashed border-gray-200 shadow-sm space-y-4 p-8">
-            <BookOpen size={48} className="mx-auto text-gray-300" />
+            <BookCyanIcon size={48} className="mx-auto" />
             <div className="space-y-1">
               <h4 className="text-2xl font-display font-bold text-gray-800">
                 Žádná témata pro {activeSubject}
@@ -286,7 +289,7 @@ export default function Practice() {
                                   {isStudyLocked ? (
                                     <Lock size={13} className="text-amber-500" />
                                   ) : (
-                                    <BookOpen size={15} />
+                                    <BookCyanIcon size={16} />
                                   )}
                                   <span>Studovat</span>
                                   {isStudyLocked && (
@@ -331,7 +334,6 @@ export default function Practice() {
         isOpen={isPremiumModalOpen}
         onClose={() => setIsPremiumModalOpen(false)}
         type="premium"
-        title="ProEdu Premium – Teorie & Výuka"
         description="Kompletní výukové listy, vysvětlení látky krok za krokem, tipy lektora a vzorové řešené úlohy jsou dostupné pouze v balíčku Premium."
         onSuccess={() => {
           if (selectedSubtopicForStudy) {

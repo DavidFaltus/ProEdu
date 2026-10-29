@@ -2,7 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Target, BookOpen, MessageSquare, Video, GraduationCap, Users, BarChart3 } from 'lucide-react';
+import { Video, BarChart3 } from 'lucide-react';
+import {
+  BrainPinkIcon,
+  MaterialYellowIcon,
+  TeamBlueIcon,
+  BubbleYellowIcon,
+  CapIcon,
+} from '../components/common/CustomIcon';
 import PracticeManager from '../components/admin/PracticeManager';
 import MaterialsManager from '../components/admin/MaterialsManager';
 import InquiriesManager from '../components/admin/InquiriesManager';
@@ -85,28 +92,28 @@ export default function TeacherDashboard() {
             value="practices" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-sm data-[state=active]:border-[#B80053]/20 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <Target size={16} />
+            <BrainPinkIcon size={17} />
             <span>Procvičování</span>
           </TabsTrigger>
           <TabsTrigger 
             value="materials" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#0F5238] data-[state=active]:shadow-sm data-[state=active]:border-[#0F5238]/20 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <BookOpen size={16} />
+            <MaterialYellowIcon size={17} />
             <span>Studijní materiály</span>
           </TabsTrigger>
           <TabsTrigger 
             value="students" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-600 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <Users size={16} />
+            <TeamBlueIcon size={17} />
             <span>Studenti</span>
           </TabsTrigger>
           <TabsTrigger 
             value="inquiries" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-purple-600 data-[state=active]:shadow-sm data-[state=active]:border-purple-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <MessageSquare size={16} />
+            <BubbleYellowIcon size={17} />
             <span>Dotazy</span>
             {inquiries.filter(i => i.status === 'pending').length > 0 && (
               <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-black bg-rose-500 text-white">
@@ -130,7 +137,7 @@ export default function TeacherDashboard() {
             value="courses" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm data-[state=active]:border-indigo-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <GraduationCap size={16} />
+            <CapIcon size={17} />
             <span>Kurzy</span>
           </TabsTrigger>
           <TabsTrigger 

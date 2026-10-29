@@ -6,7 +6,8 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { GraduationCap, Chrome, Mail, Lock, User as UserIcon } from 'lucide-react';
+import { Chrome, Lock } from 'lucide-react';
+import { CapIcon, MailBlueIcon, TeamBlueIcon } from '../components/common/CustomIcon';
 import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
@@ -83,7 +84,7 @@ export default function Login() {
           <div className="h-4 bg-gradient-to-r from-[#F5C400] to-[#EAB308]" />
           <CardHeader className="text-center space-y-4 pt-10 pb-6">
             <div className="mx-auto w-20 h-20 bg-[#FAF7F0] rounded-[1.5rem] flex items-center justify-center text-[#625500] shadow-sm">
-              <GraduationCap size={40} />
+              <CapIcon size={44} />
             </div>
             <div className="space-y-1">
               <CardTitle className="text-3xl font-serif font-black text-[#1E1B18]">
@@ -106,7 +107,7 @@ export default function Login() {
                   >
                     <Label className="text-blue-900 font-semibold ml-1">Jméno a příjmení</Label>
                     <div className="relative">
-                      <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                      <TeamBlueIcon className="absolute left-4 top-1/2 -translate-y-1/2" size={18} />
                       <Input 
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -121,7 +122,7 @@ export default function Login() {
               <div className="space-y-2">
                 <Label className="text-blue-900 font-semibold ml-1">E-mailová adresa</Label>
                 <div className="relative">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                  <MailBlueIcon className="absolute left-4 top-1/2 -translate-y-1/2" size={18} />
                   <Input 
                     type="email"
                     value={email}

@@ -1,8 +1,14 @@
 import React, { useState } from 'react';
 import { 
-  Sparkles, Flame, Play, Gift, Share2, Copy, Check, Lock, 
-  CheckCircle2, ArrowRight, Info, AlertCircle 
+  Play, Copy, Lock, ArrowRight 
 } from 'lucide-react';
+import { 
+  HeartPinkIcon, 
+  StarYellowIcon, 
+  CorrectCyanIcon, 
+  CoopBlueIcon, 
+  TeamBlueIcon 
+} from './common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
 import { Button } from './ui/button';
 import { toast } from 'sonner';
@@ -186,7 +192,7 @@ export default function JokerZoneSection() {
 
           {!isGuest && streak > 0 && (
             <div className="flex items-center gap-1 pl-2 border-l border-gray-200 text-amber-700 font-black text-xs">
-              <Flame size={14} className="fill-current text-amber-500" />
+              <HeartPinkIcon size={15} />
               <span>{streak}d</span>
             </div>
           )}
@@ -210,7 +216,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center text-base shadow-2xs">
-                  <Flame size={17} className="fill-current" />
+                  <HeartPinkIcon size={18} />
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-[#1E1B18]">10denní streak</h3>
@@ -257,7 +263,7 @@ export default function JokerZoneSection() {
             {/* Daily status box */}
             <div className="rounded-xl bg-white p-3 border border-gray-200/80 text-xs space-y-1 shadow-2xs">
               <div className="flex items-center gap-1.5 text-[#1E1B18] font-bold">
-                <span className="text-amber-500 text-sm">✨</span>
+                <StarYellowIcon size={15} />
                 <span>Denní příděl: +5 žolíků</span>
               </div>
               <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
@@ -265,7 +271,7 @@ export default function JokerZoneSection() {
                   'Každý den se ti přičte +5 žolíků do kapacity dané streakem.'
                 ) : hasDailyGrantToday ? (
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
-                    <CheckCircle2 size={12} /> Dnešní příděl byl úspěšně připsán!
+                    <CorrectCyanIcon size={13} /> Dnešní příděl byl úspěšně připsán!
                   </span>
                 ) : (
                   'Připíše se automaticky dnes při prvním přístupu.'
@@ -287,7 +293,7 @@ export default function JokerZoneSection() {
               </Button>
             ) : hasPracticedToday ? (
               <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold text-center flex items-center justify-center gap-1.5">
-                <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
+                <CorrectCyanIcon size={14} />
                 <span>Dnešní streak splněn! 🔥</span>
               </div>
             ) : (
@@ -362,7 +368,7 @@ export default function JokerZoneSection() {
                 size="sm"
                 className="w-full rounded-xl bg-gray-100 border border-gray-200 text-gray-400 font-bold text-xs h-9 cursor-not-allowed flex items-center justify-center gap-1.5"
               >
-                <CheckCircle2 size={13} className="text-emerald-500" />
+                <CorrectCyanIcon size={14} />
                 <span>Kapacita je plná ({jokers}/{maxJokersCap})</span>
               </Button>
             ) : (
@@ -386,7 +392,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-base shadow-2xs">
-                  <Gift size={16} />
+                  <CoopBlueIcon size={18} />
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-[#1E1B18]">Doporuč kamaráda</h3>
@@ -427,7 +433,7 @@ export default function JokerZoneSection() {
                       )}
                       title={isClaimedSlot ? `Doporučení ${slotNum} vyplaceno (+50)` : `Slot ${slotNum}: volný`}
                     >
-                      {isClaimedSlot ? <Check size={14} /> : `+50`}
+                      {isClaimedSlot ? <CorrectCyanIcon size={15} /> : `+50`}
                     </div>
                   );
                 })}
@@ -462,7 +468,7 @@ export default function JokerZoneSection() {
               >
                 {isCopied ? (
                   <>
-                    <Check size={13} className="text-emerald-400" />
+                    <CorrectCyanIcon size={14} />
                     <span>Zkopírováno do schránky</span>
                   </>
                 ) : (
@@ -484,7 +490,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-base shadow-2xs">
-                  <Share2 size={16} />
+                  <TeamBlueIcon size={18} />
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-[#1E1B18] line-clamp-1">
@@ -502,7 +508,7 @@ export default function JokerZoneSection() {
             {!isGuest && profile?.surveyCompleted ? (
               <div className="rounded-xl bg-white p-3.5 border border-emerald-200/80 text-center space-y-2 shadow-2xs my-auto">
                 <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center">
-                  <CheckCircle2 size={20} />
+                  <CorrectCyanIcon size={20} />
                 </div>
                 <div>
                   <h4 className="font-bold text-xs text-emerald-900">Dotazník dokončen!</h4>

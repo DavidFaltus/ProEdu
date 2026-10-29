@@ -9,7 +9,8 @@ import AuthModal from './components/AuthModal';
 import FloatingTimer from './components/FloatingTimer';
 import LiveLessonNotificationWatcher from './components/LiveLessonNotificationWatcher';
 import ErrorBoundary from './components/ErrorBoundary';
-import { Menu, X, LayoutDashboard, Play, BookOpen, GraduationCap, Bell, Lock, LogIn, ShieldCheck } from 'lucide-react';
+import { Menu, X, LayoutDashboard, Bell, Lock, LogIn, ShieldCheck } from 'lucide-react';
+import { BrainPinkIcon, MaterialYellowIcon, BookCyanIcon, CapIcon } from './components/common/CustomIcon';
 import { useNotifications } from './hooks/useNotifications';
 import NotificationPopover from './components/NotificationPopover';
 import { cn } from './lib/utils';
@@ -125,20 +126,20 @@ function AppContent() {
     {
       label: 'Procvičování',
       path: '/practice',
-      icon: Play,
+      icon: BrainPinkIcon,
       active: location.pathname.startsWith('/practice')
     },
     {
       label: 'Materiály',
       path: '/learning',
-      icon: BookOpen,
+      icon: location.pathname.startsWith('/learning') ? BookCyanIcon : MaterialYellowIcon,
       active: location.pathname.startsWith('/learning'),
       locked: !isPremium
     },
     {
       label: 'Kurzy',
       path: '/courses',
-      icon: GraduationCap,
+      icon: CapIcon,
       active: location.pathname.startsWith('/courses')
     },
     ...(isTeacher ? [{
@@ -160,7 +161,7 @@ function AppContent() {
       <div className="md:hidden flex items-center justify-between px-3.5 sm:px-5 py-2.5 bg-white/95 backdrop-blur-md border-b border-gray-100 sticky top-0 z-40 h-14">
         <Link to="/" className="flex items-center gap-1.5 shrink-0">
           <img 
-            src="/photo/logo2.svg" 
+            src={`${import.meta.env.BASE_URL}photo/logo2.svg`} 
             alt="ProEdu" 
             className="h-8 w-auto"
             referrerPolicy="no-referrer"
@@ -226,7 +227,7 @@ function AppContent() {
                 ) : profile?.photoURL ? (
                   <img src={profile.photoURL} alt="" className="w-full h-full object-cover" />
                 ) : (
-                  <span>🎓</span>
+                  <CapIcon size={18} />
                 )}
               </button>
             </>
@@ -382,11 +383,13 @@ function AppContent() {
 }
 
 export default function App() {
+  const basename = import.meta.env.BASE_URL.replace(/\/$/, '') || undefined;
+
   return (
     <ErrorBoundary>
       <AuthProvider>
         <TimerProvider>
-          <Router>
+          <Router basename={basename}>
             <AppContent />
           </Router>
         </TimerProvider>

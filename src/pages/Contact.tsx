@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Mail, Phone, MapPin, Send, Clock } from 'lucide-react';
+import { MapPin, Send, Clock } from 'lucide-react';
+import { MailBlueIcon, PhonePinkIcon } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -45,7 +46,7 @@ export default function Contact() {
           <div className="grid sm:grid-cols-2 gap-6">
             <Card className="rounded-3xl border-none shadow-lg bg-white p-6 space-y-4">
               <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center text-brand-blue">
-                <Mail size={24} />
+                <MailBlueIcon size={26} />
               </div>
               <div>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">E-mail</div>
@@ -54,7 +55,7 @@ export default function Contact() {
             </Card>
             <Card className="rounded-3xl border-none shadow-lg bg-white p-6 space-y-4">
               <div className="w-12 h-12 bg-orange-50 rounded-xl flex items-center justify-center text-brand-orange">
-                <Phone size={24} />
+                <PhonePinkIcon size={26} />
               </div>
               <div>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Telefon</div>

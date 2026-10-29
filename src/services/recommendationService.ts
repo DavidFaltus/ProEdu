@@ -36,7 +36,7 @@ const FALLBACK_TOPICS: RecommendedPracticeItem[] = [
     title: 'Lineární rovnice a výrazy',
     subject: 'Matematika',
     difficulty: '10 úloh • Střední',
-    icon: '🧮',
+    icon: 'mozek',
     bg: 'bg-blue-100 text-blue-700',
     tagClass: 'bg-blue-50 text-blue-700 border border-blue-200',
     badge: {
@@ -50,7 +50,7 @@ const FALLBACK_TOPICS: RecommendedPracticeItem[] = [
     title: 'Pravopis velkých písmen a shoda',
     subject: 'Čeština',
     difficulty: '10 úloh • Klíčové',
-    icon: '📖',
+    icon: 'kniha',
     bg: 'bg-rose-100 text-rose-700',
     tagClass: 'bg-rose-50 text-rose-700 border border-rose-200',
     badge: {
@@ -64,7 +64,7 @@ const FALLBACK_TOPICS: RecommendedPracticeItem[] = [
     title: 'Práce s textem a porozumění',
     subject: 'Čeština',
     difficulty: '10 úloh • Cermat typ',
-    icon: '✍️',
+    icon: 'material',
     bg: 'bg-emerald-100 text-emerald-700',
     tagClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
     badge: {
@@ -80,34 +80,34 @@ function getVisualProps(title: string, subject: 'Matematika' | 'Čeština') {
   if (subject === 'Matematika') {
     if (t.includes('rovnic') || t.includes('výraz') || t.includes('algebra') || t.includes('úprav')) {
       return {
-        icon: '🧮',
+        icon: 'mozek',
         bg: 'bg-blue-100 text-blue-700',
         tagClass: 'bg-blue-50 text-blue-700 border border-blue-200'
       };
     }
     if (t.includes('geom') || t.includes('úhl') || t.includes('planim') || t.includes('těles') || t.includes('konstruk') || t.includes('trojúheln')) {
       return {
-        icon: '📐',
+        icon: 'mozek',
         bg: 'bg-amber-100 text-amber-700',
         tagClass: 'bg-amber-50 text-amber-700 border border-amber-200'
       };
     }
     if (t.includes('zlom') || t.includes('procent') || t.includes('poměr') || t.includes('čísl') || t.includes('mocnin')) {
       return {
-        icon: '📊',
+        icon: 'zarovka',
         bg: 'bg-indigo-100 text-indigo-700',
         tagClass: 'bg-indigo-50 text-indigo-700 border border-indigo-200'
       };
     }
     if (t.includes('slovní') || t.includes('pohyb') || t.includes('úloh') || t.includes('prác')) {
       return {
-        icon: '💡',
+        icon: 'zarovka',
         bg: 'bg-cyan-100 text-cyan-700',
         tagClass: 'bg-cyan-50 text-cyan-700 border border-cyan-200'
       };
     }
     return {
-      icon: '🔢',
+      icon: 'mozek',
       bg: 'bg-blue-100 text-blue-700',
       tagClass: 'bg-blue-50 text-blue-700 border border-blue-200'
     };
@@ -115,34 +115,34 @@ function getVisualProps(title: string, subject: 'Matematika' | 'Čeština') {
     // Čeština
     if (t.includes('pravopis') || t.includes('shod') || t.includes('vyjmen') || t.includes('písmen') || t.includes('interpunk')) {
       return {
-        icon: '📖',
+        icon: 'kniha',
         bg: 'bg-rose-100 text-rose-700',
         tagClass: 'bg-rose-50 text-rose-700 border border-rose-200'
       };
     }
     if (t.includes('text') || t.includes('porozum') || t.includes('čtení') || t.includes('slohov') || t.includes('stylist')) {
       return {
-        icon: '✍️',
+        icon: 'material',
         bg: 'bg-emerald-100 text-emerald-700',
         tagClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200'
       };
     }
     if (t.includes('člen') || t.includes('souvět') || t.includes('skladb') || t.includes('větn') || t.includes('poměr')) {
       return {
-        icon: '🧩',
+        icon: 'bublina',
         bg: 'bg-purple-100 text-purple-700',
         tagClass: 'bg-purple-50 text-purple-700 border border-purple-200'
       };
     }
     if (t.includes('tvaroslov') || t.includes('slovní druh') || t.includes('rozbor') || t.includes('kořen') || t.includes('předpon')) {
       return {
-        icon: '📝',
+        icon: 'kniha',
         bg: 'bg-orange-100 text-orange-700',
         tagClass: 'bg-orange-50 text-orange-700 border border-orange-200'
       };
     }
     return {
-      icon: '📚',
+      icon: 'kniha',
       bg: 'bg-rose-100 text-rose-700',
       tagClass: 'bg-rose-50 text-rose-700 border border-rose-200'
     };

@@ -2,9 +2,17 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, 
-  Lightbulb, Play, Sparkles, Crown, Lock
+  ArrowLeft, ChevronDown, ChevronUp, 
+  Play
 } from 'lucide-react';
+import {
+  BookCyanIcon,
+  CorrectCyanIcon,
+  WrongPinkIcon,
+  StarPinkIcon,
+  StarYellowIcon,
+  BulbYellowIcon,
+} from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
@@ -27,6 +35,7 @@ export default function StudyView() {
 
   const [expandedTips, setExpandedTips] = useState<Record<number, boolean>>({});
   const [stepAnswers, setStepAnswers] = useState<Record<number, string | null>>({});
+  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
 
   useEffect(() => {
     async function loadData() {
@@ -135,8 +144,8 @@ export default function StudyView() {
         </div>
       </header>
 
-      {/* Vizuální výukový list - přímo na stránce bez nadpisu a bez těžkých boxů */}
-      {hasSvg && (
+      {/* Vizuální výukový list NEBO Teoretický výklad (pokud není k dispozici obrázek) */}
+      {hasSvg ? (
         <div className="w-full overflow-x-auto py-1 px-1 sm:px-2 flex justify-center items-start">
           {subtopic.svgContent ? (
             <div 
@@ -151,14 +160,31 @@ export default function StudyView() {
             />
           ) : null}
         </div>
-      )}
+      ) : subtopic.studyTheory?.trim() ? (
+        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
+              <BookCyanIcon size={22} />
+            </div>
+            <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
+              Teoretický výklad
+            </h3>
+          </div>
+          <div className="text-gray-700 font-medium text-sm sm:text-base leading-relaxed">
+            <MathRenderer
+              content={subtopic.studyTheory}
+              imageMap={subtopic.sampleProblem?.theoryImages}
+            />
+          </div>
+        </div>
+      ) : null}
 
       {/* Postup řešení krok za krokem */}
       {steps.length > 0 && (
         <div className="space-y-4">
           <div className="flex items-center gap-3 px-2">
             <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <CheckCircle2 size={20} />
+              <CorrectCyanIcon size={22} />
             </div>
             <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
               Postup řešení krok za krokem
@@ -177,7 +203,7 @@ export default function StudyView() {
                     className="p-8 bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-white rounded-3xl border-2 border-yellow-400/50 shadow-xl text-center space-y-4 relative overflow-hidden"
                   >
                     <div className="w-14 h-14 mx-auto rounded-2xl bg-yellow-400 text-black flex items-center justify-center shadow-md">
-                      <Crown className="w-7 h-7" />
+                      <StarPinkIcon className="w-8 h-8" />
                     </div>
                     <div className="max-w-md mx-auto space-y-1.5">
                       <h4 className="text-xl font-display font-black text-[#1E1B18]">
@@ -218,7 +244,10 @@ export default function StudyView() {
                         <MathRenderer content={step.title} inline />
                       </h4>
                       <div className="text-gray-600 font-medium text-sm sm:text-base leading-relaxed">
-                        <MathRenderer content={step.content} />
+                        <MathRenderer
+                          content={step.content}
+                          imageMap={subtopic.sampleProblem?.theoryImages}
+                        />
                       </div>
                     </div>
                   </div>
@@ -235,7 +264,7 @@ export default function StudyView() {
                         }`}
                         title={expandedTips[idx] ? "Skrýt tip od lektora" : "Zobrazit tip od lektora"}
                       >
-                        <Lightbulb size={15} className={expandedTips[idx] ? "text-[#1E1B18]" : "text-amber-600"} />
+                        <BulbYellowIcon size={16} />
                         <span className="hidden sm:inline">Tip od lektora</span>
                         <span className="sm:hidden">Tip</span>
                         {expandedTips[idx] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
@@ -281,7 +310,7 @@ export default function StudyView() {
                         <div className="absolute -top-2 right-8 sm:right-12 w-0 h-0 border-x-8 border-x-transparent border-b-8 border-b-amber-200" />
                         <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50 to-orange-50/50 rounded-2xl border border-amber-200/80 text-amber-950 shadow-sm space-y-1.5">
                           <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-800">
-                            <Sparkles size={14} />
+                            <StarPinkIcon size={15} />
                             <span>Doporučení lektora</span>
                           </div>
                           <div className="text-sm sm:text-base font-medium leading-relaxed text-amber-900">
@@ -355,12 +384,12 @@ export default function StudyView() {
                             <div className="flex items-center gap-2.5">
                               {stepAnswers[idx]?.trim() === step.correctAnswer?.trim() ? (
                                 <>
-                                  <CheckCircle2 size={18} className="text-emerald-600 shrink-0" />
+                                  <CorrectCyanIcon size={20} className="shrink-0" />
                                   <span>Správná odpověď! Skvělá práce.</span>
                                 </>
                               ) : (
                                 <>
-                                  <span className="w-5 h-5 rounded-full bg-rose-200 text-rose-800 flex items-center justify-center font-black shrink-0 text-xs">✕</span>
+                                  <WrongPinkIcon size={20} className="shrink-0" />
                                   <span className="inline-flex items-center gap-1.5 flex-wrap">
                                     <span>Nesprávně.</span>
                                     {step.correctAnswer && (
@@ -413,7 +442,7 @@ export default function StudyView() {
       <div className="bg-gradient-to-br from-[#1E1B18] to-[#38332d] text-white rounded-[2.5rem] p-8 sm:p-10 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
         <div className="space-y-2 text-center md:text-left z-10">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider">
-            <Sparkles size={14} /> Jsi připraven?
+            <StarYellowIcon size={15} /> Jsi připraven?
           </div>
           <h3 className="text-2xl sm:text-3xl font-display font-black tracking-tight">
             Máš látku nastudovanou?
@@ -435,10 +464,12 @@ export default function StudyView() {
 
     {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
     <UnifiedPaywallModal
-      isOpen={!isPremium}
-      onClose={() => navigate('/practice')}
+      isOpen={!isPremium && !isPaywallDismissed}
+      onClose={() => {
+        setIsPaywallDismissed(true);
+        navigate('/practice');
+      }}
       type="premium"
-      title="ProEdu Premium – Teorie & Výuka"
       description="Kompletní výukové listy, vysvětlení látky krok za krokem a tipy lektorů jsou dostupné pouze v balíčku Premium."
     />
   </>

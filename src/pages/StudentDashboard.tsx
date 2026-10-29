@@ -5,7 +5,15 @@ import { cn, safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { Sparkles, ArrowRight, Play, BookOpen, RotateCcw, Target, CheckCircle2, Award } from 'lucide-react';
+import { ArrowRight, Play, RotateCcw } from 'lucide-react';
+import CustomIcon, { 
+  StarPinkIcon, 
+  BulbYellowIcon, 
+  BookCyanIcon, 
+  BrainPinkIcon, 
+  CorrectCyanIcon, 
+  CustomIconName 
+} from '../components/common/CustomIcon';
 import { Link, useNavigate } from 'react-router-dom';
 import QuickCalendar from '../components/QuickCalendar';
 import { getStudentInquiries, getAllInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
@@ -275,7 +283,7 @@ export default function StudentDashboard() {
 
         {/* Motivational Quote in Top Right Corner (replacing streak) */}
         <div className="bg-white/95 backdrop-blur-sm p-3.5 sm:p-5 rounded-2xl sm:rounded-[2rem] shadow-sm border border-gray-100 w-full lg:max-w-md shrink-0 flex items-start gap-3 sm:gap-3.5 self-start lg:self-center">
-          <span className="text-xl sm:text-3xl shrink-0 mt-0.5">💡</span>
+          <BulbYellowIcon size={30} className="shrink-0 mt-0.5" />
           <div className="space-y-0.5 sm:space-y-1 min-w-0">
             <p className="font-sans italic text-xs sm:text-sm text-[#1E1B18] leading-snug">
               "{quote.text}"
@@ -308,7 +316,7 @@ export default function StudentDashboard() {
               <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-3.5 pb-2.5 border-b border-gray-100 gap-2.5">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner shrink-0">
-                    <Sparkles size={16} />
+                    <StarPinkIcon size={18} />
                   </div>
                   <div className="min-w-0">
                     <h3 className="font-sans font-black text-lg sm:text-xl text-[#1E1B18] truncate">Doporučená procvičování</h3>
@@ -363,9 +371,9 @@ export default function StudentDashboard() {
 
                     const badgeIcon = {
                       warning: <RotateCcw size={9} />,
-                      accent: <Target size={9} />,
-                      info: <Sparkles size={9} />,
-                      success: <CheckCircle2 size={9} />
+                      accent: <BrainPinkIcon size={11} />,
+                      info: <StarPinkIcon size={11} />,
+                      success: <CorrectCyanIcon size={11} />
                     }[item.badge.variant];
 
                     return (
@@ -383,7 +391,7 @@ export default function StudentDashboard() {
                       >
                         <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
                           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs transition-transform group-hover:scale-105 mt-0.5 sm:mt-0", item.bg)}>
-                            {item.icon}
+                            <CustomIcon name={(item.icon as CustomIconName) || 'mozek'} size={22} />
                           </div>
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -421,7 +429,7 @@ export default function StudentDashboard() {
                               title="Prostudovat teorii před testem"
                               className="flex-1 sm:flex-none rounded-xl border-gray-200 hover:border-black text-gray-700 font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white"
                             >
-                              <BookOpen size={13} />
+                              <BookCyanIcon size={15} />
                               <span>Teorie</span>
                             </Button>
                           )}

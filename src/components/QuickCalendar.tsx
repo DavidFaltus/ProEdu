@@ -17,15 +17,13 @@ import {
   ChevronLeft, 
   ChevronRight, 
   Circle, 
-  Calendar as CalendarIcon, 
-  CheckCircle2, 
   Clock, 
   ArrowRight, 
   RefreshCcw, 
   Video, 
-  ExternalLink,
-  Sparkles
+  ExternalLink
 } from 'lucide-react';
+import { CalendarBlueIcon, CorrectCyanIcon, StarYellowIcon } from './common/CustomIcon';
 type TodoItem = any;
 import { safeToDate, cn } from '../lib/utils';
 import { Button } from './ui/button';
@@ -293,7 +291,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
           <div className="flex items-center justify-between mb-3.5">
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center text-brand-blue shadow-inner">
-                <CalendarIcon size={16} />
+                <CalendarBlueIcon size={18} />
               </div>
               <h3 className="text-lg sm:text-xl font-bold text-gray-900 capitalize">
                 {format(currentDate, 'MMMM yyyy', { locale: cs })}
@@ -391,7 +389,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
         <div className="p-4 sm:p-4.5 border-b border-gray-100 bg-white rounded-t-2xl">
           <div className="flex items-center justify-between gap-2 mb-2">
             <span className="flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-brand-blue">
-              <Sparkles size={12} className="text-amber-500 animate-pulse" />
+              <StarYellowIcon size={14} className="animate-pulse" />
               {isShowingNextActivityFallback ? 'Nejbližší aktivita' : isToday(selectedDay) ? 'Dnešní aktivita' : 'Události dne'}
             </span>
             {isShowingNextActivityFallback && nextActivity && (
@@ -535,7 +533,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                         "mt-1 rounded-full p-0.5",
                         todo.completed ? "text-green-500" : "text-brand-blue"
                       )}>
-                        {todo.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                        {todo.completed ? <CorrectCyanIcon size={18} /> : <Circle size={18} />}
                       </div>
                       <div className="flex-1">
                         <h4 className={cn(
@@ -656,7 +654,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                             "mt-1 rounded-full p-0.5",
                             todo?.completed ? "text-green-500" : "text-brand-blue"
                           )}>
-                            {todo?.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
+                            {todo?.completed ? <CorrectCyanIcon size={18} /> : <Circle size={18} />}
                           </div>
                           <div className="flex-1">
                             <h4 className={cn(
@@ -692,7 +690,7 @@ export default function QuickCalendar({ todos, liveLessons = [], onJoinLesson }:
                 className="h-full flex flex-col items-center justify-center text-center py-12"
               >
                 <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center text-gray-200 mb-4 border border-gray-50">
-                  <CalendarIcon size={32} />
+                  <CalendarBlueIcon size={34} />
                 </div>
                 <p className="text-gray-400 font-bold text-sm">Žádné události</p>
                 <p className="text-gray-300 text-xs mt-1">Užijte si volný den!</p>

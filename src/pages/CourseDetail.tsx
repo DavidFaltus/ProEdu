@@ -2,10 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
-  GraduationCap, Lock, ArrowLeft, Calendar, Clock, User, 
-  Sparkles, Check, BookOpen, Video, ExternalLink, ShieldCheck, 
-  Layers, Users, AlertCircle 
+  Lock, ArrowLeft, Clock, 
+  Video, ExternalLink, ShieldCheck, 
+  AlertCircle 
 } from 'lucide-react';
+import {
+  CapIcon,
+  CalendarBlueIcon,
+  TeamBlueIcon,
+  StarYellowIcon,
+  CorrectCyanIcon,
+  BookCyanIcon,
+  MaterialYellowIcon,
+} from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
@@ -119,8 +128,8 @@ export default function CourseDetail() {
         {/* Quick Meta Pills */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/10 relative z-10">
           <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
-              <User size={12} /> Lektor
+            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+              <TeamBlueIcon size={13} /> Lektor
             </span>
             <p className="text-xs sm:text-sm font-bold text-white truncate" title={course.instructorName || 'Certifikovaný lektor ProEdu'}>
               {course.instructorName || 'Lektor ProEdu'}
@@ -137,8 +146,8 @@ export default function CourseDetail() {
           </div>
 
           <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
-              <Calendar size={12} /> Období
+            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+              <CalendarBlueIcon size={13} /> Období
             </span>
             <p className="text-xs sm:text-sm font-bold text-white truncate">
               {course.startDate && course.endDate ? `${course.startDate} – ${course.endDate}` : 'Celý školní rok'}
@@ -146,8 +155,8 @@ export default function CourseDetail() {
           </div>
 
           <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
-              <Sparkles size={12} /> Náročnost
+            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+              <StarYellowIcon size={13} /> Náročnost
             </span>
             <p className="text-xs sm:text-sm font-bold text-amber-300 truncate" title={course.difficulty || 'Cermat 9. třída'}>
               {course.difficulty || 'Cermat 9. třída'}
@@ -165,7 +174,7 @@ export default function CourseDetail() {
             <div className="flex items-center justify-between border-b border-gray-100 pb-4">
               <div>
                 <h3 className="text-xl sm:text-2xl font-display font-black text-gray-900 flex items-center gap-2.5">
-                  <Layers className="text-indigo-600" size={24} />
+                  <MaterialYellowIcon size={25} />
                   Přehled látky a osnova kurzu
                 </h3>
                 <p className="text-gray-500 text-xs sm:text-sm font-medium mt-0.5">
@@ -211,35 +220,35 @@ export default function CourseDetail() {
           {/* Benefits Box */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-5">
             <h3 className="text-xl font-display font-black text-gray-900 flex items-center gap-2">
-              <Sparkles className="text-amber-500" size={20} />
+              <StarYellowIcon size={22} />
               Co je součástí tohoto kurzu?
             </h3>
 
             <div className="grid sm:grid-cols-2 gap-3.5 text-xs text-gray-700">
               <div className="p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100 flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                  <Check size={12} strokeWidth={3} />
+                  <CorrectCyanIcon size={16} />
                 </div>
                 <span><strong>Živá výuka přes Google Meet</strong> s certifikovaným lektorem v malé skupině.</span>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100 flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                  <Check size={12} strokeWidth={3} />
+                  <CorrectCyanIcon size={16} />
                 </div>
                 <span><strong>Záznamy všech lekcí</strong> – zmeškanou hodinu si můžeš kdykoliv pustit zpětně.</span>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100 flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                  <Check size={12} strokeWidth={3} />
+                  <CorrectCyanIcon size={16} />
                 </div>
                 <span><strong>Pracovní listy a taháky</strong> vytvořené speciálně pro CERMAT přijímačky.</span>
               </div>
 
               <div className="p-3.5 rounded-2xl bg-gray-50/70 border border-gray-100 flex items-start gap-2.5">
                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                  <Check size={12} strokeWidth={3} />
+                  <CorrectCyanIcon size={16} />
                 </div>
                 <span><strong>Kompletní balíček ProEdu Premium</strong> (neomezené procvičování) v ceně.</span>
               </div>
@@ -315,7 +324,7 @@ export default function CourseDetail() {
                 onClick={() => setIsPaywallOpen(true)}
                 className="w-full h-14 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-base shadow-lg shadow-yellow-500/25 transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
               >
-                <GraduationCap size={20} />
+                <CapIcon size={22} />
                 <span>Zapsat se do kurzu</span>
               </Button>
 
@@ -334,11 +343,11 @@ export default function CourseDetail() {
 
               <div className="space-y-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
                 <div className="flex items-center gap-2">
-                  <Check size={14} className="text-emerald-600" />
+                  <CorrectCyanIcon size={16} />
                   <span>Garance vrácení peněz do 14 dnů</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Check size={14} className="text-emerald-600" />
+                  <CorrectCyanIcon size={16} />
                   <span>Okamžitý přístup k materiálům</span>
                 </div>
               </div>
@@ -348,7 +357,7 @@ export default function CourseDetail() {
           {/* Quick Help Card */}
           <div className="p-6 rounded-3xl bg-[#FAF7F0] border border-gray-200/60 space-y-2.5 text-xs text-gray-600">
             <h5 className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
-              <BookOpen size={16} className="text-indigo-600" />
+              <BookCyanIcon size={18} />
               Máš dotaz ke kurzu?
             </h5>
             <p className="leading-relaxed">

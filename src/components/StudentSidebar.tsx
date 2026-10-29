@@ -3,17 +3,22 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
-  Sprout, 
-  GraduationCap, 
-  BookOpen, 
-  Play, 
   Settings, 
   LogOut,
-  CheckSquare,
   Bell,
   LogIn,
   Lock
 } from 'lucide-react';
+import { 
+  BrainPinkIcon, 
+  BookCyanIcon, 
+  MaterialYellowIcon, 
+  CapIcon, 
+  StarPinkIcon, 
+  StarYellowIcon, 
+  TeamBlueIcon,
+  CorrectCyanIcon
+} from './common/CustomIcon';
 import { cn } from '../lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { toast } from 'sonner';
@@ -61,26 +66,26 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
     {
       name: 'Procvičování',
       path: '/practice',
-      icon: Play,
+      icon: BrainPinkIcon,
       active: location.pathname.startsWith('/practice')
     },
     {
       name: 'Materiály',
       path: '/learning',
-      icon: BookOpen,
+      icon: location.pathname.startsWith('/learning') ? BookCyanIcon : MaterialYellowIcon,
       active: location.pathname.startsWith('/learning'),
       locked: !isPremium,
     },
     {
       name: 'Kurzy',
       path: '/courses',
-      icon: GraduationCap,
+      icon: CapIcon,
       active: location.pathname.startsWith('/courses'),
     },
     ...(isTeacher ? [{
       name: 'Administrace',
       path: '/teacher',
-      icon: GraduationCap,
+      icon: TeamBlueIcon,
       active: location.pathname.startsWith('/teacher')
     }] : [])
   ];
@@ -99,7 +104,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
             className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0"
           >
             <img 
-              src="/photo/logo2.svg" 
+              src={`${import.meta.env.BASE_URL}photo/logo2.svg`} 
               alt="ProEdu" 
               className="h-[46px] md:h-[51px] w-auto group-hover:scale-105 transition-transform"
               referrerPolicy="no-referrer"
@@ -193,7 +198,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                     ) : profile?.photoURL ? (
                       <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
                     ) : (
-                      <span className="text-xl leading-none">🎓</span>
+                      <CapIcon size={22} />
                     )}
                   </button>
 
@@ -247,16 +252,16 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
               {/* Řádek 2: Role / Odznáček plánu a žolíky */}
               <div className="pt-2 border-t border-gray-200/50 flex items-center justify-between gap-1.5">
                 {profile?.role === 'premium' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 py-1 px-2.5 rounded-lg border border-amber-200/60 flex items-center justify-center gap-1 shadow-2xs">
-                    ✨ Premium účet
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 py-1 px-2.5 rounded-lg border border-amber-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                    <StarPinkIcon size={14} /> Premium účet
                   </span>
                 ) : profile?.role === 'course' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1 shadow-2xs">
-                    🎓 Kurz student
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                    <CapIcon size={14} /> Kurz student
                   </span>
                 ) : profile?.role === 'teacher' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1 shadow-2xs">
-                    👑 Učitel
+                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                    <StarYellowIcon size={14} /> Učitel
                   </span>
                 ) : (
                   <div className="flex items-center justify-between w-full">
@@ -391,7 +396,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                       profile?.avatarBgColor === color ? "border-[#B80053]" : "border-white"
                     )}
                   >
-                    {profile?.avatarBgColor === color && <span className="text-[#B80053] font-bold text-xs">✓</span>}
+                    {profile?.avatarBgColor === color && <CorrectCyanIcon size={16} />}
                   </button>
                 ))}
               </div>

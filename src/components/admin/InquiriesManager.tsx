@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { MessageSquare, Send, CheckCircle2, Clock, User, BookOpen, RefreshCw, Edit3 } from 'lucide-react';
+import { Send, Clock, RefreshCw, Edit3 } from 'lucide-react';
+import {
+  BubbleYellowIcon,
+  DialogCyanIcon,
+  CorrectCyanIcon,
+  TeamBlueIcon,
+  BookCyanIcon,
+  StarYellowIcon,
+} from '../common/CustomIcon';
 import { Button } from '../ui/button';
 import { Card, CardContent } from '../ui/card';
 import { Textarea } from '../ui/textarea';
@@ -87,7 +95,7 @@ export default function InquiriesManager() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm">
         <div>
           <h2 className="text-2xl font-display font-black text-[#1E1B18] flex items-center gap-2.5">
-            <MessageSquare className="text-amber-600" size={26} />
+            <BubbleYellowIcon size={28} />
             Dotazy studentů z procvičování
           </h2>
           <p className="text-sm text-gray-500 font-medium mt-1">
@@ -136,7 +144,7 @@ export default function InquiriesManager() {
               : 'text-gray-600 hover:text-[#1E1B18]'
           }`}
         >
-          <CheckCircle2 size={16} className={activeTab === 'answered' ? 'text-emerald-600' : 'text-gray-400'} />
+          <CorrectCyanIcon size={16} />
           <span>Zodpovězené</span>
           {answeredInquiries.length > 0 && (
             <span className="px-2 py-0.5 rounded-full text-xs font-black bg-gray-200 text-gray-700 ml-1">
@@ -156,7 +164,7 @@ export default function InquiriesManager() {
         pendingInquiries.length === 0 ? (
           <Card className="rounded-[2rem] border-none shadow-sm bg-white p-12 text-center">
             <div className="w-14 h-14 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto text-2xl mb-3">
-              🎉
+              <StarYellowIcon size={28} />
             </div>
             <h3 className="text-xl font-display font-black text-[#1E1B18]">Žádné nevyřízené dotazy</h3>
             <p className="text-gray-500 text-sm mt-1 max-w-md mx-auto">
@@ -171,7 +179,7 @@ export default function InquiriesManager() {
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center font-bold text-sm">
-                      <User size={18} />
+                      <TeamBlueIcon size={18} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
@@ -188,7 +196,7 @@ export default function InquiriesManager() {
 
                   <div className="flex items-center gap-2">
                     <span className="px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200/60 flex items-center gap-1.5">
-                      <BookOpen size={12} /> {inquiry.topic || 'Procvičování'}
+                      <BookCyanIcon size={13} /> {inquiry.topic || 'Procvičování'}
                     </span>
                     <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-amber-100 text-amber-900">
                       Čeká na odpověď
@@ -209,7 +217,7 @@ export default function InquiriesManager() {
                 {/* Student's Question / Comment */}
                 <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200/60 space-y-1">
                   <div className="text-[11px] font-black uppercase tracking-wider text-amber-800 flex items-center gap-1.5">
-                    <MessageSquare size={13} /> Dotaz studenta
+                    <DialogCyanIcon size={14} /> Dotaz studenta
                   </div>
                   <p className="text-sm font-medium text-amber-950 whitespace-pre-wrap leading-relaxed">
                     {inquiry.comment}
@@ -264,7 +272,7 @@ export default function InquiriesManager() {
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-3">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold text-sm">
-                        <CheckCircle2 size={18} />
+                        <CorrectCyanIcon size={18} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2">
@@ -281,7 +289,7 @@ export default function InquiriesManager() {
 
                     <div className="flex items-center gap-2">
                       <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-700 flex items-center gap-1.5">
-                        <BookOpen size={12} /> {inquiry.topic || 'Procvičování'}
+                        <BookCyanIcon size={13} /> {inquiry.topic || 'Procvičování'}
                       </span>
                       <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-100 text-emerald-800">
                         Zodpovězeno

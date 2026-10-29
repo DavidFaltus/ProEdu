@@ -2,9 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { 
-  Search, FileText, Filter, GraduationCap, Lock, Sparkles, 
-  BookOpen, Eye, ArrowRight, X, Download, Crown, Check, Play 
+  Search, Filter, 
+  Eye, X
 } from 'lucide-react';
+import {
+  CapIcon,
+  BookCyanIcon,
+  MaterialYellowIcon,
+} from '../components/common/CustomIcon';
 import { Input } from '../components/ui/input';
 import { motion } from 'motion/react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -26,6 +31,7 @@ export default function LearningSheets() {
   const [selectedTopic, setSelectedTopic] = useState<string>('Vše');
   const [selectedSubject, setSelectedSubject] = useState<string>('Vše');
   const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
+  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -95,7 +101,7 @@ export default function LearningSheets() {
             <Select value={selectedSubject} onValueChange={(val: any) => setSelectedSubject(val)}>
               <SelectTrigger className="h-12 rounded-2xl border-none bg-white shadow-md font-bold text-gray-700 px-4 text-xs">
                 <div className="flex items-center gap-2">
-                  <GraduationCap size={16} className="text-amber-600" />
+                  <CapIcon size={17} />
                   <SelectValue placeholder="Předmět" />
                 </div>
               </SelectTrigger>
@@ -137,7 +143,7 @@ export default function LearningSheets() {
           ) : filteredMaterials.length === 0 ? (
             <div className="text-center py-24 bg-white/60 rounded-[2.5rem] border-2 border-dashed border-gray-200">
               <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-600">
-                <FileText size={32} />
+                <BookCyanIcon size={34} />
               </div>
               <h3 className="text-xl font-display font-bold text-gray-900 mb-1">Žádné materiály nenalezeny</h3>
               <p className="text-gray-400 text-sm font-medium">
@@ -217,7 +223,7 @@ export default function LearningSheets() {
                           size="sm"
                           className="w-full rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
                         >
-                          <BookOpen size={14} />
+                          <MaterialYellowIcon size={15} />
                           <span>Studovat</span>
                         </Button>
                       </Link>
@@ -236,7 +242,7 @@ export default function LearningSheets() {
           <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <FileText size={18} className="text-emerald-600" />
+                <MaterialYellowIcon size={20} />
                 <h4 className="font-bold text-gray-900 text-base truncate">
                   {previewMaterial.title}
                 </h4>
@@ -284,10 +290,12 @@ export default function LearningSheets() {
 
       {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
       <UnifiedPaywallModal
-        isOpen={!isPremium}
-        onClose={() => navigate('/practice')}
+        isOpen={!isPremium && !isPaywallDismissed}
+        onClose={() => {
+          setIsPaywallDismissed(true);
+          navigate('/practice');
+        }}
         type="premium"
-        title="ProEdu Premium – Výukové materiály"
         description="Kompletní výukové listy, grafické přehledy látky, taháky a vzorové postupy k přijímačkám z matematiky i češtiny jsou dostupné v rámci předplatného Premium."
       />
     </div>

@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 import { 
   getTopics, getSubtopics, getQuestionsForSubtopic, 
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
-  saveQuestion, deleteQuestion, seedInitialPracticeData, PREDEFINED_SUBJECTS,
+  saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
   ExistingMaterialItem, cleanStudyStep,
   parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
   parseStudyStepsExcelFile, importStudyStepsToFirestore,
@@ -29,7 +29,8 @@ import {
   PracticeImportStats, StudyImportStats
 } from '../../services/practiceService';
 import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyStep, PracticeConfig } from '../../types';
-import { auth } from '../../lib/firebase';
+import { auth, storage } from '../../lib/firebase';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
 import { convertFileToSvg } from '../../utils/pdfToSvg';
@@ -37,6 +38,7 @@ import { sanitizeSvg } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
 import QuickFormulaToolbar from './QuickFormulaToolbar';
 import { validateLatexSyntax } from '../../utils/mathPreprocessor';
+import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
 
 interface PracticeManagerProps {
   userId: string;
@@ -74,13 +76,19 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [editingQuestion, setEditingQuestion] = useState<Partial<PracticeQuestion> | null>(null);
   const [questionParentSubtopic, setQuestionParentSubtopic] = useState<PracticeSubtopic | null>(null);
 
+  // Bulk question selection state per subtopic
+  const [selectedQuestionsBySubtopic, setSelectedQuestionsBySubtopic] = useState<Record<string, string[]>>({});
+  const lastSelectedIdxBySubtopic = React.useRef<Record<string, number>>({});
+
   // Deletion confirmation modal state
   const [deleteConfirm, setDeleteConfirm] = useState<{
     isOpen: boolean;
-    type: 'topic' | 'subtopic' | 'question';
+    type: 'topic' | 'subtopic' | 'question' | 'questions-bulk';
     id: string;
+    ids?: string[];
     title: string;
     details?: string;
+    previewItems?: string[];
   }>({
     isOpen: false,
     type: 'topic',
@@ -168,6 +176,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       } else if (deleteConfirm.type === 'question') {
         await deleteQuestion(deleteConfirm.id);
         toast.success('Otázka byla smazána');
+      } else if (deleteConfirm.type === 'questions-bulk' && deleteConfirm.ids?.length) {
+        const deletedCount = await deleteQuestionsBulk(deleteConfirm.ids);
+        setSelectedQuestionsBySubtopic(prev => ({
+          ...prev,
+          [deleteConfirm.id]: []
+        }));
+        toast.success(
+          `Smazáno ${deletedCount} ${deletedCount === 1 ? 'otázka' : deletedCount < 5 ? 'otázky' : 'otázek'}`
+        );
       }
       setDeleteConfirm(prev => ({ ...prev, isOpen: false }));
       await loadData();
@@ -236,7 +253,374 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
   };
 
-  // --- STUDY CONTENT ACTIONS ---
+  // --- STUDY CONTENT & HTML TOOLBAR ACTIONS ---
+  const studyTheoryTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const stepContentTextareaRefs = React.useRef<Record<number, HTMLTextAreaElement | null>>({});
+  const questionTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const [isUploadingTheoryImage, setIsUploadingTheoryImage] = useState(false);
+
+  type HtmlTagType = 'h2' | 'h3' | 'p' | 'b' | 'i' | 'u' | 'ul' | 'a' | 'tip';
+
+  const applyHtmlTagToTextarea = (
+    textarea: HTMLTextAreaElement | null,
+    currentValue: string,
+    tagType: HtmlTagType,
+    onUpdate: (nextValue: string) => void
+  ) => {
+    const current = currentValue || '';
+    const start = textarea ? (textarea.selectionStart ?? current.length) : current.length;
+    const end = textarea ? (textarea.selectionEnd ?? current.length) : current.length;
+    const selected = current.slice(start, end);
+
+    let textToInsert = '';
+    let selectStartOffset: number | undefined;
+    let selectEndOffset: number | undefined;
+
+    switch (tagType) {
+      case 'h2': {
+        const inner = selected || 'Nadpis sekce';
+        textToInsert = `<h2>${inner}</h2>\n`;
+        selectStartOffset = 4;
+        selectEndOffset = 4 + inner.length;
+        break;
+      }
+      case 'h3': {
+        const inner = selected || 'Podnadpis';
+        textToInsert = `<h3>${inner}</h3>\n`;
+        selectStartOffset = 4;
+        selectEndOffset = 4 + inner.length;
+        break;
+      }
+      case 'p': {
+        const inner = selected || 'Text odstavce...';
+        textToInsert = `<p>${inner}</p>\n`;
+        selectStartOffset = 3;
+        selectEndOffset = 3 + inner.length;
+        break;
+      }
+      case 'b': {
+        const inner = selected || 'tučný text';
+        textToInsert = `<strong>${inner}</strong>`;
+        selectStartOffset = 8;
+        selectEndOffset = 8 + inner.length;
+        break;
+      }
+      case 'i': {
+        const inner = selected || 'kurzíva';
+        textToInsert = `<em>${inner}</em>`;
+        selectStartOffset = 4;
+        selectEndOffset = 4 + inner.length;
+        break;
+      }
+      case 'u': {
+        const inner = selected || 'podtržený text';
+        textToInsert = `<u>${inner}</u>`;
+        selectStartOffset = 3;
+        selectEndOffset = 3 + inner.length;
+        break;
+      }
+      case 'ul': {
+        if (selected.trim()) {
+          const items = selected
+            .split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(Boolean)
+            .map(line => `  <li>${line}</li>`)
+            .join('\n');
+          textToInsert = `<ul>\n${items}\n</ul>\n`;
+        } else {
+          textToInsert = `<ul>\n  <li>Položka 1</li>\n  <li>Položka 2</li>\n</ul>\n`;
+          selectStartOffset = 11;
+          selectEndOffset = 20;
+        }
+        break;
+      }
+      case 'a': {
+        const url = window.prompt('Zadejte URL adresu odkazu:', 'https://');
+        if (!url) return;
+        const inner = selected || 'text odkazu';
+        const prefix = `<a href="${url.trim()}" target="_blank" rel="noopener noreferrer">`;
+        textToInsert = `${prefix}${inner}</a>`;
+        selectStartOffset = prefix.length;
+        selectEndOffset = prefix.length + inner.length;
+        break;
+      }
+      case 'tip': {
+        const inner = selected || 'Text tipu nebo důležité poznámky...';
+        const prefix = `<div class="tip-box">\n  <strong>💡 Tip:</strong> `;
+        const suffix = `\n</div>\n`;
+        textToInsert = `${prefix}${inner}${suffix}`;
+        selectStartOffset = prefix.length;
+        selectEndOffset = prefix.length + inner.length;
+        break;
+      }
+    }
+
+    const nextValue = current.slice(0, start) + textToInsert + current.slice(end);
+    onUpdate(nextValue);
+
+    requestAnimationFrame(() => {
+      if (textarea) {
+        textarea.focus();
+        const cursorStart = selectStartOffset !== undefined ? start + selectStartOffset : start + textToInsert.length;
+        const cursorEnd = selectEndOffset !== undefined ? start + selectEndOffset : cursorStart;
+        textarea.setSelectionRange(cursorStart, cursorEnd);
+      }
+    });
+  };
+
+  const handleTheoryImageUpload = async (e: React.ChangeEvent<HTMLInputElement>, targetStepIdx?: number) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase() || 'jpg';
+    const validExts = ['png', 'jpg', 'jpeg', 'webp', 'svg', 'gif'];
+    if (!validExts.includes(ext)) {
+      toast.error('Nahrajte prosím obrázek (PNG, JPG, WebP, SVG nebo GIF).');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Obrázek je příliš velký (maximum 15 MB).');
+      e.target.value = '';
+      return;
+    }
+
+    setIsUploadingTheoryImage(true);
+    try {
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const baseRaw = file.name.replace(/\.[^.]+$/, '');
+      const baseSlug = baseRaw
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || 'obrazek';
+      const cleanAlt = baseRaw.replace(/[_-]+/g, ' ').trim() || 'Ilustrační obrázek';
+      const relativePath = `assets/uploads/${baseSlug}_${stamp}.${ext === 'svg' ? 'svg' : 'jpg'}`;
+
+      // Prepare compressed Data URL or sanitized SVG Data URL
+      let resolvedImageDataUrl = '';
+      if (ext === 'svg' || file.type === 'image/svg+xml') {
+        const rawSvg = await file.text();
+        const clean = sanitizeSvg(rawSvg);
+        resolvedImageDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(clean)}`;
+      } else {
+        const rawDataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Chyba při čtení obrázku.'));
+          reader.readAsDataURL(file);
+        });
+
+        resolvedImageDataUrl = await new Promise<string>((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const canvas = document.createElement('canvas');
+              let w = img.naturalWidth || img.width;
+              let h = img.naturalHeight || img.height;
+              const maxDim = 960;
+              if (w > maxDim || h > maxDim) {
+                if (w > h) {
+                  h = Math.round((h * maxDim) / w);
+                  w = maxDim;
+                } else {
+                  w = Math.round((w * maxDim) / h);
+                  h = maxDim;
+                }
+              }
+              canvas.width = w;
+              canvas.height = h;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) {
+                resolve(rawDataUrl);
+                return;
+              }
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillRect(0, 0, w, h);
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', 0.82));
+            } catch {
+              resolve(rawDataUrl);
+            }
+          };
+          img.onerror = () => resolve(rawDataUrl);
+          img.src = rawDataUrl;
+        });
+      }
+
+      // Try uploading to Firebase Storage (namespaced under learningSheets/{userId}/{fileId}) with fast fallback to Data URL
+      let finalUrl = resolvedImageDataUrl;
+      if (effectiveUserId) {
+        try {
+          const sRef = storageRef(storage, `learningSheets/${effectiveUserId}/${baseSlug}_${stamp}.${ext}`);
+          await uploadBytes(sRef, file, {
+            contentType: file.type || 'image/jpeg',
+            customMetadata: { ownerId: effectiveUserId }
+          });
+          finalUrl = await getDownloadURL(sRef);
+        } catch {
+          finalUrl = resolvedImageDataUrl;
+        }
+      }
+
+      const figureSnippet = `\n<figure class="article-img-figure align-center">\n  <img src="${relativePath}" alt="${cleanAlt}" />\n</figure>\n`;
+
+      setEditingStudySubtopic(prev => {
+        const prevSample = prev?.sampleProblem || { problem: '', correctAnswer: '', options: ['', '', '', ''], explanation: '' };
+        const prevImages = prevSample.theoryImages || {};
+        const nextSample = {
+          ...prevSample,
+          theoryImages: {
+            ...prevImages,
+            [relativePath]: finalUrl
+          }
+        };
+
+        if (targetStepIdx !== undefined) {
+          const steps = [...(prev?.studySteps || [])];
+          const step = steps[targetStepIdx];
+          if (step) {
+            const currentStepText = step.content || '';
+            const stepEl = stepContentTextareaRefs.current[targetStepIdx];
+            const start = stepEl ? (stepEl.selectionStart ?? currentStepText.length) : currentStepText.length;
+            const end = stepEl ? (stepEl.selectionEnd ?? currentStepText.length) : currentStepText.length;
+            steps[targetStepIdx] = {
+              ...step,
+              content: currentStepText.slice(0, start) + figureSnippet + currentStepText.slice(end)
+            };
+          }
+          return {
+            ...prev,
+            studySteps: steps,
+            sampleProblem: nextSample
+          };
+        }
+
+        const currentTheory = prev?.studyTheory || '';
+        const textarea = studyTheoryTextareaRef.current;
+        const start = textarea ? (textarea.selectionStart ?? currentTheory.length) : currentTheory.length;
+        const end = textarea ? (textarea.selectionEnd ?? currentTheory.length) : currentTheory.length;
+        const nextTheory = currentTheory.slice(0, start) + figureSnippet + currentTheory.slice(end);
+
+        return {
+          ...prev,
+          studyTheory: nextTheory,
+          sampleProblem: nextSample
+        };
+      });
+
+      toast.success('Obrázek byl vložen do textu.');
+    } catch (err: any) {
+      toast.error('Nepodařilo se vložit obrázek: ' + (err.message || ''));
+    } finally {
+      setIsUploadingTheoryImage(false);
+      e.target.value = '';
+    }
+  };
+
+  const renderHtmlFormattingBar = (
+    onTagClick: (tag: HtmlTagType) => void,
+    imageUploadOptions?: { onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void }
+  ) => (
+    <div className="bg-[#F8FAFC] border-b border-gray-200 p-2 flex flex-wrap items-center gap-1.5">
+      <button
+        type="button"
+        onClick={() => onTagClick('h2')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit nadpis H2"
+      >
+        H2
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('h3')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit podnadpis H3"
+      >
+        H3
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('p')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit odstavec <p>"
+      >
+        Odstavec
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('b')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-black text-gray-900 shadow-2xs cursor-pointer transition-colors"
+        title="Tučný text <strong>"
+      >
+        B
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('i')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs italic font-serif font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Kurzíva <em>"
+      >
+        I
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('u')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs underline font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Podtržený text <u>"
+      >
+        U
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('ul')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit odrážkový seznam <ul>"
+      >
+        Seznam
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('a')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit odkaz <a>"
+      >
+        Odkaz
+      </button>
+      <button
+        type="button"
+        onClick={() => onTagClick('tip')}
+        className="px-2.5 py-1 bg-white hover:bg-gray-100 border border-gray-200 rounded-lg text-xs font-bold text-gray-800 shadow-2xs cursor-pointer transition-colors"
+        title="Vložit zvýrazněný Tip Box"
+      >
+        Tip Box
+      </button>
+
+      {imageUploadOptions && (
+        <label className={`px-3 py-1 bg-[#EFF6FF] hover:bg-blue-100/80 border border-blue-200 rounded-lg text-xs font-bold text-[#1D4ED8] flex items-center gap-1.5 shadow-2xs cursor-pointer transition-colors ${isUploadingTheoryImage ? 'opacity-60 pointer-events-none' : ''}`}>
+          {isUploadingTheoryImage ? (
+            <Loader2 size={13} className="animate-spin text-[#1D4ED8]" />
+          ) : (
+            <ImageIcon size={13} className="text-[#1D4ED8]" />
+          )}
+          <span>{isUploadingTheoryImage ? 'Vkládám obrázek...' : 'Vložit obrázek do textu'}</span>
+          <input
+            type="file"
+            accept=".png,.jpg,.jpeg,.webp,.svg,.gif,image/*"
+            className="hidden"
+            onChange={imageUploadOptions.onUpload}
+            disabled={isUploadingTheoryImage}
+          />
+        </label>
+      )}
+    </div>
+  );
+
   const handleOpenStudyContent = (sub: PracticeSubtopic) => {
     setEditingStudySubtopic({
       ...sub,
@@ -613,6 +997,89 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     });
   };
 
+  const toggleSelectQuestion = (
+    subtopicId: string,
+    questionId: string,
+    qIdx: number,
+    allQuestions: PracticeQuestion[],
+    shiftKey?: boolean
+  ) => {
+    setSelectedQuestionsBySubtopic(prev => {
+      const current = prev[subtopicId] || [];
+      const currentSet = new Set(current);
+      const isCurrentlySelected = currentSet.has(questionId);
+      const shouldSelect = !isCurrentlySelected;
+
+      const lastIdx = lastSelectedIdxBySubtopic.current[subtopicId];
+      if (shiftKey && typeof lastIdx === 'number' && lastIdx >= 0 && lastIdx < allQuestions.length) {
+        const start = Math.min(lastIdx, qIdx);
+        const end = Math.max(lastIdx, qIdx);
+        for (let i = start; i <= end; i++) {
+          const id = allQuestions[i]?.id;
+          if (!id) continue;
+          if (shouldSelect) {
+            currentSet.add(id);
+          } else {
+            currentSet.delete(id);
+          }
+        }
+      } else {
+        if (shouldSelect) {
+          currentSet.add(questionId);
+        } else {
+          currentSet.delete(questionId);
+        }
+      }
+
+      lastSelectedIdxBySubtopic.current[subtopicId] = qIdx;
+      return {
+        ...prev,
+        [subtopicId]: Array.from(currentSet)
+      };
+    });
+  };
+
+  const toggleSelectAllInSubtopic = (subtopicId: string, allQuestions: PracticeQuestion[]) => {
+    setSelectedQuestionsBySubtopic(prev => {
+      const current = prev[subtopicId] || [];
+      const allIds = allQuestions.map(q => q.id);
+      const allSelected = allIds.length > 0 && allIds.every(id => current.includes(id));
+      return {
+        ...prev,
+        [subtopicId]: allSelected ? [] : allIds
+      };
+    });
+  };
+
+  const handleDeleteSelectedQuestions = (subtopic: PracticeSubtopic, allQuestions: PracticeQuestion[]) => {
+    const selectedIds = (selectedQuestionsBySubtopic[subtopic.id] || []).filter(id =>
+      allQuestions.some(q => q.id === id)
+    );
+    if (selectedIds.length === 0) return;
+
+    const selectedQuestions = allQuestions.filter(q => selectedIds.includes(q.id));
+    const previewItems = selectedQuestions.slice(0, 5).map(q =>
+      q.question.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Otázka bez textu'
+    );
+
+    const countLabel =
+      selectedIds.length === 1
+        ? '1 označená otázka'
+        : selectedIds.length < 5
+          ? `${selectedIds.length} označené otázky`
+          : `${selectedIds.length} označených otázek`;
+
+    setDeleteConfirm({
+      isOpen: true,
+      type: 'questions-bulk',
+      id: subtopic.id,
+      ids: selectedIds,
+      title: `${countLabel} v podtématu „${subtopic.title}“`,
+      details: 'Všechny označené otázky budou trvale odstraněny z procvičování.',
+      previewItems
+    });
+  };
+
   // --- 1. EXCEL IMPORT PROČVIČOVÁNÍ ---
   const handlePracticeFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -664,9 +1131,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       const parsed = await parseStudyStepsExcelFile(file);
       setStudyParsed(parsed);
       if (parsed.invalidRows.length > 0) {
-        toast.warning(`Soubor načten: ${parsed.validRows.length} platných kroků, ${parsed.invalidRows.length} řádků má chybu.`);
+        toast.warning(`Soubor načten: ${parsed.stepsFound} kroků, ${parsed.theoriesFound} teoretických výkladů, ${parsed.invalidRows.length} řádků má chybu.`);
       } else {
-        toast.success(`Soubor načten: ${parsed.validRows.length} platných kroků výkladu k importu.`);
+        toast.success(`Soubor načten: ${parsed.stepsFound} kroků a ${parsed.theoriesFound} teoretických výkladů k importu.`);
       }
     } catch (err: any) {
       setStudyParsed(null);
@@ -685,7 +1152,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         (msg) => setStudyProgressMsg(msg)
       );
       setStudyStats(stats);
-      toast.success(`Import studia dokončen! Naimportováno: ${stats.importedSteps} kroků.`);
+      toast.success(
+        `Import studia dokončen! Naimportováno: ${stats.importedSteps} kroků, aktualizováno výkladů: ${stats.theoriesUpdated}.`
+      );
       await loadData();
     } catch (err: any) {
       toast.error('Chyba během importu: ' + err.message);
@@ -842,7 +1311,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             variant="outline"
             className="rounded-xl border-gray-200 hover:border-black font-bold h-10 px-3.5 flex items-center gap-2 cursor-pointer text-xs bg-white shadow-xs"
           >
-            <BookOpen size={15} className="text-[#0F5238]" />
+            <MaterialYellowIcon size={16} />
             <span>Importovat studium</span>
           </Button>
         </div>
@@ -857,7 +1326,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       ) : topics.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200 p-8 space-y-4">
           <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-2xl">
-            📚
+            <BookCyanIcon size={32} />
           </div>
           <h3 className="text-2xl font-display font-black text-gray-800">Žádná témata pro {activeSubject}</h3>
           <p className="text-gray-400 text-sm max-w-md mx-auto">
@@ -1035,7 +1504,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 size="sm"
                                 className="rounded-xl bg-white border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-8 px-3 flex items-center gap-1 cursor-pointer"
                               >
-                                <BookOpen size={13} />
+                                <MaterialYellowIcon size={14} />
                                 <span>Upravit Studium</span>
                               </Button>
 
@@ -1099,7 +1568,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                       onClick={() => handleOpenStudyContent(sub)}
                                       className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-amber-50 hover:text-amber-900 cursor-pointer transition-colors"
                                     >
-                                      <BookOpen size={14} className="text-amber-600" />
+                                      <BookCyanIcon size={15} />
                                       <span>Upravit Studium</span>
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
@@ -1151,82 +1620,157 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           </div>
 
                           {/* Expanded Questions for this Subtopic */}
-                          {isExpanded && (
-                            <div className="pl-6 pt-3 border-t border-gray-200/60 space-y-2.5">
-                              <div className="flex items-center justify-between text-xs font-bold text-gray-500">
-                                <span>Seznam otázek k procvičování</span>
-                                <span className="text-gray-400">Typ: Volba ze 4 / Vepisovací</span>
-                              </div>
+                          {isExpanded && (() => {
+                            const selectedIdsForSub = (selectedQuestionsBySubtopic[sub.id] || []).filter(id =>
+                              questions.some(q => q.id === id)
+                            );
+                            const allSelected = questions.length > 0 && selectedIdsForSub.length === questions.length;
+                            const someSelected = selectedIdsForSub.length > 0 && !allSelected;
 
-                              {questions.length === 0 ? (
-                                <p className="text-gray-400 text-xs italic py-2">
-                                  Zatím žádné otázky. Klikněte na "+ Přidat procvičování" pro přidání otázky s volbou ze 4 nebo volnou odpovědí.
-                                </p>
-                              ) : (
-                                <div className="space-y-2">
-                                  {questions.map((q, qIdx) => (
-                                    <div 
-                                      key={q.id}
-                                      className="p-3 bg-white rounded-xl border border-gray-200/80 shadow-xs flex items-start justify-between gap-3 text-xs"
-                                    >
-                                      <div className="space-y-1 min-w-0 flex-1">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-bold text-gray-400">{qIdx + 1}.</span>
-                                          <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider ${
-                                            q.type === 'choice' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
-                                          }`}>
-                                            {q.type === 'choice' ? '4 možnosti' : 'Volná odpověď'}
-                                          </span>
-                                          <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider border ${
-                                            (q.difficulty || 'Střední') === 'Lehká' 
-                                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
-                                              : (q.difficulty || 'Střední') === 'Těžká'
-                                                ? 'bg-rose-50 text-rose-800 border-rose-200'
-                                                : 'bg-amber-50 text-amber-800 border-amber-200'
-                                          }`}>
-                                            {q.difficulty || 'Střední'}
-                                          </span>
-                                          {(q.svgContent || q.imageUrl) && (
-                                            <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0" title={q.svgContent ? 'Otázka má vložené vektorové SVG zadání' : 'Otázka má přiložený obrázek'}>
-                                              <ImageIcon size={10} />
-                                              <span>{q.svgContent ? 'SVG' : 'Obrázek'}</span>
-                                            </span>
-                                          )}
-                                          <span className="font-bold text-gray-800 truncate">{q.question}</span>
-                                        </div>
-                                        <div className="pl-5 text-gray-500">
-                                          Správná odpověď: <span className="font-bold text-emerald-700">{q.correctAnswer}</span>
-                                        </div>
-                                      </div>
-
-                                      <div className="flex items-center gap-1 shrink-0">
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() => {
-                                            setQuestionParentSubtopic(sub);
-                                            setEditingQuestion(q);
-                                            setIsQuestionModalOpen(true);
+                            return (
+                              <div className="pl-6 pt-3 border-t border-gray-200/60 space-y-2.5">
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs font-bold text-gray-500">
+                                  <div className="flex items-center gap-3">
+                                    {questions.length > 0 && (
+                                      <label className="inline-flex items-center gap-2 cursor-pointer select-none text-gray-700 hover:text-black">
+                                        <input
+                                          type="checkbox"
+                                          checked={allSelected}
+                                          ref={(el) => {
+                                            if (el) el.indeterminate = someSelected;
                                           }}
-                                          className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-black cursor-pointer"
+                                          onChange={() => toggleSelectAllInSubtopic(sub.id, questions)}
+                                          className="w-4 h-4 rounded border-gray-300 text-[#1E1B18] focus:ring-[#1E1B18] accent-[#1E1B18] cursor-pointer"
+                                        />
+                                        <span>
+                                          {allSelected ? 'Zrušit výběr všech' : 'Vybrat vše'} ({questions.length})
+                                        </span>
+                                      </label>
+                                    )}
+                                    <span className="text-gray-400 hidden sm:inline">•</span>
+                                    <span>Seznam otázek k procvičování</span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2">
+                                    {selectedIdsForSub.length > 0 ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setSelectedQuestionsBySubtopic(prev => ({ ...prev, [sub.id]: [] }))
+                                          }
+                                          className="text-[11px] font-bold text-gray-500 hover:text-black px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer"
                                         >
-                                          <Edit2 size={12} />
-                                        </Button>
+                                          Zrušit výběr
+                                        </button>
                                         <Button
-                                          variant="ghost"
+                                          type="button"
                                           size="sm"
-                                          onClick={() => handleDeleteQuestion(q.id, q.question)}
-                                          className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                                          onClick={() => handleDeleteSelectedQuestions(sub, questions)}
+                                          className="rounded-xl bg-red-600 hover:bg-red-700 text-white font-black text-xs h-8 px-3 flex items-center gap-1.5 cursor-pointer shadow-xs"
                                         >
-                                          <Trash2 size={12} />
+                                          <Trash2 size={13} />
+                                          <span>Smazat vybrané ({selectedIdsForSub.length})</span>
                                         </Button>
-                                      </div>
-                                    </div>
-                                  ))}
+                                      </>
+                                    ) : (
+                                      <span className="text-gray-400">Typ: Volba ze 4 / Vepisovací</span>
+                                    )}
+                                  </div>
                                 </div>
-                              )}
-                            </div>
-                          )}
+
+                                {questions.length === 0 ? (
+                                  <p className="text-gray-400 text-xs italic py-2">
+                                    Zatím žádné otázky. Klikněte na "+ Přidat procvičování" pro přidání otázky s volbou ze 4 nebo volnou odpovědí.
+                                  </p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {questions.map((q, qIdx) => {
+                                      const isSelected = selectedIdsForSub.includes(q.id);
+                                      return (
+                                        <div 
+                                          key={q.id}
+                                          className={`p-3 rounded-xl border shadow-xs flex items-start justify-between gap-3 text-xs transition-colors ${
+                                            isSelected
+                                              ? 'bg-red-50/40 border-red-200 ring-1 ring-red-200/60'
+                                              : 'bg-white border-gray-200/80'
+                                          }`}
+                                        >
+                                          <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                                            <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => {}}
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                toggleSelectQuestion(sub.id, q.id, qIdx, questions, e.shiftKey);
+                                              }}
+                                              title="Označit otázku (Shift+klik pro označení rozsahu)"
+                                              className="mt-0.5 w-4 h-4 rounded border-gray-300 text-red-600 focus:ring-red-500 accent-red-600 cursor-pointer shrink-0"
+                                            />
+                                            <div className="space-y-1 min-w-0 flex-1">
+                                              <div className="flex items-center gap-2">
+                                                <span className="font-bold text-gray-400">{qIdx + 1}.</span>
+                                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider ${
+                                                  q.type === 'choice' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                                                }`}>
+                                                  {q.type === 'choice' ? '4 možnosti' : 'Volná odpověď'}
+                                                </span>
+                                                <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider border ${
+                                                  (q.difficulty || 'Střední') === 'Lehká' 
+                                                    ? 'bg-emerald-50 text-emerald-800 border-emerald-200' 
+                                                    : (q.difficulty || 'Střední') === 'Těžká'
+                                                      ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                                                }`}>
+                                                  {q.difficulty || 'Střední'}
+                                                </span>
+                                                {(q.svgContent || q.imageUrl) && (
+                                                  <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0" title={q.svgContent ? 'Otázka má vložené vektorové SVG zadání' : 'Otázka má přiložený obrázek'}>
+                                                    <ImageIcon size={10} />
+                                                    <span>{q.svgContent ? 'SVG' : 'Obrázek'}</span>
+                                                  </span>
+                                                )}
+                                                <span className="font-bold text-gray-800 truncate">
+                                                  {q.question.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()}
+                                                </span>
+                                              </div>
+                                              <div className="pl-5 text-gray-500">
+                                                Správná odpověď: <span className="font-bold text-emerald-700">{q.correctAnswer}</span>
+                                              </div>
+                                            </div>
+                                          </div>
+
+                                          <div className="flex items-center gap-1 shrink-0">
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => {
+                                                setQuestionParentSubtopic(sub);
+                                                setEditingQuestion(q);
+                                                setIsQuestionModalOpen(true);
+                                              }}
+                                              className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-black cursor-pointer"
+                                            >
+                                              <Edit2 size={12} />
+                                            </Button>
+                                            <Button
+                                              variant="ghost"
+                                              size="sm"
+                                              onClick={() => handleDeleteQuestion(q.id, q.question)}
+                                              className="rounded-lg h-7 w-7 p-0 text-gray-400 hover:text-red-600 hover:bg-red-50 cursor-pointer"
+                                            >
+                                              <Trash2 size={12} />
+                                            </Button>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       );
                     })}
@@ -1309,7 +1853,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             {/* Prominent Info Banner for Studovat Section */}
             <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 text-amber-950 shadow-xs">
               <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 mt-0.5 shadow-sm">
-                <BookOpen size={20} />
+                <BookCyanIcon size={22} />
               </div>
               <div className="space-y-1">
                 <h5 className="text-xs font-black uppercase tracking-wider text-amber-900 flex items-center gap-1.5">
@@ -1372,7 +1916,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-xs shrink-0">
-                <BookOpen size={20} />
+                <BookCyanIcon size={22} />
               </div>
               <div>
                 <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
@@ -1406,7 +1950,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   onClick={() => setIsMaterialSelectorOpen(true)}
                   className="h-7 text-xs font-bold text-amber-700 hover:bg-amber-50 cursor-pointer flex items-center gap-1.5"
                 >
-                  <BookOpen size={13} />
+                  <MaterialYellowIcon size={14} />
                   <span>Vybrat z existujících materiálů</span>
                 </Button>
               </div>
@@ -1433,15 +1977,62 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               />
             </div>
 
-            <div>
-              <label className="text-xs font-bold text-gray-700 block mb-1">Teoretický výklad / Popis látky</label>
-              <textarea
-                rows={4}
-                value={editingStudySubtopic?.studyTheory || ''}
-                onChange={e => setEditingStudySubtopic(prev => ({ ...prev, studyTheory: e.target.value }))}
-                placeholder="Podrobné vysvětlení pravidel, pouček a vzorců..."
-                className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium leading-relaxed"
+            <div className="space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                <label className="text-xs font-bold text-gray-700 block">
+                  Teoretický výklad / Popis látky (zobrazí se, pokud není nahrán obrázek výše)
+                </label>
+                {(editingStudySubtopic?.svgContent || editingStudySubtopic?.svgUrl) ? (
+                  <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-lg shrink-0">
+                    Nahrán obrázek – žákům se zobrazí obrázek místo tohoto textu
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg shrink-0">
+                    Aktivní – zobrazí se žákům v sekci Studium (podporuje HTML, obrázky, KaTeX & Markdown)
+                  </span>
+                )}
+              </div>
+
+              <QuickFormulaToolbar 
+                size="xs"
+                onInsert={insertSnippetAtCursor}
               />
+
+              {/* HTML & Image Formatting Toolbar + Textarea Container */}
+              <div className="rounded-xl border border-gray-200 overflow-hidden bg-white focus-within:border-black transition-colors">
+                {renderHtmlFormattingBar(
+                  (tag) => applyHtmlTagToTextarea(
+                    studyTheoryTextareaRef.current,
+                    editingStudySubtopic?.studyTheory || '',
+                    tag,
+                    (nextVal) => setEditingStudySubtopic(prev => ({ ...prev, studyTheory: nextVal }))
+                  ),
+                  { onUpload: (e) => handleTheoryImageUpload(e) }
+                )}
+
+                <textarea
+                  ref={studyTheoryTextareaRef}
+                  rows={8}
+                  value={editingStudySubtopic?.studyTheory || ''}
+                  onChange={e => setEditingStudySubtopic(prev => ({ ...prev, studyTheory: e.target.value }))}
+                  placeholder="<p>Podrobné vysvětlení pravidel, pouček a vzorců...</p>&#10;<h2>Nadpis sekce</h2>&#10;<p>Text výkladu...</p>"
+                  className="w-full p-3.5 text-xs sm:text-sm font-mono outline-none leading-relaxed bg-white resize-y"
+                />
+              </div>
+
+              {editingStudySubtopic?.studyTheory?.trim() && (
+                <div className="p-4 bg-gray-50/80 rounded-2xl border border-gray-200 space-y-2">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-gray-500 block">
+                    Živý náhled teoretického výkladu:
+                  </span>
+                  <div className="p-4 bg-white rounded-xl border border-gray-100 text-sm text-gray-800 shadow-2xs">
+                    <MathRenderer
+                      content={editingStudySubtopic.studyTheory}
+                      imageMap={editingStudySubtopic.sampleProblem?.theoryImages}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Steps Builder */}
@@ -1449,7 +2040,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <div className="flex items-center justify-between">
                 <div>
                   <h4 className="font-bold text-sm text-[#1E1B18] flex items-center gap-1.5">
-                    <CheckCircle2 size={16} className="text-amber-600" />
+                    <CorrectCyanIcon size={16} />
                     Kroky řešení a výkladu (krok za krokem)
                   </h4>
                   <p className="text-xs text-gray-500 font-medium mt-0.5">
@@ -1511,24 +2102,39 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                       <div className="space-y-2 pl-0 sm:pl-9">
                         <div className="flex items-center justify-between">
                           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">
-                            Výkladový text kroku * (Podporuje KaTeX & Markdown)
+                            Výkladový text kroku * (Podporuje HTML, obrázky, KaTeX & Markdown)
                           </label>
                         </div>
                         <QuickFormulaToolbar 
                           size="xs"
                           onInsert={insertSnippetAtCursor}
                         />
-                        <textarea
-                          rows={3}
-                          value={step.content}
-                          onChange={e => updateStep(idx, 'content', e.target.value)}
-                          placeholder="Podrobné vysvětlení a postup v rámci tohoto kroku..."
-                          className="w-full p-3 rounded-xl border border-gray-200 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-black font-medium leading-relaxed"
-                        />
+                        <div className="rounded-xl border border-gray-200 overflow-hidden bg-white focus-within:border-black transition-colors">
+                          {renderHtmlFormattingBar(
+                            (tag) => applyHtmlTagToTextarea(
+                              stepContentTextareaRefs.current[idx] || null,
+                              step.content || '',
+                              tag,
+                              (nextVal) => updateStep(idx, 'content', nextVal)
+                            ),
+                            { onUpload: (e) => handleTheoryImageUpload(e, idx) }
+                          )}
+                          <textarea
+                            ref={el => { stepContentTextareaRefs.current[idx] = el; }}
+                            rows={4}
+                            value={step.content}
+                            onChange={e => updateStep(idx, 'content', e.target.value)}
+                            placeholder="Podrobné vysvětlení a postup v rámci tohoto kroku (můžete použít i HTML tagy či vložit obrázek)..."
+                            className="w-full p-3 text-xs sm:text-sm font-mono bg-white focus:outline-none leading-relaxed resize-y"
+                          />
+                        </div>
                         {step.content && (
-                          <div className="p-3 bg-gray-50 rounded-xl border border-gray-200 text-xs space-y-1">
-                            <span className="font-bold text-gray-500 block">Náhled výkladu:</span>
-                            <MathRenderer content={step.content} />
+                          <div className="p-3 bg-white rounded-xl border border-gray-200 text-xs space-y-1 shadow-2xs">
+                            <span className="font-bold text-gray-500 block">Náhled výkladu kroku:</span>
+                            <MathRenderer
+                              content={step.content}
+                              imageMap={editingStudySubtopic.sampleProblem?.theoryImages}
+                            />
                           </div>
                         )}
                       </div>
@@ -1623,7 +2229,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
                           <div className="space-y-1">
                             <h5 className="text-[11px] font-black text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
-                              <CheckCircle2 size={14} className="text-blue-600" /> Kontrolní otázka ke kroku (volitelná)
+                              <CorrectCyanIcon size={14} /> Kontrolní otázka ke kroku (volitelná)
                             </h5>
                             <p className="text-[11px] text-gray-400 font-medium">
                               Otázka pro ověření pochopení tohoto konkrétního kroku (výběr ze 4 možností).
@@ -1739,7 +2345,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <div className="space-y-3 bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
                           <div className="space-y-1">
                             <h5 className="text-[11px] font-black text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
-                              <Sparkles size={14} className="text-amber-600" /> Bublinka s tipem od lektora
+                              <BulbYellowIcon size={16} /> Bublinka s tipem od lektora
                             </h5>
                             <p className="text-[11px] text-gray-400 font-medium">
                               Tento tip se studentovi zobrazí v přehledné bublince až po rozkliknutí tlačítka u kroku.
@@ -2045,18 +2651,30 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-gray-700 block">Zadání otázky *</label>
-                <span className="text-[11px] text-gray-400">Podporuje KaTeX & Markdown ($vzor$ / $$blok$$)</span>
+                <span className="text-[11px] text-gray-400">Podporuje HTML, KaTeX & Markdown ($vzor$ / $$blok$$)</span>
               </div>
 
-              <textarea
-                required
-                data-field="question"
-                rows={3}
-                value={editingQuestion?.question || ''}
-                onChange={e => setEditingQuestion(prev => ({ ...prev, question: e.target.value }))}
-                placeholder="Zadejte text otázky nebo úlohy (např. Vypočtěte hodnotu výrazu: $\frac{1}{2} + \frac{3}{4}$)..."
-                className="w-full rounded-xl border border-gray-200 p-3.5 text-sm focus:border-black outline-none font-medium leading-snug bg-white"
-              />
+              <div className="rounded-xl border border-gray-200 overflow-hidden bg-white focus-within:border-black transition-colors">
+                {renderHtmlFormattingBar(
+                  (tag) => applyHtmlTagToTextarea(
+                    questionTextareaRef.current,
+                    editingQuestion?.question || '',
+                    tag,
+                    (nextVal) => setEditingQuestion(prev => ({ ...prev, question: nextVal }))
+                  )
+                )}
+
+                <textarea
+                  ref={questionTextareaRef}
+                  required
+                  data-field="question"
+                  rows={4}
+                  value={editingQuestion?.question || ''}
+                  onChange={e => setEditingQuestion(prev => ({ ...prev, question: e.target.value }))}
+                  placeholder="Zadejte text otázky nebo úlohy (můžete použít i HTML formátování, podtržení <u>...</u>, odstavce nebo vzorce $\frac{1}{2}$)..."
+                  className="w-full p-3.5 text-xs sm:text-sm font-mono outline-none leading-relaxed bg-white resize-y"
+                />
+              </div>
 
               {/* Question Live Preview */}
               {editingQuestion?.question && (
@@ -2116,7 +2734,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   )}
                   <div className="flex flex-wrap items-center justify-between gap-2 w-full pt-1 border-t border-gray-100">
                     <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
-                      <CheckCircle2 size={12} />
+                      <CorrectCyanIcon size={13} />
                       {editingQuestion?.svgContent ? 'Uloženo jako vektorové SVG (vkládá se přímo do stránky)' : 'Obrázek (URL / data)'}
                     </span>
                     <button
@@ -2288,7 +2906,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
                           {isCorrect && (
                             <span className="text-[10px] font-black text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-lg uppercase tracking-wider shrink-0 flex items-center gap-1">
-                              <CheckCircle2 size={13} />
+                              <CorrectCyanIcon size={14} />
                               <span>Správná</span>
                             </span>
                           )}
@@ -2413,8 +3031,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 Importujte otázky (výběr ze 4 možností i volná odpověď) s automatickou deduplikací a sloupcem Obtížnost (Lehká / Střední / Těžká).
               </span>
               <a 
-                href="/ProEdu_Import_Procvicovani.xlsx" 
-                download 
+                href={`${import.meta.env.BASE_URL}ProEdu_Import_Procvicovani.xlsx`} 
+                download="ProEdu_Import_Procvicovani.xlsx" 
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#B80053] border border-pink-200 hover:bg-pink-100 font-bold rounded-xl shrink-0 transition-colors"
               >
                 <FileSpreadsheet size={14} />
@@ -2453,7 +3071,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <div className="space-y-3">
                 <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs space-y-1.5 text-emerald-950 font-medium">
                   <div className="font-bold text-sm text-emerald-900 flex items-center gap-1.5">
-                    <CheckCircle2 size={16} /> Soubor zkontrolován
+                    <CorrectCyanIcon size={16} /> Soubor zkontrolován
                   </div>
                   <div className="grid grid-cols-3 gap-2 pt-1 text-center">
                     <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
@@ -2504,7 +3122,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             {practiceStats && (
               <div className="p-5 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-3">
                 <div className="flex items-center gap-2 text-emerald-900 font-black text-base">
-                  <CheckCircle2 size={20} className="text-emerald-600" />
+                  <CorrectCyanIcon size={20} />
                   <span>Import procvičování byl úspěšně dokončen!</span>
                 </div>
 
@@ -2593,20 +3211,20 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           <DialogHeader>
             <DialogTitle className="text-2xl font-display font-black text-[#1E1B18] flex items-center gap-2.5">
               <div className="w-10 h-10 rounded-2xl bg-[#0F5238]/10 text-[#0F5238] flex items-center justify-center">
-                <BookOpen size={20} />
+                <MaterialYellowIcon size={22} />
               </div>
-              <span>Import kroků výkladu (Studovat)</span>
+              <span>Import teorie a kroků výkladu (Studovat)</span>
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-5 py-2">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 bg-emerald-50/60 rounded-2xl border border-emerald-100 text-xs">
               <span className="text-gray-700 font-medium">
-                Importujte krokový výklad teorie s ověřovacími otázkami a tipy lektora.
+                Importujte teoretický výklad podtémat i krokový výklad s ověřovacími otázkami a tipy lektora.
               </span>
               <a 
-                href="/ProEdu_Import_Studovat.xlsx" 
-                download 
+                href={`${import.meta.env.BASE_URL}ProEdu_Import_Studovat.xlsx`} 
+                download="ProEdu_Import_Studovat.xlsx" 
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#0F5238] border border-emerald-200 hover:bg-emerald-100 font-bold rounded-xl shrink-0 transition-colors"
               >
                 <FileSpreadsheet size={14} />
@@ -2645,12 +3263,16 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <div className="space-y-3">
                 <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 text-xs space-y-1.5 text-emerald-950 font-medium">
                   <div className="font-bold text-sm text-emerald-900 flex items-center gap-1.5">
-                    <CheckCircle2 size={16} /> Soubor zkontrolován
+                    <CorrectCyanIcon size={16} /> Soubor zkontrolován
                   </div>
-                  <div className="grid grid-cols-3 gap-2 pt-1 text-center">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center">
                     <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
-                      <div className="text-lg font-black text-emerald-800">{studyParsed.validRows.length}</div>
+                      <div className="text-lg font-black text-emerald-800">{studyParsed.stepsFound}</div>
                       <div className="text-[10px] text-gray-500 uppercase font-bold">Platných kroků</div>
+                    </div>
+                    <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
+                      <div className="text-lg font-black text-emerald-800">{studyParsed.theoriesFound}</div>
+                      <div className="text-[10px] text-gray-500 uppercase font-bold">Teoretických výkladů</div>
                     </div>
                     <div className="bg-white p-2 rounded-xl shadow-xs border border-emerald-100">
                       <div className="text-lg font-black text-gray-800">{studyParsed.topicsFound.length}</div>
@@ -2696,14 +3318,18 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             {studyStats && (
               <div className="p-5 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-3">
                 <div className="flex items-center gap-2 text-emerald-900 font-black text-base">
-                  <CheckCircle2 size={20} className="text-emerald-600" />
+                  <CorrectCyanIcon size={20} />
                   <span>Import studia byl úspěšně dokončen!</span>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-center text-xs">
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 text-center text-xs">
                   <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
                     <div className="text-2xl font-black text-emerald-700">{studyStats.importedSteps}</div>
                     <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Naimportováno kroků</div>
+                  </div>
+                  <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
+                    <div className="text-2xl font-black text-emerald-700">{studyStats.theoriesUpdated}</div>
+                    <div className="text-[10px] text-gray-500 uppercase font-bold mt-0.5">Uloženo výkladů</div>
                   </div>
                   <div className="bg-white p-3 rounded-xl border border-emerald-100 shadow-xs">
                     <div className="text-2xl font-black text-gray-500">{studyStats.skippedDuplicates}</div>
@@ -2761,7 +3387,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                     disabled={!studyParsed || studyParsed.validRows.length === 0 || isImportingStudy}
                     className="rounded-xl bg-[#0F5238] hover:bg-[#0b3c29] text-white font-bold"
                   >
-                    {isImportingStudy ? 'Importuji...' : `Potvrdit a importovat (${studyParsed?.validRows.length || 0} kroků)`}
+                    {isImportingStudy
+                      ? 'Importuji...'
+                      : `Potvrdit a importovat (${studyParsed?.validRows.length || 0} řádků)`}
                   </Button>
                 </>
               )}
@@ -2798,6 +3426,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   {deleteConfirm.type === 'topic' && 'Smazat téma?'}
                   {deleteConfirm.type === 'subtopic' && 'Smazat podtéma?'}
                   {deleteConfirm.type === 'question' && 'Smazat otázku?'}
+                  {deleteConfirm.type === 'questions-bulk' && 'Smazat označené otázky?'}
                 </DialogTitle>
                 <p className="text-xs text-gray-500 font-medium">
                   Tato akce je nevratná a data budou trvale odstraněna.
@@ -2809,6 +3438,21 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <p className="text-xs font-bold text-gray-700 leading-snug">
                 Položka: <span className="text-[#1E1B18] font-black">"{deleteConfirm.title}"</span>
               </p>
+              {deleteConfirm.previewItems && deleteConfirm.previewItems.length > 0 && (
+                <div className="pt-1 space-y-1">
+                  <div className="text-[11px] font-bold text-gray-500">Ukázka označených otázek:</div>
+                  <ul className="list-disc pl-4 text-[11px] text-gray-700 space-y-0.5 max-h-32 overflow-y-auto">
+                    {deleteConfirm.previewItems.map((item, idx) => (
+                      <li key={idx} className="truncate">{item}</li>
+                    ))}
+                    {(deleteConfirm.ids?.length || 0) > deleteConfirm.previewItems.length && (
+                      <li className="text-gray-400 italic list-none pt-0.5">
+                        … a dalších {(deleteConfirm.ids?.length || 0) - deleteConfirm.previewItems.length} otázek
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              )}
               {deleteConfirm.details && (
                 <p className="text-[11px] text-red-600 font-semibold leading-relaxed">
                   ⚠️ {deleteConfirm.details}

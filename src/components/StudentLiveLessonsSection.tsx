@@ -6,17 +6,15 @@ import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { 
   Video, 
-  Calendar, 
   Clock, 
   Radio, 
-  CheckCircle2, 
-  Check, 
   RefreshCcw, 
   ExternalLink, 
   Info, 
   ChevronDown, 
   ChevronUp 
 } from 'lucide-react';
+import { CalendarBlueIcon, CorrectCyanIcon } from './common/CustomIcon';
 import { LiveLesson } from '../types';
 
 interface StudentLiveLessonsSectionProps {
@@ -107,7 +105,7 @@ export default function StudentLiveLessonsSection({
         {isLive && isJoined && (
           <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 flex items-center justify-between gap-2.5 text-xs text-emerald-800">
             <div className="flex items-center gap-2">
-              <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+              <CorrectCyanIcon size={16} />
               <span className="font-bold">K této online hodině ses již připojil(a).</span>
             </div>
             <span className="px-2 py-0.5 rounded-lg bg-emerald-100 font-black text-[10px] text-emerald-800 uppercase tracking-wider shrink-0">
@@ -154,7 +152,7 @@ export default function StudentLiveLessonsSection({
 
           <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-xs text-gray-500 font-semibold pt-1">
             <div className="flex items-center gap-1.5">
-              <Calendar size={14} className="text-gray-400 shrink-0" />
+              <CalendarBlueIcon size={15} />
               <span>{format(lessonDate, 'EEEE d. MMMM yyyy', { locale: cs })}</span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -170,7 +168,7 @@ export default function StudentLiveLessonsSection({
           <div>
             {isSyncedInApp ? (
               <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-200 shadow-2xs">
-                <Check size={14} className="text-emerald-600" />
+                <CorrectCyanIcon size={14} />
                 V kalendáři
               </span>
             ) : (
@@ -227,7 +225,7 @@ export default function StudentLiveLessonsSection({
               ? "bg-red-600 text-white animate-pulse shadow-md"
               : "bg-blue-50 text-brand-blue"
           )}>
-            {hasActiveLiveLesson ? <Video size={20} /> : <Calendar size={20} />}
+            {hasActiveLiveLesson ? <Video size={20} /> : <CalendarBlueIcon size={22} />}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -297,7 +295,7 @@ export default function StudentLiveLessonsSection({
           >
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-blue-100 text-brand-blue flex items-center justify-center group-hover:scale-105 transition-transform">
-                <Calendar size={16} />
+                <CalendarBlueIcon size={18} />
               </div>
               <span className="font-black text-[#1E1B18] group-hover:text-blue-950">
                 {isExpanded

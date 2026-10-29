@@ -21,6 +21,7 @@ import { db } from '../../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
+import { CoopBlueIcon, TeamBlueIcon, CapIcon } from '../common/CustomIcon';
 
 export interface SurveyResponseItem {
   id: string;
@@ -282,7 +283,7 @@ export default function SurveyResponsesManager() {
         <div>
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center text-xl shadow-inner shrink-0">
-              <Share2 size={20} />
+              <CoopBlueIcon size={22} />
             </div>
             <div>
               <h2 className="text-xl sm:text-2xl font-black text-gray-900 tracking-tight font-display">
@@ -322,7 +323,7 @@ export default function SurveyResponsesManager() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
         <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white p-4 sm:p-5 flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-inner">
-            <Users size={22} />
+            <TeamBlueIcon size={24} />
           </div>
           <div>
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Celkem odpovědí</p>
@@ -352,7 +353,7 @@ export default function SurveyResponsesManager() {
 
         <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white p-4 sm:p-5 flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 shadow-inner">
-            <GraduationCap size={22} />
+            <CapIcon size={24} />
           </div>
           <div className="min-w-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider truncate">Klíčový ročník</p>
@@ -367,7 +368,7 @@ export default function SurveyResponsesManager() {
 
         <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white p-4 sm:p-5 flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 shadow-inner">
-            <School size={22} />
+            <CapIcon size={24} />
           </div>
           <div>
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">Různorodost škol</p>
@@ -388,7 +389,7 @@ export default function SurveyResponsesManager() {
         <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white p-5 space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-gray-100">
             <div className="flex items-center gap-2 font-black text-sm text-gray-900">
-              <Share2 size={16} className="text-blue-600" />
+              <CoopBlueIcon size={18} />
               <span>Odkud o nás žáci slyšeli</span>
             </div>
             <span className="text-xs text-gray-400 font-bold">Podíl kanálů</span>
@@ -425,7 +426,7 @@ export default function SurveyResponsesManager() {
         <Card className="rounded-2xl border-gray-200/80 shadow-xs bg-white p-5 space-y-4">
           <div className="flex items-center justify-between pb-2 border-b border-gray-100">
             <div className="flex items-center gap-2 font-black text-sm text-gray-900">
-              <GraduationCap size={16} className="text-purple-600" />
+              <CapIcon size={18} />
               <span>Zastoupení ročníků</span>
             </div>
             <span className="text-xs text-gray-400 font-bold">Cílové skupiny</span>

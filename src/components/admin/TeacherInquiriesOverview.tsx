@@ -1,5 +1,11 @@
 import React, { useState } from 'react';
-import { MessageSquare, Send, CheckCircle2, Clock, User, ChevronDown, ChevronUp, Sparkles, Check, ArrowRight } from 'lucide-react';
+import { Send, Clock, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
+import {
+  DialogCyanIcon,
+  TeamBlueIcon,
+  CorrectCyanIcon,
+  StarYellowIcon,
+} from '../common/CustomIcon';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Textarea } from '../ui/textarea';
@@ -31,7 +37,7 @@ export default function TeacherInquiriesOverview({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
-              <MessageSquare size={20} />
+              <DialogCyanIcon size={22} />
             </div>
             <div>
               <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
@@ -137,7 +143,7 @@ export default function TeacherInquiriesOverview({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-3 py-1 rounded-full text-xs font-black bg-white text-gray-800 border border-gray-200 shadow-2xs flex items-center gap-1.5">
-              <User size={13} className="text-gray-400" />
+              <TeamBlueIcon size={14} />
               <span>{inquiry.studentName || 'Student'}</span>
             </span>
 
@@ -158,7 +164,7 @@ export default function TeacherInquiriesOverview({
               </span>
             ) : (
               <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 flex items-center gap-1.5 shadow-2xs">
-                <CheckCircle2 size={13} /> Zodpovězeno
+                <CorrectCyanIcon size={14} /> Zodpovězeno
               </span>
             )}
           </div>
@@ -179,7 +185,7 @@ export default function TeacherInquiriesOverview({
           <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-4 space-y-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
-                <Sparkles size={14} className="text-emerald-600" />
+                <StarYellowIcon size={15} />
                 <span>Tvoje odpověď</span>
                 {inquiry.repliedAt && (
                   <span className="text-emerald-700/70 font-medium lowercase">
@@ -253,7 +259,7 @@ export default function TeacherInquiriesOverview({
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
-            <MessageSquare size={20} />
+            <DialogCyanIcon size={22} />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -301,7 +307,7 @@ export default function TeacherInquiriesOverview({
           >
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center group-hover:scale-105 transition-transform">
-                <MessageSquare size={16} />
+                <DialogCyanIcon size={18} />
               </div>
               <span className="font-black text-[#1E1B18] group-hover:text-amber-950">
                 {isExpanded

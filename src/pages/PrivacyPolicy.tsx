@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, ShieldCheck, Building2, UserCheck, Lock, Eye, Clock, Scale } from 'lucide-react';
+import { ArrowLeft, ShieldCheck, Building2, Lock, Eye, Clock, Scale } from 'lucide-react';
+import { TeamBlueIcon } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 
 export default function PrivacyPolicy() {
@@ -127,7 +128,7 @@ export default function PrivacyPolicy() {
         {/* 5. Kdo má k údajům přístup? */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <UserCheck size={20} className="text-emerald-600" />
+            <TeamBlueIcon size={22} />
             <span>5. Kdo má k údajům přístup? (Příjemci a zpracovatelé)</span>
           </h2>
           <p>Osobní údaje nepředáváme neoprávněným třetím osobám ani je neprodáváme. Pro zajištění provozu využíváme tyto prověřené zpracovatele:</p>

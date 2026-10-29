@@ -15,6 +15,7 @@ import {
 } from '../../services/practiceService';
 import { auth } from '../../lib/firebase';
 import { StudyStep } from '../../types';
+import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
 
 interface MaterialsManagerProps {
   userId?: string;
@@ -271,7 +272,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       ) : filteredMaterials.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200 p-8 space-y-4">
           <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-2xl">
-            📑
+            <BookCyanIcon size={32} />
           </div>
           <h3 className="text-2xl font-display font-black text-gray-800">Žádné materiály</h3>
           <p className="text-gray-400 text-sm max-w-md mx-auto">
@@ -601,7 +602,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                           <div className="space-y-3 bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm">
                             <div className="flex items-center justify-between">
                               <h5 className="text-[10px] font-black text-blue-700 uppercase tracking-wider flex items-center gap-1.5">
-                                <CheckCircle2 size={13} className="text-blue-600" /> Kontrolní otázka ke kroku (volba ze 4 možností)
+                                <CorrectCyanIcon size={14} /> Kontrolní otázka ke kroku (volba ze 4 možností)
                               </h5>
                             </div>
                             
@@ -686,7 +687,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                           {/* Tutor Tip */}
                           <div className="space-y-3 bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm flex flex-col">
                             <h5 className="text-[10px] font-black text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
-                              <Sparkles size={13} className="text-amber-600" /> Bublinka s tipem od lektora
+                              <BulbYellowIcon size={15} /> Bublinka s tipem od lektora
                             </h5>
                             <p className="text-[11px] text-gray-400 font-medium">
                               Tento tip se studentovi zobrazí v přehledné bublince až po rozkliknutí tlačítka u kroku.
@@ -739,7 +740,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
           <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
               <div className="flex items-center gap-2">
-                <FileText size={18} className="text-emerald-600" />
+                <MaterialYellowIcon size={20} />
                 <h4 className="font-bold text-gray-900 text-base truncate">
                   {previewMaterial.title}
                 </h4>

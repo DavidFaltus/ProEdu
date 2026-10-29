@@ -29,6 +29,7 @@ import {
   StudentPracticeAttempt 
 } from '../../services/studentProgressService';
 import { toast } from 'sonner';
+import { TeamBlueIcon, CorrectCyanIcon, StarYellowIcon, StarPinkIcon, CapIcon, BrainPinkIcon, BookCyanIcon } from '../common/CustomIcon';
 
 export default function StudentsProgressManager() {
   const [students, setStudents] = useState<StudentProgressItem[]>([]);
@@ -144,13 +145,13 @@ export default function StudentsProgressManager() {
       case 'premium':
         return (
           <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-            <Sparkles size={11} className="text-amber-500" /> Premium
+            <StarPinkIcon size={12} /> Premium
           </span>
         );
       case 'course':
         return (
           <span className="text-[10px] font-black uppercase tracking-wider text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-md flex items-center gap-1">
-            <GraduationCap size={11} className="text-blue-500" /> Kurz (VIP)
+            <CapIcon size={12} /> Kurz (VIP)
           </span>
         );
       default:
@@ -177,7 +178,7 @@ export default function StudentsProgressManager() {
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl sm:text-3xl font-display font-black text-gray-900 tracking-tight flex items-center gap-3">
-            <Users className="text-blue-600" size={28} />
+            <TeamBlueIcon size={30} />
             Přehled studentů a výsledků
           </h2>
           <p className="text-gray-500 text-sm font-semibold mt-1">
@@ -201,7 +202,7 @@ export default function StudentsProgressManager() {
         <Card className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm space-y-2">
           <div className="flex items-center justify-between text-gray-400">
             <span className="text-xs font-bold uppercase tracking-wider">Celkem studentů</span>
-            <Users size={18} className="text-blue-600" />
+            <TeamBlueIcon size={20} />
           </div>
           <div className="text-3xl font-black text-gray-900 font-mono">
             {overallStats.totalStudents}
@@ -212,7 +213,7 @@ export default function StudentsProgressManager() {
         <Card className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm space-y-2">
           <div className="flex items-center justify-between text-gray-400">
             <span className="text-xs font-bold uppercase tracking-wider">Dokončených cvičení</span>
-            <CheckCircle2 size={18} className="text-emerald-600" />
+            <CorrectCyanIcon size={20} />
           </div>
           <div className="text-3xl font-black text-gray-900 font-mono">
             {overallStats.totalAttempts}
@@ -234,7 +235,7 @@ export default function StudentsProgressManager() {
         <Card className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm space-y-2">
           <div className="flex items-center justify-between text-gray-400">
             <span className="text-xs font-bold uppercase tracking-wider">Aktivní studenti</span>
-            <Award size={18} className="text-purple-600" />
+            <StarYellowIcon size={20} />
           </div>
           <div className="text-3xl font-black text-gray-900 font-mono">
             {overallStats.activeStudents}
@@ -341,7 +342,7 @@ export default function StudentsProgressManager() {
                         ) : student.photoURL ? (
                           <img src={student.photoURL} alt={student.name} className="w-full h-full object-cover" />
                         ) : (
-                          <span className="text-xl leading-none">🎓</span>
+                          <CapIcon size={24} />
                         )}
                       </div>
 
@@ -408,7 +409,7 @@ export default function StudentsProgressManager() {
                       ) : selectedStudent.photoURL ? (
                         <img src={selectedStudent.photoURL} alt={selectedStudent.name} className="w-full h-full object-cover" />
                       ) : (
-                        <span className="text-3xl leading-none">🎓</span>
+                        <CapIcon size={34} />
                       )}
                     </div>
 
@@ -466,7 +467,7 @@ export default function StudentsProgressManager() {
                 <div className="grid grid-cols-2 gap-3 pt-3">
                   <div className="p-3 rounded-2xl bg-emerald-50/50 border border-emerald-100 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Calculator size={18} className="text-emerald-600" />
+                      <BrainPinkIcon size={18} />
                       <span className="font-bold text-xs text-gray-800">Matematika</span>
                     </div>
                     <span className="font-mono font-black text-xs text-emerald-800">
@@ -476,7 +477,7 @@ export default function StudentsProgressManager() {
 
                   <div className="p-3 rounded-2xl bg-rose-50/50 border border-rose-100 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <BookOpen size={18} className="text-rose-600" />
+                      <BookCyanIcon size={18} />
                       <span className="font-bold text-xs text-gray-800">Čeština</span>
                     </div>
                     <span className="font-mono font-black text-xs text-rose-800">

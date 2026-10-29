@@ -3,7 +3,8 @@ import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { User, Camera, Lock, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Camera, Lock, AlertCircle } from 'lucide-react';
+import { CapIcon, CorrectCyanIcon } from '../components/common/CustomIcon';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
 import { Link } from 'react-router-dom';
@@ -190,7 +191,7 @@ export default function Settings() {
               ) : profile?.photoURL ? (
                 <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
               ) : (
-                <span className="text-6xl select-none">🎓</span>
+                <CapIcon size={58} />
               )}
               {isUploading && (
                 <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center p-4">
@@ -293,7 +294,7 @@ export default function Settings() {
                       profile?.avatarBgColor === color ? "border-[#B80053]" : "border-white"
                     )}
                   >
-                    {profile?.avatarBgColor === color && <span className="text-[#B80053] font-bold text-xs">✓</span>}
+                    {profile?.avatarBgColor === color && <CorrectCyanIcon size={16} />}
                   </button>
                 ))}
               </div>
@@ -316,7 +317,7 @@ export default function Settings() {
                 disabled={isSaving || name === profile?.name}
                 className="rounded-2xl h-12 px-6 bg-[#B80053] hover:bg-[#B80053]/90 text-white font-bold shadow-lg shadow-pink-100 cursor-pointer"
               >
-                {isSaving ? '...' : <CheckCircle2 size={20} />}
+                {isSaving ? '...' : <CorrectCyanIcon size={22} />}
               </Button>
             </div>
           </div>

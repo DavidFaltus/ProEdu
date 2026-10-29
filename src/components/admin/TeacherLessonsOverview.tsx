@@ -3,17 +3,19 @@ import { format } from 'date-fns';
 import { cs } from 'date-fns/locale';
 import { 
   Video, 
-  Calendar, 
   Clock, 
   Radio, 
   Play, 
-  CheckCircle2, 
   ExternalLink, 
-  Users, 
   ChevronDown, 
   ChevronUp, 
   ArrowRight 
 } from 'lucide-react';
+import {
+  CalendarBlueIcon,
+  CorrectCyanIcon,
+  TeamBlueIcon,
+} from '../common/CustomIcon';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { toast } from 'sonner';
@@ -147,7 +149,7 @@ export default function TeacherLessonsOverview({
               </span>
 
               <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white/80 border border-gray-200 text-gray-600 flex items-center gap-1">
-                <Users size={12} className="text-gray-400" />
+                <TeamBlueIcon size={13} />
                 <span>
                   {lesson.targetAudience === 'individual'
                     ? `${lesson.studentIds?.length || 1} vybraných žáků`
@@ -169,7 +171,7 @@ export default function TeacherLessonsOverview({
 
           <div className="flex flex-wrap items-center gap-y-2 gap-x-4 text-xs text-gray-500 font-semibold pt-1">
             <div className="flex items-center gap-1.5">
-              <Calendar size={14} className="text-gray-400 shrink-0" />
+              <CalendarBlueIcon size={15} className="shrink-0" />
               <span>{format(lessonDate, 'EEEE d. MMMM yyyy', { locale: cs })}</span>
             </div>
             <div className="flex items-center gap-1.5">
@@ -190,7 +192,7 @@ export default function TeacherLessonsOverview({
                 onClick={() => handleFinishLesson(lesson)}
                 className="h-9 px-3.5 rounded-xl border-emerald-300 text-emerald-800 hover:bg-emerald-50 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
               >
-                <CheckCircle2 size={14} className="text-emerald-600" />
+                <CorrectCyanIcon size={15} />
                 <span>Dokončit výuku</span>
               </Button>
             ) : (
@@ -249,7 +251,7 @@ export default function TeacherLessonsOverview({
               ? "bg-red-600 text-white animate-pulse shadow-md"
               : "bg-blue-50 text-brand-blue"
           )}>
-            {hasActiveLiveLesson ? <Video size={20} /> : <Calendar size={20} />}
+            {hasActiveLiveLesson ? <Video size={20} /> : <CalendarBlueIcon size={22} />}
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -300,7 +302,7 @@ export default function TeacherLessonsOverview({
           >
             <div className="flex items-center gap-2.5">
               <div className="w-8 h-8 rounded-xl bg-blue-100 text-brand-blue flex items-center justify-center group-hover:scale-105 transition-transform">
-                <Calendar size={16} />
+                <CalendarBlueIcon size={17} />
               </div>
               <span className="font-black text-[#1E1B18] group-hover:text-blue-950">
                 {isExpanded

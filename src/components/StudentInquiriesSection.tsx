@@ -1,18 +1,18 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { 
-  MessageSquare, 
-  CheckCircle2, 
   Clock, 
-  Check, 
   ChevronDown, 
   ChevronUp, 
-  HelpCircle, 
-  BookOpen, 
-  Lightbulb, 
-  Sparkles,
   ExternalLink,
   Info
 } from 'lucide-react';
+import { 
+  BubbleYellowIcon, 
+  DialogCyanIcon, 
+  CorrectCyanIcon, 
+  BulbYellowIcon, 
+  StarYellowIcon 
+} from './common/CustomIcon';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { QuestionInquiry } from '../services/inquiryService';
@@ -132,7 +132,7 @@ export default function StudentInquiriesSection({
           <div className="flex items-center gap-2">
             {isAnswered ? (
               <span className="px-3 py-1 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 flex items-center gap-1.5 shadow-2xs">
-                <CheckCircle2 size={13} /> Zodpovězeno
+                <CorrectCyanIcon size={14} /> Zodpovězeno
               </span>
             ) : (
               <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 flex items-center gap-1.5 shadow-2xs">
@@ -152,7 +152,7 @@ export default function StudentInquiriesSection({
         <div className="bg-white rounded-2xl border border-gray-200/70 p-4 sm:p-5 space-y-3 shadow-2xs">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-gray-500">
-              <HelpCircle size={15} className="text-amber-600" />
+              <BubbleYellowIcon size={16} />
               <span className="text-[11px] font-black uppercase tracking-wider text-gray-500">Otázka / Zadání úlohy</span>
             </div>
 
@@ -247,7 +247,7 @@ export default function StudentInquiriesSection({
                   {/* Hint */}
                   {qDetails.hint && (
                     <div className="flex items-start gap-2 text-amber-900 bg-amber-50/70 p-2.5 rounded-lg border border-amber-200/60">
-                      <Lightbulb size={14} className="shrink-0 mt-0.5 text-amber-600" />
+                      <BulbYellowIcon size={16} className="shrink-0 mt-0.5" />
                       <div>
                         <span className="font-bold block text-[10px] uppercase tracking-wider text-amber-800">Nápověda:</span>
                         <span>{qDetails.hint}</span>
@@ -320,7 +320,7 @@ export default function StudentInquiriesSection({
           <div className="bg-emerald-50/90 border border-emerald-200 rounded-2xl p-4 sm:p-5 space-y-2.5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-emerald-900 flex items-center gap-1.5">
-                <Sparkles size={14} className="text-emerald-600" />
+                <StarYellowIcon size={15} />
                 <span>Odpověď od {inquiry.repliedByName || 'lektora'}</span>
                 {inquiry.repliedAt && (
                   <span className="text-emerald-700/70 font-medium lowercase">
@@ -335,12 +335,12 @@ export default function StudentInquiriesSection({
                   onClick={() => onMarkAsRead(inquiry.id)}
                   className="h-8 rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs"
                 >
-                  <Check size={14} />
+                  <CorrectCyanIcon size={14} />
                   <span>Označit jako přečtené</span>
                 </Button>
               ) : (
                 <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
-                  <Check size={14} /> Přečteno
+                  <CorrectCyanIcon size={14} /> Přečteno
                 </span>
               )}
             </div>
@@ -369,7 +369,7 @@ export default function StudentInquiriesSection({
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-gray-100">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shadow-inner">
-              <MessageSquare size={20} />
+              <DialogCyanIcon size={22} />
             </div>
             <div>
               <div className="flex items-center gap-2">
@@ -413,7 +413,7 @@ export default function StudentInquiriesSection({
             >
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center group-hover:scale-105 transition-transform">
-                  <MessageSquare size={16} />
+                  <DialogCyanIcon size={18} />
                 </div>
                 <div className="text-left">
                   <p className="font-black text-[#1E1B18] group-hover:text-amber-950">

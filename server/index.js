@@ -485,6 +485,7 @@ if (process.env.NODE_ENV !== 'production') {
 } else {
   const distPath = path.join(process.cwd(), 'dist');
   if (fs.existsSync(distPath)) {
+    app.use('/proeducator', express.static(distPath));
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

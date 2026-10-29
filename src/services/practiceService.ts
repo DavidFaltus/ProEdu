@@ -1,5 +1,5 @@
 import { 
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, 
+  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch,
   query, where, Timestamp 
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
@@ -651,6 +651,22 @@ export async function deleteQuestion(questionId: string): Promise<void> {
   await deleteDoc(doc(db, 'questions', questionId));
 }
 
+export async function deleteQuestionsBulk(questionIds: string[]): Promise<number> {
+  const uniqueIds = Array.from(new Set(questionIds.filter(Boolean)));
+  if (uniqueIds.length === 0) return 0;
+
+  const CHUNK_SIZE = 450;
+  for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+    const chunk = uniqueIds.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const qId of chunk) {
+      batch.delete(doc(db, 'questions', qId));
+    }
+    await batch.commit();
+  }
+  return uniqueIds.length;
+}
+
 // -------------------------------------------------------------
 // PRACTICE ATTEMPTS (Stored in `tests`)
 // -------------------------------------------------------------
@@ -1202,6 +1218,7 @@ export interface ValidatedStudyRow {
   subject: string;
   topic: string;
   subtopic: string;
+  studyTheory?: string;
   stepNumber: number;
   stepText: string;
   question: string;
@@ -1219,16 +1236,27 @@ export interface StudyExcelParseResult {
   totalRows: number;
   topicsFound: string[];
   subtopicsFound: string[];
+  theoriesFound: number;
+  stepsFound: number;
 }
 
 export interface StudyImportStats {
   totalRows: number;
   importedSteps: number;
+  theoriesUpdated: number;
   skippedDuplicates: number;
   topicsCreated: number;
   subtopicsCreated: number;
   subtopicsUpdated: number;
   errors: string[];
+}
+
+function hasColHeader(row: any, ...aliases: string[]): boolean {
+  if (!row || typeof row !== 'object') return false;
+  const norm = (s: string) =>
+    s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+  const keys = Object.keys(row).map(norm);
+  return aliases.some(a => keys.includes(norm(a)));
 }
 
 export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelParseResult> {
@@ -1250,89 +1278,141 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
   }
 
   const firstRow = rawRows[0];
-  const hasStepCol = Boolean(findColValue(firstRow, 'Krok'));
-  const hasTextCol = Boolean(findColValue(firstRow, 'Text kroku', 'Text'));
-  const hasSubtopicCol = Boolean(findColValue(firstRow, 'Podtéma', 'Podtema'));
+  const hasSubtopicCol = hasColHeader(firstRow, 'Podtéma', 'Podtema');
+  const hasStepCols = hasColHeader(firstRow, 'Krok') && hasColHeader(firstRow, 'Text kroku', 'Text');
+  const hasTheoryCol = hasColHeader(
+    firstRow,
+    'Teoretický výklad',
+    'Teoreticky vyklad',
+    'Teorie',
+    'Výklad',
+    'Vyklad',
+    'Text výkladu',
+    'Text vykladu'
+  );
 
-  if (!hasStepCol || !hasTextCol || !hasSubtopicCol) {
-    throw new Error('Tento soubor neobsahuje sloupce šablony pro Studium (např. Krok, Text kroku, Podtéma). Ujistěte se, že nahráváte správný soubor.');
+  if (!hasSubtopicCol || (!hasStepCols && !hasTheoryCol)) {
+    throw new Error('Tento soubor neobsahuje sloupce šablony pro Studium (např. Podtéma, Teoretický výklad nebo Krok a Text kroku). Ujistěte se, že nahráváte správný soubor.');
   }
 
   const validRows: ValidatedStudyRow[] = [];
   const invalidRows: { rowNumber: number; reason: string; stepTitle?: string }[] = [];
   const topicsSet = new Set<string>();
   const subtopicsSet = new Set<string>();
+  const subtopicsWithTheorySet = new Set<string>();
+  let stepsFound = 0;
 
   rawRows.forEach((row, index) => {
     const rowNum = index + 2;
     const rawStep = findColValue(row, 'Krok');
     const stepText = findColValue(row, 'Text kroku', 'Text');
+    const rawTheory = findColValue(
+      row,
+      'Teoretický výklad',
+      'Teoreticky vyklad',
+      'Teorie',
+      'Výklad',
+      'Vyklad',
+      'Text výkladu',
+      'Text vykladu'
+    );
     const subject = findColValue(row, 'Předmět', 'Predmet') || 'Matematika';
     const topic = findColValue(row, 'Téma', 'Tema') || 'Obecné téma';
     const subtopic = findColValue(row, 'Podtéma', 'Podtema') || 'Základní výklad';
 
-    if (!rawStep && !stepText && !findColValue(row, 'Otázka', 'Otazka')) {
+    if (!rawStep && !stepText && !rawTheory && !findColValue(row, 'Otázka', 'Otazka')) {
       return;
     }
 
-    const stepClean = String(rawStep).replace(/\D/g, '');
-    const stepNumber = parseInt(stepClean, 10);
-    if (isNaN(stepNumber) || stepNumber <= 0) {
-      invalidRows.push({ rowNumber: rowNum, reason: `Číslo kroku musí být kladné číslo (např. 1, 2, 3...). Zadáno: "${rawStep || 'prázdné'}".` });
-      return;
-    }
-
-    if (!stepText) {
-      invalidRows.push({ rowNumber: rowNum, reason: 'Chybí text kroku.' });
-      return;
-    }
-
-    const processedStepText = preprocessMathText(stepText);
-    const stepSyntax = validateLatexSyntax(processedStepText);
-    if (!stepSyntax.isValid) {
-      invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci textu kroku: ${stepSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
-      return;
-    }
-
-    const rawQuestion = findColValue(row, 'Otázka', 'Otazka');
-    const question = preprocessMathText(rawQuestion);
-    if (question) {
-      const qSyntax = validateLatexSyntax(question);
-      if (!qSyntax.isValid) {
-        invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci kontrolní otázky: ${qSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+    let processedTheory = '';
+    if (rawTheory) {
+      processedTheory = preprocessMathText(rawTheory);
+      const theorySyntax = validateLatexSyntax(processedTheory);
+      if (!theorySyntax.isValid) {
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: `Chyba ve vzorci teoretického výkladu: ${theorySyntax.error}`,
+          stepTitle: 'Teoretický výklad'
+        });
         return;
       }
     }
 
-    const optA = preprocessMathText(findColValue(row, 'Možnost A', 'Moznost A'));
-    const optB = preprocessMathText(findColValue(row, 'Možnost B', 'Moznost B'));
-    const optC = preprocessMathText(findColValue(row, 'Možnost C', 'Moznost C'));
-    const optD = preprocessMathText(findColValue(row, 'Možnost D', 'Moznost D'));
-    const ansRaw = findColValue(row, 'Odpověď', 'Odpoved');
-    const rawTip = findColValue(row, 'Tip', 'Tip lektora');
-    const tip = preprocessMathText(rawTip);
+    let stepNumber = 0;
+    let processedStepText = '';
+    let question = '';
+    let optA = '';
+    let optB = '';
+    let optC = '';
+    let optD = '';
+    let correctAnswer = '';
+    let tip = '';
 
-    if (tip) {
-      const tipSyntax = validateLatexSyntax(tip);
-      if (!tipSyntax.isValid) {
-        invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci tipu lektora: ${tipSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+    const hasStepData = Boolean(rawStep || stepText || findColValue(row, 'Otázka', 'Otazka'));
+
+    if (hasStepData) {
+      const stepClean = String(rawStep).replace(/\D/g, '');
+      stepNumber = parseInt(stepClean, 10);
+      if (isNaN(stepNumber) || stepNumber <= 0) {
+        invalidRows.push({ rowNumber: rowNum, reason: `Číslo kroku musí být kladné číslo (např. 1, 2, 3...). Zadáno: "${rawStep || 'prázdné'}".` });
         return;
       }
-    }
 
-    let correctAnswer = ansRaw;
-    const upperAns = ansRaw.toUpperCase().trim();
-    if (upperAns === 'A' && optA) correctAnswer = optA;
-    else if (upperAns === 'B' && optB) correctAnswer = optB;
-    else if (upperAns === 'C' && optC) correctAnswer = optC;
-    else if (upperAns === 'D' && optD) correctAnswer = optD;
-    else if (ansRaw) correctAnswer = preprocessMathText(ansRaw);
+      if (!stepText) {
+        invalidRows.push({ rowNumber: rowNum, reason: 'Chybí text kroku.' });
+        return;
+      }
+
+      processedStepText = preprocessMathText(stepText);
+      const stepSyntax = validateLatexSyntax(processedStepText);
+      if (!stepSyntax.isValid) {
+        invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci textu kroku: ${stepSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+        return;
+      }
+
+      const rawQuestion = findColValue(row, 'Otázka', 'Otazka');
+      question = preprocessMathText(rawQuestion);
+      if (question) {
+        const qSyntax = validateLatexSyntax(question);
+        if (!qSyntax.isValid) {
+          invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci kontrolní otázky: ${qSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+          return;
+        }
+      }
+
+      optA = preprocessMathText(findColValue(row, 'Možnost A', 'Moznost A'));
+      optB = preprocessMathText(findColValue(row, 'Možnost B', 'Moznost B'));
+      optC = preprocessMathText(findColValue(row, 'Možnost C', 'Moznost C'));
+      optD = preprocessMathText(findColValue(row, 'Možnost D', 'Moznost D'));
+      const ansRaw = findColValue(row, 'Odpověď', 'Odpoved');
+      const rawTip = findColValue(row, 'Tip', 'Tip lektora');
+      tip = preprocessMathText(rawTip);
+
+      if (tip) {
+        const tipSyntax = validateLatexSyntax(tip);
+        if (!tipSyntax.isValid) {
+          invalidRows.push({ rowNumber: rowNum, reason: `Chyba ve vzorci tipu lektora: ${tipSyntax.error}`, stepTitle: `Krok ${stepNumber}` });
+          return;
+        }
+      }
+
+      correctAnswer = ansRaw;
+      const upperAns = ansRaw.toUpperCase().trim();
+      if (upperAns === 'A' && optA) correctAnswer = optA;
+      else if (upperAns === 'B' && optB) correctAnswer = optB;
+      else if (upperAns === 'C' && optC) correctAnswer = optC;
+      else if (upperAns === 'D' && optD) correctAnswer = optD;
+      else if (ansRaw) correctAnswer = preprocessMathText(ansRaw);
+
+      stepsFound++;
+    }
 
     validRows.push({
       rowNumber: rowNum,
       subject,
       topic,
       subtopic,
+      studyTheory: processedTheory || undefined,
       stepNumber,
       stepText: processedStepText,
       question,
@@ -1345,6 +1425,9 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
     });
     topicsSet.add(topic);
     subtopicsSet.add(subtopic);
+    if (processedTheory) {
+      subtopicsWithTheorySet.add(`${normalizeSubjectName(subject)}::${topic.trim()}::${subtopic.trim()}`);
+    }
   });
 
   return {
@@ -1352,7 +1435,9 @@ export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelPa
     invalidRows,
     totalRows: rawRows.length,
     topicsFound: Array.from(topicsSet),
-    subtopicsFound: Array.from(subtopicsSet)
+    subtopicsFound: Array.from(subtopicsSet),
+    theoriesFound: subtopicsWithTheorySet.size,
+    stepsFound
   };
 }
 
@@ -1363,6 +1448,7 @@ export async function importStudyStepsToFirestore(
 ): Promise<StudyImportStats> {
   const effectiveUserId = getEffectiveUserId(userId);
   let importedSteps = 0;
+  let theoriesUpdated = 0;
   let skippedDuplicates = 0;
   let topicsCreated = 0;
   let subtopicsCreated = 0;
@@ -1455,7 +1541,7 @@ export async function importStudyStepsToFirestore(
   for (const [groupKey, rows] of groups.entries()) {
     try {
       const [subject, topicTitle, subtopicTitle] = groupKey.split('::');
-      onProgress?.(`Zpracovávám kroky pro podtéma: ${subtopicTitle}`);
+      onProgress?.(`Zpracovávám výklad a kroky pro podtéma: ${subtopicTitle}`);
 
       const topicId = await ensureTopic(subject, topicTitle);
       const subtopicId = await ensureSubtopic(subject, topicId, subtopicTitle);
@@ -1463,7 +1549,18 @@ export async function importStudyStepsToFirestore(
       const subtopic = await getSubtopicById(subtopicId);
       const currentSteps: StudyStep[] = subtopic?.studySteps ? [...subtopic.studySteps] : [];
 
-      const incomingSteps: StudyStep[] = rows.map(row => ({
+      // Collect non-empty theoretical explanations for this subtopic (deduplicating identical strings)
+      const uniqueTheoryBlocks: string[] = [];
+      rows.forEach(r => {
+        const t = r.studyTheory?.trim();
+        if (t && !uniqueTheoryBlocks.includes(t)) {
+          uniqueTheoryBlocks.push(t);
+        }
+      });
+      const combinedTheory = uniqueTheoryBlocks.join('\n\n');
+
+      const stepRows = rows.filter(r => r.stepNumber > 0 && r.stepText);
+      const incomingSteps: StudyStep[] = stepRows.map(row => ({
         title: `Krok ${row.stepNumber}`,
         content: row.stepText,
         testQuestion: row.question || undefined,
@@ -1476,12 +1573,18 @@ export async function importStudyStepsToFirestore(
       importedSteps += addedCount;
       skippedDuplicates += skippedCount;
 
-      if (addedCount > 0) {
-        await saveSubtopic({
+      const hasNewTheory = Boolean(combinedTheory);
+      if (addedCount > 0 || hasNewTheory) {
+        const updatePayload: Partial<PracticeSubtopic> = {
           id: subtopicId,
           studySteps: mergedSteps,
           hasStudyMaterial: true
-        }, effectiveUserId);
+        };
+        if (hasNewTheory) {
+          updatePayload.studyTheory = combinedTheory;
+          theoriesUpdated++;
+        }
+        await saveSubtopic(updatePayload, effectiveUserId);
         subtopicsUpdated++;
       }
     } catch (err: any) {
@@ -1493,6 +1596,7 @@ export async function importStudyStepsToFirestore(
   return {
     totalRows: validRows.length,
     importedSteps,
+    theoriesUpdated,
     skippedDuplicates,
     topicsCreated,
     subtopicsCreated,

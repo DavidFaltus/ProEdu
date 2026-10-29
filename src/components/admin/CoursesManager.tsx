@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Plus, Edit2, Trash2, GraduationCap, Calendar, Clock, 
-  User, DollarSign, BookOpen, Sparkles, Check, Loader2, 
-  ExternalLink, Layers, Search, AlertCircle, X
+  Plus, Edit2, Trash2, 
+  Loader2, 
+  ExternalLink, Search, X
 } from 'lucide-react';
+import {
+  CapIcon,
+  MaterialYellowIcon,
+} from '../common/CustomIcon';
 import { Button } from '../ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
@@ -205,7 +209,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 bg-white p-6 rounded-3xl border border-gray-100 shadow-xs">
         <div>
           <h2 className="text-2xl font-display font-black text-gray-900 tracking-tight flex items-center gap-2.5">
-            <GraduationCap className="text-indigo-600" size={28} />
+            <CapIcon size={28} />
             Správa přípravných kurzů
           </h2>
           <p className="text-gray-500 text-sm mt-0.5">
@@ -256,7 +260,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
         </div>
       ) : filteredCourses.length === 0 ? (
         <div className="text-center py-16 bg-white rounded-3xl border border-dashed border-gray-200 p-8 space-y-4">
-          <GraduationCap size={44} className="mx-auto text-gray-300" />
+          <CapIcon size={44} className="mx-auto" />
           <div>
             <h3 className="text-lg font-bold text-gray-900">Nenalezeny žádné kurzy</h3>
             <p className="text-gray-500 text-sm mt-1">Zkus upravit vyhledávání nebo vytvoř nový kurz.</p>
@@ -334,7 +338,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
                   {course.syllabus && course.syllabus.length > 0 && (
                     <div className="flex items-center justify-between pt-1 border-t border-gray-200/60">
                       <span className="text-gray-500 flex items-center gap-1">
-                        <Layers size={13} /> Počet témat:
+                        <MaterialYellowIcon size={14} /> Počet témat:
                       </span>
                       <span className="font-black text-indigo-700">{course.syllabus.length} témat</span>
                     </div>
@@ -384,7 +388,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
           <DialogHeader className="mb-2">
             <DialogTitle className="text-2xl font-display font-black text-gray-900 flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center">
-                <GraduationCap size={22} />
+                <CapIcon size={24} />
               </div>
               <span>{editingCourse ? 'Upravit kurz' : 'Vytvořit nový kurz'}</span>
             </DialogTitle>
@@ -556,7 +560,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
             <div className="space-y-3 pt-2 border-t border-gray-100">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-black uppercase tracking-wider text-gray-400 flex items-center gap-1.5">
-                  <Layers size={14} /> 4. Přehled látky a osnova kurzu ({syllabus.length} témat)
+                  <MaterialYellowIcon size={15} /> 4. Přehled látky a osnova kurzu ({syllabus.length} témat)
                 </h4>
               </div>
 

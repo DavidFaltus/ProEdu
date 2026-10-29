@@ -3,20 +3,20 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { 
   Bell, 
-  CheckSquare, 
-  GraduationCap, 
-  Award, 
-  MessageSquare, 
-  HelpCircle, 
-  BookOpen, 
   Video, 
-  FileCheck, 
   X, 
-  Check, 
-  Sparkles,
   ExternalLink,
   ChevronRight
 } from 'lucide-react';
+import {
+  CorrectCyanIcon,
+  CapIcon,
+  StarYellowIcon,
+  StarPinkIcon,
+  BubbleYellowIcon,
+  DialogCyanIcon,
+  MaterialYellowIcon,
+} from './common/CustomIcon';
 import { cn } from '../lib/utils';
 import { AppNotification, NotificationType } from '../hooks/useNotifications';
 import { format, isToday, isYesterday } from 'date-fns';
@@ -49,37 +49,37 @@ function getNotificationVisuals(type: NotificationType) {
   switch (type) {
     case 'todo':
       return {
-        icon: CheckSquare,
+        icon: CorrectCyanIcon,
         bg: 'bg-amber-100 text-amber-700',
         badgeBg: 'bg-amber-50 text-amber-800 border-amber-200'
       };
     case 'test':
       return {
-        icon: GraduationCap,
+        icon: CapIcon,
         bg: 'bg-purple-100 text-purple-700',
         badgeBg: 'bg-purple-50 text-purple-800 border-purple-200'
       };
     case 'test_review':
       return {
-        icon: Award,
+        icon: StarYellowIcon,
         bg: 'bg-emerald-100 text-emerald-700',
         badgeBg: 'bg-emerald-50 text-emerald-800 border-emerald-200'
       };
     case 'inquiry_answer':
       return {
-        icon: MessageSquare,
+        icon: BubbleYellowIcon,
         bg: 'bg-blue-100 text-blue-700',
         badgeBg: 'bg-blue-50 text-blue-800 border-blue-200'
       };
     case 'inquiry_new':
       return {
-        icon: HelpCircle,
+        icon: DialogCyanIcon,
         bg: 'bg-orange-100 text-orange-700',
         badgeBg: 'bg-orange-50 text-orange-800 border-orange-200'
       };
     case 'sheet':
       return {
-        icon: BookOpen,
+        icon: MaterialYellowIcon,
         bg: 'bg-cyan-100 text-cyan-700',
         badgeBg: 'bg-cyan-50 text-cyan-800 border-cyan-200'
       };
@@ -91,7 +91,7 @@ function getNotificationVisuals(type: NotificationType) {
       };
     case 'test_submitted':
       return {
-        icon: FileCheck,
+        icon: MaterialYellowIcon,
         bg: 'bg-indigo-100 text-indigo-700',
         badgeBg: 'bg-indigo-50 text-indigo-800 border-indigo-200'
       };
@@ -297,7 +297,7 @@ export default function NotificationPopover({
               className="text-[11px] font-bold text-gray-500 hover:text-[#1E1B18] hover:bg-white/80 px-2.5 py-1.5 rounded-xl transition-all flex items-center gap-1 cursor-pointer"
               title="Označit vše jako přečtené"
             >
-              <Check size={13} />
+              <CorrectCyanIcon size={14} />
               <span>Přečteno</span>
             </button>
           )}
@@ -317,7 +317,7 @@ export default function NotificationPopover({
         {notifications.length === 0 ? (
           <div className="py-12 px-6 text-center space-y-3">
             <div className="w-14 h-14 mx-auto rounded-3xl bg-amber-50 text-amber-500 flex items-center justify-center text-2xl shadow-inner">
-              🎉
+              <StarPinkIcon size={28} />
             </div>
             <div>
               <h4 className="font-bold text-gray-800 text-sm">
@@ -397,7 +397,7 @@ export default function NotificationPopover({
       {notifications.length > 0 && (
         <div className="p-3 bg-white border-t border-gray-100 flex items-center justify-center shrink-0">
           <p className="text-[11px] font-semibold text-gray-400 flex items-center gap-1.5">
-            <Sparkles size={12} className="text-[#F5C400]" />
+            <StarYellowIcon size={13} />
             Kliknutím na položku přejdeš přímo k obsahu
           </p>
         </div>

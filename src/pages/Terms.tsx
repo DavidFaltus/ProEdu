@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowLeft, FileText, Building2, ShieldCheck, Mail, AlertCircle, Scale } from 'lucide-react';
+import { ArrowLeft, Building2, ShieldCheck, AlertCircle, Scale } from 'lucide-react';
+import { BookCyanIcon } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 
 export default function Terms() {
@@ -22,7 +23,7 @@ export default function Terms() {
         <div className="absolute top-0 right-0 w-64 h-64 bg-amber-100/50 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
         <div className="flex items-center gap-3 mb-3">
           <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold">
-            <FileText size={20} />
+            <BookCyanIcon size={22} />
           </div>
           <span className="text-xs font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-1 rounded-lg border border-amber-200">
             Právní dokument

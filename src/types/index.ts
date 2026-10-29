@@ -72,6 +72,7 @@ export interface SampleProblem {
   options?: string[];
   correctAnswer: string;
   explanation?: string;
+  theoryImages?: Record<string, string>;
 }
 
 export interface PracticeConfig {

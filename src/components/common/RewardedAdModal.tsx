@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Play, Sparkles, CheckCircle2, X, Clock, ShieldCheck, 
-  Flame, Award, ArrowRight, UserPlus 
+  Play, X, Clock, ShieldCheck, 
+  ArrowRight
 } from 'lucide-react';
+import {
+  CorrectCyanIcon,
+  HeartPinkIcon,
+  StarYellowIcon,
+  TeamBlueIcon,
+} from './CustomIcon';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { useAuth } from '../../context/AuthContext';
@@ -105,7 +111,7 @@ export default function RewardedAdModal({
               </div>
             ) : (
               <span className="flex items-center gap-1 text-green-400 font-bold bg-green-500/10 px-2.5 py-1 rounded-full border border-green-500/30">
-                <CheckCircle2 className="w-3.5 h-3.5" />
+                <CorrectCyanIcon size={15} />
                 Dokončeno
               </span>
             )}
@@ -136,7 +142,7 @@ export default function RewardedAdModal({
               className="space-y-4 z-10 max-w-xs"
             >
               <div className="w-16 h-16 mx-auto rounded-2xl bg-yellow-400/20 border-2 border-yellow-400/50 flex items-center justify-center text-yellow-300 shadow-lg shadow-yellow-400/20">
-                <Flame className="w-8 h-8 animate-pulse text-yellow-400" />
+                <HeartPinkIcon className="w-9 h-9 animate-pulse" />
               </div>
               <div>
                 <h4 className="text-lg font-black text-white tracking-tight">
@@ -161,7 +167,7 @@ export default function RewardedAdModal({
               className="space-y-4 z-10 max-w-xs"
             >
               <div className="w-16 h-16 mx-auto rounded-2xl bg-green-500/20 border-2 border-green-400 flex items-center justify-center text-green-400 shadow-xl shadow-green-500/20">
-                <Award className="w-9 h-9" />
+                <StarYellowIcon className="w-9 h-9" />
               </div>
               <div>
                 <h4 className="text-xl font-black text-white">
@@ -221,7 +227,7 @@ export default function RewardedAdModal({
                     }}
                     className="w-full text-xs font-bold border-white/20 hover:bg-white/10 text-white rounded-xl"
                   >
-                    <UserPlus className="w-3.5 h-3.5 mr-1.5 text-yellow-400" />
+                    <TeamBlueIcon size={15} className="mr-1.5" />
                     Zaregistrovat se zdarma
                   </Button>
                 </div>

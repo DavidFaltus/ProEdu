@@ -3,9 +3,15 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
 import { Link } from 'react-router-dom';
 import { 
-  BookOpen, Calendar, GraduationCap, Users, ArrowRight, 
-  Sparkles, Check, Clock, ShieldCheck, Settings, Loader2 
+  ArrowRight, 
+  Clock, ShieldCheck, Settings, Loader2 
 } from 'lucide-react';
+import {
+  CapIcon,
+  StarYellowIcon,
+  BookCyanIcon,
+  MaterialYellowIcon,
+} from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
@@ -52,7 +58,7 @@ export default function Courses() {
       <section className="text-center space-y-4 max-w-3xl mx-auto">
         <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-center">
           <span className="px-3.5 py-1 text-xs font-black uppercase tracking-widest bg-indigo-100 text-indigo-900 border border-indigo-200/60 rounded-full inline-flex items-center gap-1.5">
-            <GraduationCap size={14} /> Přípravné kurzy ProEdu
+            <CapIcon size={15} /> Přípravné kurzy ProEdu
           </span>
         </motion.div>
 
@@ -89,7 +95,7 @@ export default function Courses() {
 
           <div className="space-y-2 text-center md:text-left relative z-10">
             <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider rounded-full border border-white/15">
-              <Sparkles size={12} /> Živá výuka s lektory
+              <StarYellowIcon size={13} /> Živá výuka s lektory
             </span>
             <h2 className="text-2xl sm:text-3xl font-sans font-black text-white">
               Odemkni si živou online výuku s lektorem
@@ -103,7 +109,7 @@ export default function Courses() {
             onClick={() => setIsPaywallOpen(true)}
             className="h-13 px-8 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-sm shadow-lg shadow-yellow-500/20 shrink-0 cursor-pointer flex items-center gap-2 relative z-10"
           >
-            <GraduationCap size={18} />
+            <CapIcon size={19} />
             <span>Zapsat se do kurzu</span>
           </Button>
         </div>
@@ -117,7 +123,7 @@ export default function Courses() {
       ) : displayCourses.length === 0 ? (
         <div className="text-center py-20 bg-white/70 rounded-[2.5rem] border border-gray-100 p-8 space-y-4">
           <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto text-indigo-600">
-            <BookOpen size={32} />
+            <BookCyanIcon size={34} />
           </div>
           <h2 className="text-2xl font-display font-bold text-gray-800">Zatím tu žádné kurzy nejsou</h2>
           <p className="text-gray-500 max-w-md mx-auto text-sm">
@@ -160,7 +166,7 @@ export default function Courses() {
                       <CardHeader className="p-7 pb-3 space-y-3">
                         <div className="flex items-center justify-between gap-2">
                           <div className="w-12 h-12 bg-indigo-50 text-indigo-700 rounded-2xl flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
-                            <BookOpen size={24} />
+                            <MaterialYellowIcon size={26} />
                           </div>
 
                           {isEnrolled ? (
@@ -209,7 +215,7 @@ export default function Courses() {
                           )}
                           {course.difficulty && (
                             <div className="flex items-center gap-1.5 text-gray-700">
-                              <Sparkles size={12} className="text-amber-500 shrink-0" />
+                              <StarYellowIcon size={13} className="shrink-0" />
                               <span className="truncate">{course.difficulty}</span>
                             </div>
                           )}
