@@ -258,6 +258,20 @@ service cloud.firestore {
              (!('isReadByStudent' in data) || data.isReadByStudent == null || data.isReadByStudent is bool);
     }
 
+    function isValidOrder(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+             data.clientName is string && data.clientName.size() <= 128 && data.clientName.size() >= 2 &&
+             data.invoiceEmail is string && data.invoiceEmail.size() <= 256 &&
+             data.amount is number && data.amount > 0 &&
+             (data.paymentMethod == 'qr_bank_transfer' || data.paymentMethod == 'comgate') &&
+             (data.status == 'pending' || data.status == 'paid' || data.status == 'cancelled') &&
+             data.termsAccepted == true &&
+             data.billingAddress is map &&
+             data.billingAddress.street is string && data.billingAddress.street.size() <= 150 &&
+             data.billingAddress.city is string && data.billingAddress.city.size() <= 100 &&
+             data.billingAddress.zip is string && data.billingAddress.zip.size() <= 20;
+    }
+
     function isValidLiveLesson(data) {
       return data.title is string && data.title.size() <= 256 &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
@@ -433,6 +447,15 @@ service cloud.firestore {
     match /referrals/{referralId} {
       allow read: if isAuthenticated() && (isAdmin() || resource.data.referrerUid == request.auth.uid || resource.data.refereeUid == request.auth.uid);
       allow write: if false;
+    }
+
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && 
+                    (isAdmin() || (request.resource.data.userId == request.auth.uid && request.resource.data.status == 'pending')) &&
+                    isValidOrder(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     match /surveyResponses/{responseId} {

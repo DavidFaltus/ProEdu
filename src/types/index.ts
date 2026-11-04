@@ -178,3 +178,36 @@ export interface Course {
   createdAt?: any;
   updatedAt?: any;
 }
+
+export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
+export type OrderStatus = 'pending' | 'paid' | 'cancelled';
+
+export interface BillingAddress {
+  street: string;
+  city: string;
+  zip: string;
+  country?: string;
+}
+
+export interface Order {
+  id?: string;
+  userId: string;
+  userEmail: string;
+  clientName: string;
+  billingAddress: BillingAddress;
+  invoiceEmail: string;
+  amount: number;
+  currency: string;
+  planId: string;
+  paymentMethod: PaymentMethod;
+  status: OrderStatus;
+  termsAccepted: boolean;
+  newsletterConsent: boolean;
+  variableSymbol: string;
+  spaydString?: string;
+  comgateTransId?: string;
+  comgateRedirectUrl?: string;
+  paidAt?: any;
+  createdAt: any;
+  updatedAt?: any;
+}

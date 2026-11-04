@@ -4,8 +4,13 @@
     font-family: 'LePetitCochon';
     src: url('./assets/fonts/PetitCochon.ttf') format('truetype'),
          url('./assets/Petit Cochon.ttf') format('truetype');
-    font-weight: normal;
+    font-weight: 100 900;
+    font-display: swap;
     font-style: normal;
+}
+
+.font-playful {
+    font-family: 'LePetitCochon', cursive, sans-serif !important;
 }
 @theme {
   --font-sans: "Plus Jakarta Sans", "PT Sans", ui-sans-serif, system-ui, sans-serif;
@@ -55,7 +60,11 @@
     @apply font-sans bg-[#FAF6EE] text-[#1E1B18];
   }
   
-  h1, h2, h3, h4, h5, h6 {
+  h1 {
+    @apply font-sans text-gray-700;
+  }
+  
+  h2, h3, h4, h5, h6 {
     @apply font-sans text-gray-800;
   }
 

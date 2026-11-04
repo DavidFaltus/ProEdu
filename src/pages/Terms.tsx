@@ -29,7 +29,7 @@ export default function Terms() {
             Právní dokument
           </span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-gray-900 tracking-tight">
+        <h1 className="text-3xl sm:text-4xl font-black text-gray-700 tracking-tight">
           Obchodní podmínky
         </h1>
         <p className="mt-2 text-sm text-gray-500 font-medium">

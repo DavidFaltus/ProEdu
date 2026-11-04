@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Video, BarChart3 } from 'lucide-react';
+import { Video, BarChart3, CreditCard } from 'lucide-react';
 import {
   BrainPinkIcon,
   MaterialYellowIcon,
@@ -17,6 +17,7 @@ import LiveLessonsManager from '../components/admin/LiveLessonsManager';
 import CoursesManager from '../components/admin/CoursesManager';
 import StudentsProgressManager from '../components/admin/StudentsProgressManager';
 import SurveyResponsesManager from '../components/admin/SurveyResponsesManager';
+import OrdersManager from '../components/admin/OrdersManager';
 import { getAllInquiries, QuestionInquiry } from '../services/inquiryService';
 import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
@@ -24,7 +25,7 @@ import { LiveLesson } from '../types';
 export default function TeacherDashboard() {
   const { profile: userProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys'];
+  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys', 'orders'];
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'practices';
 
@@ -77,7 +78,7 @@ export default function TeacherDashboard() {
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 sm:space-y-8">
       <div>
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-gray-900 tracking-tight font-playful mb-2">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-gray-700 tracking-tight font-playful mb-2">
           Učitelský panel
         </h1>
         <p className="text-gray-500 font-semibold text-xs sm:text-sm">
@@ -147,6 +148,13 @@ export default function TeacherDashboard() {
             <BarChart3 size={16} />
             <span>Dotazníky</span>
           </TabsTrigger>
+          <TabsTrigger 
+            value="orders" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm data-[state=active]:border-emerald-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <CreditCard size={16} />
+            <span>Objednávky</span>
+          </TabsTrigger>
           </TabsList>
 
           <TabsContent value="practices">
@@ -178,6 +186,10 @@ export default function TeacherDashboard() {
 
           <TabsContent value="surveys">
             <SurveyResponsesManager />
+          </TabsContent>
+
+          <TabsContent value="orders">
+            <OrdersManager />
           </TabsContent>
         </Tabs>
     </div>

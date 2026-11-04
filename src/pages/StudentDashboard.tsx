@@ -36,6 +36,7 @@ import { collection, query, where, onSnapshot, limit } from 'firebase/firestore'
 import { toast } from 'sonner';
 import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
 import { trackSectionClick } from '../services/analyticsService';
+import { toCzechVocative } from '../utils/czechVocative';
 
 const MOTIVATIONAL_QUOTES = [
   { text: "Učení je jediná věc, kterou se mysl nikdy nevyčerpá, nikdy se jí nebojí a nikdy nelituje.", author: "Leonardo da Vinci" },
@@ -47,12 +48,37 @@ const MOTIVATIONAL_QUOTES = [
   { text: "Vaše dnešní úsilí určuje vaše zítřejší úspěchy. Každý krok se počítá.", author: "ProEdu" }
 ];
 
-const GREETINGS = [
-  "pojďme pracovat!",
-  "hurá do učení!",
-  "čas se posunout dál!",
-  "jde se na to!",
-  "pojďme na to šlápnout!"
+const GUEST_HEADLINES = [
+  {
+    title: "Tak jdeme na to!",
+    subtitle: "Vyzkoušej si interaktivní procvičování a posuň své znalosti na další úroveň."
+  },
+  {
+    title: "Registruj se už dnes",
+    subtitle: "Získej přístup k testům, studijním materiálům a sleduj svůj pokrok."
+  }
+];
+
+const STUDENT_HEADLINE_TEMPLATES = [
+  (name: string) => `Ahoj ${name}, jde se na to!`,
+  (name: string) => `Vítej zpět, ${name}! Dnes to zvládneme na jedničku.`,
+  (name: string) => `Rádi tě tu vidíme, ${name}! Čas na novou výzvu.`,
+  (name: string) => `Do toho, ${name}, dnes je skvělý den na procvičování!`,
+  (name: string) => `Ahoj ${name}, hurá do učení!`,
+  (name: string) => `Krásný den, ${name}! Pojďme na to šlápnout.`,
+  (name: string) => `Skvělá práce, že jsi tady, ${name}! Čas se posunout dál.`,
+  (name: string) => `Ahoj ${name}, ukaž, co v tobě je!`,
+  (name: string) => `Vítej, ${name}! Každý krok se počítá.`,
+  (name: string) => `Ahoj ${name}, pojďme pokořit další téma!`,
+  (name: string) => `Rádi tě vidíme v akci, ${name}! Jde se trénovat.`,
+  (name: string) => `Do toho, ${name}! Mozkové závity na start!`
+];
+
+const TEACHER_HEADLINE_TEMPLATES = [
+  (name: string) => `Ahoj ${name}, vítej ve svém přehledu!`,
+  (name: string) => `Krásný den, ${name}! Co máme dnes v plánu?`,
+  (name: string) => `Vítej zpět, ${name}! Pojďme na přípravu výuky.`,
+  (name: string) => `Ahoj ${name}, tvůj pracovní prostor je připraven.`
 ];
 
 export default function StudentDashboard() {
@@ -262,22 +288,44 @@ export default function StudentDashboard() {
     return MOTIVATIONAL_QUOTES[today % MOTIVATIONAL_QUOTES.length];
   }, []);
 
-  const greeting = useMemo(() => {
-    return GREETINGS[Math.floor(Math.random() * GREETINGS.length)];
-  }, []);
+  const headerContent = useMemo(() => {
+    if (!user && !profile) {
+      const chosen = GUEST_HEADLINES[Math.floor(Math.random() * GUEST_HEADLINES.length)];
+      return {
+        title: chosen.title,
+        subtitle: chosen.subtitle
+      };
+    }
+
+    const fallbackVocative = isTeacher ? 'učiteli' : 'studente';
+    const rawName = profile?.name ? profile.name.trim().split(/\s+/)[0] : fallbackVocative;
+    const vocativeName = toCzechVocative(rawName, fallbackVocative);
+
+    if (isTeacher) {
+      const template = TEACHER_HEADLINE_TEMPLATES[Math.floor(Math.random() * TEACHER_HEADLINE_TEMPLATES.length)];
+      return {
+        title: template(vocativeName),
+        subtitle: 'Vítej ve svém pracovním prostoru ProEdu. Co máme dnes v plánu?'
+      };
+    }
+
+    const template = STUDENT_HEADLINE_TEMPLATES[Math.floor(Math.random() * STUDENT_HEADLINE_TEMPLATES.length)];
+    return {
+      title: template(vocativeName),
+      subtitle: 'Vítej ve své studijní zóně ProEdu. Co si dnes procvičíme?'
+    };
+  }, [user, profile, isTeacher]);
 
   return (
     <div className="space-y-6 md:space-y-10">
       {/* HEADER SECTION: Greeting on Left, Motivational Quote on Top Right */}
       <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 sm:gap-6">
         <div className="space-y-1 sm:space-y-1.5">
-          <h1 className="text-3xl sm:text-4xl md:text-5xl font-playful text-[#1E1B18] tracking-tight leading-tight">
-            Ahoj {profile?.name?.split(' ')[0] || (isTeacher ? 'učiteli' : user ? 'studente' : 'Alexi')}, {greeting}
+          <h1 className="text-3xl sm:text-4xl md:text-5xl font-playful text-gray-700 tracking-tight leading-tight">
+            {headerContent.title}
           </h1>
           <p className="text-gray-500 font-medium text-xs sm:text-sm md:text-base">
-            {isTeacher 
-              ? 'Vítej ve svém pracovním prostoru ProEdu. Co máme dnes v plánu?' 
-              : 'Vítej ve své studijní zóně ProEdu. Co si dnes procvičíme?'}
+            {headerContent.subtitle}
           </p>
         </div>
 

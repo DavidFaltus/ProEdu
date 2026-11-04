@@ -172,7 +172,7 @@ export default function Garden() {
         <motion.h1 
           initial={{ opacity: 0, y: -20 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-5xl md:text-6xl font-display font-black text-[#1E1B18]"
+          className="text-5xl md:text-6xl font-display font-black text-gray-700"
         >
           Moje Zahrádka
         </motion.h1>

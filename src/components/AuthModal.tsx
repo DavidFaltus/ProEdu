@@ -91,15 +91,14 @@ export default function AuthModal() {
     <Dialog open={isAuthModalOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-md w-[92vw] rounded-[2.5rem] p-0 overflow-hidden border border-gray-100 shadow-3xl bg-[#FAF7F0]">
         {/* Header decoration */}
-        <div className="bg-gradient-to-r from-[#1E1B18] to-[#3a3530] p-6 text-white text-center relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-32 h-32 bg-amber-400/10 rounded-full blur-2xl" />
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded-full text-xs font-black uppercase tracking-wider text-amber-300 mb-2">
-            <StarYellowIcon size={15} /> ProEdu vzdělávání
-          </div>
-          <DialogTitle className="text-2xl font-display font-black tracking-tight text-white">
-            {isLogin ? 'Přihlášení k účtu' : 'Vytvořit nový účet'}
+        <div className="bg-gradient-to-br from-[#DCEBFE] via-[#C7DFFC] to-[#B9D8FC] p-6 text-center relative overflow-hidden border-b border-blue-100">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl pointer-events-none" />
+          <DialogTitle className="text-2xl font-display font-black tracking-tight text-[#0F2942] flex items-center justify-center gap-2.5">
+            <StarYellowIcon size={22} className="shrink-0" />
+            <span>{isLogin ? 'Přihlášení k účtu' : 'Vytvořit nový účet'}</span>
+            <StarYellowIcon size={22} className="shrink-0" />
           </DialogTitle>
-          <DialogDescription className="text-xs text-gray-300 font-medium mt-1">
+          <DialogDescription className="text-xs text-[#284B63] font-medium mt-1">
             {isLogin
               ? 'Přihlas se a pokračuj ve své studijní cestě.'
               : 'Zaregistruj se a získej přístup ke všem testům a materiálům.'}
@@ -185,7 +184,7 @@ export default function AuthModal() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-12 rounded-xl font-black text-sm bg-[#1E1B18] text-[#FAF7F0] hover:bg-[#332f2b] transition-all shadow-md mt-2 flex items-center justify-center gap-2"
+              className="w-full h-12 rounded-xl font-black text-sm bg-[#B9D8FC] text-[#0F2942] hover:bg-[#A3CCFA] border border-blue-200/80 transition-all shadow-sm hover:shadow-md mt-2 flex items-center justify-center gap-2 cursor-pointer"
             >
               {loading ? (
                 'Zpracovávám...'
@@ -195,7 +194,7 @@ export default function AuthModal() {
                 </>
               ) : (
                 <>
-                  <ArrowRight size={16} /> Vytvořit účet zdarma
+                  <ArrowRight size={16} /> Registrovat se
                 </>
               )}
             </Button>

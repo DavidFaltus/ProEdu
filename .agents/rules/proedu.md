@@ -142,3 +142,44 @@ Technické zásady pro Firebase v tomto projektu:
 Aplikaci spouští vždy na portu 3005  toto použij při debugování
 
 Pro debug učitele využívej účet ucitel@ucitel.cz s heslem ucitel123 a pro debug žáka využívej účet student@student.cz s heslem student123
+
+---
+
+### Stav implementace platebního systému a možnosti budoucího napojení (Comgate & Fakturace)
+
+#### 1. Aktuální stav (listopad 2026):
+- **Objednávkový formulář a Paywall modal:**
+  - V `src/components/common/UnifiedPaywallModal.tsx` funguje 2-krokový proces (Výběr balíčku -> Fakturační formulář -> Platební instrukce).
+  - Formulář vyžaduje jméno klienta, fakturační adresu (ulice, město, PSČ), e-mail pro fakturu, souhlas s obchodními podmínkami a volitelný newsletter.
+  - Aktuální cena Premium balíčku: **99 Kč / měsíc**.
+- **Platba QR kódem (převodem na účet):**
+  - Okamžitě funkční díky standardu SPAYD (`src/utils/qrPayment.ts`).
+  - Do zprávy pro příjemce se automaticky propisuje e-mail klienta a variabilní symbol = ID objednávky.
+  - Bankovní účet je konfigurovatelný v `.env` (`BANK_ACCOUNT_NUMBER`, `BANK_CODE`, `BANK_NAME`, `BANK_RECIPIENT`).
+- **Platební brána Comgate (Sandbox / Testovací režim):**
+  - Backend připraven v `server/index.js` (`POST /api/orders/create` a webhook `POST /api/payments/comgate/notify`).
+  - Podporuje testovací režim (`COMGATE_TEST_MODE="true"`). Dokud nejsou v `.env` zadány ostré klíče od Comgate, funguje v sandbox režimu s možností testovací simulace platby.
+  - Po úspěšném zaplacení server automaticky aktivuje `role: 'premium'` v dokumentu uživatele.
+- **Správa objednávek pro Učitele/Admina:**
+  - V `src/pages/TeacherDashboard.tsx` (záložka „Objednávky“ – `src/components/admin/OrdersManager.tsx`) má učitel přehled všech objednávek a u plateb převodem tlačítko pro ruční schválení platby.
+- **Bezpečnost (Firestore Rules):**
+  - Objednávky jsou v kolekci `orders`. Klient smí vytvořit pouze svou objednávku se stavem `pending`. Změnu stavu na `paid` a povýšení role smí provést pouze server (Admin SDK) nebo učitel.
+
+#### 2. Možnosti pro budoucí napojení (po podpisu smlouvy s Comgate):
+1. **Přechod do ostrého provozu Comgate:**
+   - V `.env` na produkčním serveru doplnit:
+     ```env
+     COMGATE_MERCHANT_ID="<id_klienta_od_comgate>"
+     COMGATE_SECRET="<tajny_klic_od_comgate>"
+     COMGATE_TEST_MODE="false"
+     ```
+   - V administraci Comgate nastavit Push URL (webhook) na:
+     `https://<vase-domena>/api/payments/comgate/notify`
+2. **Automatické vystavování faktur (Fakturační systém):**
+   - **Varianta A (Fakturoid API):**
+     - Ve webhooku `/api/payments/comgate/notify` nebo při ručním potvrzení učitelem zavolat Fakturoid API (`POST /api/v2/accounts/{slug}/invoices.json`).
+     - Fakturoid automaticky vytvoří fakturu, spáruje platbu a odešle PDF fakturu přímo na e-mail klienta.
+   - **Varianta B (iDoklad / Vyfakturuj API):**
+     - Obdobná integrace přes REST API do serverové vrstvy v `server/index.js`.
+   - **Varianta C (Interní generování PDF faktur):**
+     - Generování číslované PDF faktury přímo v Node.js (např. přes knihovnu `pdfkit` nebo HTML template) a odeslání přes Nodemailer / SendGrid.

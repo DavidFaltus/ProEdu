@@ -3,9 +3,9 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vite';
 
-// V produkčním sestavení se aplikace nasazuje na https://www.pro-edu.eu/proeducator/
-// Pro lokální vývoj na portu 3005 nebo přepsání lze použít VITE_BASE_PATH
-const basePath = process.env.VITE_BASE_PATH || (process.env.NODE_ENV === 'production' ? '/proeducator/' : '/');
+// V produkčním sestavení se aplikace nasazuje na kořenovou doménu https://proeducator.eu/
+// Pro případné přepsání podsložky lze použít proměnnou prostředí VITE_BASE_PATH
+const basePath = process.env.VITE_BASE_PATH || '/';
 
 export default defineConfig({
   base: basePath,

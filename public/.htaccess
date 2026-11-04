@@ -1,0 +1,24 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Neaplikovat přepis na existující soubory a adresáře (např. css, js, obrázky)
+  RewriteCond %{REQUEST_FILENAME} -f [OR]
+  RewriteCond %{REQUEST_FILENAME} -d
+  RewriteRule ^ - [L]
+
+  # Veškeré ostatní routy přesměrovat na index.html aplikace ProEducator
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# Zakázat výpis obsahu adresářů
+Options -Indexes
+
+# Nastavení výchozího kódování a MIME typů
+AddDefaultCharset UTF-8
+<IfModule mod_mime.c>
+  AddType image/svg+xml .svg .svgz
+  AddEncoding gzip .svgz
+  AddType application/javascript .js .mjs
+  AddType application/vnd.openxmlformats-officedocument.spreadsheetml.sheet .xlsx
+</IfModule>

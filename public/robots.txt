@@ -1,0 +1,25 @@
+# ProEdu robots.txt
+User-agent: *
+Allow: /
+Allow: /practice
+Allow: /courses
+Allow: /courses/*
+Allow: /learning
+Allow: /contact
+Allow: /login
+Allow: /terms
+Allow: /privacy
+
+# Disallow private & authenticated student / teacher routes
+Disallow: /teacher
+Disallow: /teacher/
+Disallow: /garden
+Disallow: /todo
+Disallow: /settings
+Disallow: /test/
+Disallow: /review/
+Disallow: /study/
+Disallow: /practice/session/
+
+# Sitemap location
+Sitemap: https://proeducator.eu/sitemap.xml

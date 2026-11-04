@@ -62,7 +62,7 @@ export default function Courses() {
           </span>
         </motion.div>
 
-        <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-[#1E1B18] tracking-tight">
+        <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight">
           {isTeacher ? 'Nabídka a správa kurzů' : isCourseUser ? 'Tvoje online kurzy' : 'Aktuální nabídka kurzů'}
         </motion.h1>
 
