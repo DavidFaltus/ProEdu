@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
-  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical
+  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical,
+  GripVertical, ArrowUp, ArrowDown, RotateCcw, Check
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
@@ -19,9 +20,10 @@ import {
 } from '../ui/dropdown-menu';
 import { toast } from 'sonner';
 import { 
-  getTopics, getSubtopics, getQuestionsForSubtopic, 
+  getTopics, getSubtopics, getQuestionsForSubtopic, getAllQuestionsGroupedBySubtopic,
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
   saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
+  updateTopicsOrder,
   ExistingMaterialItem, cleanStudyStep,
   parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
   parseStudyStepsExcelFile, importStudyStepsToFirestore,
@@ -51,7 +53,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [subtopics, setSubtopics] = useState<PracticeSubtopic[]>([]);
   const [questionsMap, setQuestionsMap] = useState<Record<string, PracticeQuestion[]>>({});
   const [loading, setLoading] = useState(true);
+  const [expandedTopics, setExpandedTopics] = useState<Record<string, boolean>>({});
   const [expandedSubtopics, setExpandedSubtopics] = useState<Record<string, boolean>>({});
+
+  // Reordering state for topics
+  const [hasReorderChanges, setHasReorderChanges] = useState<boolean>(false);
+  const [isSavingOrder, setIsSavingOrder] = useState<boolean>(false);
+  const [originalTopics, setOriginalTopics] = useState<PracticeTopic[]>([]);
+  const [draggedTopicId, setDraggedTopicId] = useState<string | null>(null);
+  const [dragOverTopicId, setDragOverTopicId] = useState<string | null>(null);
 
   // Modals state
   const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
@@ -116,16 +126,21 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const tData = await getTopics(activeSubject);
-      const sData = await getSubtopics(undefined, activeSubject);
+      // Paralelní načtení témat, podtémat a všech otázek jedním dotazem místo desítek sekvenčních dotazů
+      const [tData, sData, allGroupedQuestions] = await Promise.all([
+        getTopics(activeSubject),
+        getSubtopics(undefined, activeSubject),
+        getAllQuestionsGroupedBySubtopic()
+      ]);
+
       setTopics(tData);
+      setOriginalTopics(tData);
+      setHasReorderChanges(false);
       setSubtopics(sData);
 
-      // Preload questions for all subtopics
       const qMap: Record<string, PracticeQuestion[]> = {};
       for (const s of sData) {
-        const qs = await getQuestionsForSubtopic(s.id);
-        qMap[s.id] = qs;
+        qMap[s.id] = allGroupedQuestions[s.id] || [];
       }
       setQuestionsMap(qMap);
     } catch (err: any) {
@@ -139,9 +154,97 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     loadData();
   }, [activeSubject]);
 
+  // Toggle topic accordion
+  const toggleTopic = (topicId: string) => {
+    setExpandedTopics(prev => ({ ...prev, [topicId]: !prev[topicId] }));
+  };
+
   // Toggle subtopic questions expand
   const toggleSubtopic = (subId: string) => {
     setExpandedSubtopics(prev => ({ ...prev, [subId]: !prev[subId] }));
+  };
+
+  // Reorder handlers
+  const handleMoveTopicUp = (index: number) => {
+    if (index <= 0) return;
+    const newTopics = [...topics];
+    const temp = newTopics[index];
+    newTopics[index] = newTopics[index - 1];
+    newTopics[index - 1] = temp;
+    setTopics(newTopics);
+    setHasReorderChanges(true);
+  };
+
+  const handleMoveTopicDown = (index: number) => {
+    if (index >= topics.length - 1) return;
+    const newTopics = [...topics];
+    const temp = newTopics[index];
+    newTopics[index] = newTopics[index + 1];
+    newTopics[index + 1] = temp;
+    setTopics(newTopics);
+    setHasReorderChanges(true);
+  };
+
+  const handleDragStart = (e: React.DragEvent, topicId: string) => {
+    e.dataTransfer.setData('text/plain', topicId);
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedTopicId(topicId);
+  };
+
+  const handleDragOver = (e: React.DragEvent, topicId: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverTopicId !== topicId) {
+      setDragOverTopicId(topicId);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, targetTopicId: string) => {
+    e.preventDefault();
+    setDragOverTopicId(null);
+    const sourceTopicId = draggedTopicId || e.dataTransfer.getData('text/plain');
+    if (!sourceTopicId || sourceTopicId === targetTopicId) return;
+
+    const sourceIndex = topics.findIndex(t => t.id === sourceTopicId);
+    const targetIndex = topics.findIndex(t => t.id === targetTopicId);
+    if (sourceIndex === -1 || targetIndex === -1) return;
+
+    const newTopics = [...topics];
+    const [moved] = newTopics.splice(sourceIndex, 1);
+    newTopics.splice(targetIndex, 0, moved);
+
+    setTopics(newTopics);
+    setHasReorderChanges(true);
+    setDraggedTopicId(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedTopicId(null);
+    setDragOverTopicId(null);
+  };
+
+  const handleSaveOrder = async () => {
+    setIsSavingOrder(true);
+    try {
+      const updates = topics.map((t, idx) => ({
+        id: t.id,
+        order: idx + 1
+      }));
+      await updateTopicsOrder(updates);
+      setOriginalTopics(topics);
+      setHasReorderChanges(false);
+      toast.success('Pořadí témat bylo úspěšně uloženo');
+    } catch (err: any) {
+      toast.error('Chyba při ukládání pořadí: ' + err.message);
+    } finally {
+      setIsSavingOrder(false);
+    }
+  };
+
+  const handleCancelReorder = () => {
+    setTopics(originalTopics);
+    setHasReorderChanges(false);
+    toast.info('Změny pořadí témat byly zrušeny');
   };
 
   // --- TOPIC ACTIONS ---
@@ -150,7 +253,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     if (!editingTopic?.title?.trim()) return;
 
     try {
-      await saveTopic({
+      const savedId = await saveTopic({
         ...editingTopic,
         subjectId: activeSubject
       }, effectiveUserId);
@@ -158,6 +261,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       setIsTopicModalOpen(false);
       setEditingTopic(null);
       await loadData();
+      if (savedId) {
+        setExpandedTopics(prev => ({ ...prev, [savedId]: true }));
+      }
     } catch (err: any) {
       toast.error('Chyba při ukládání: ' + err.message);
     }
@@ -1370,31 +1476,131 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         </div>
       ) : (
         <div className="space-y-6">
-          {topics.map((topic) => {
+          {/* Sticky alert banner for unsaved reorder changes */}
+          {hasReorderChanges && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-md sticky top-4 z-30 animate-in fade-in slide-in-from-top duration-200">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-amber-100 flex items-center justify-center shrink-0 text-amber-800">
+                  <AlertCircle size={22} />
+                </div>
+                <div>
+                  <p className="font-bold text-sm sm:text-base text-amber-950">
+                    Máte neuložené změny v pořadí témat
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    Pořadí se ve studentské sekci projeví až po kliknutí na „Uložit pořadí“.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2.5 w-full sm:w-auto">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleCancelReorder}
+                  disabled={isSavingOrder}
+                  className="flex-1 sm:flex-initial rounded-xl border-amber-200 bg-white hover:bg-amber-100/50 text-amber-900 font-bold text-xs h-9 px-4 cursor-pointer"
+                >
+                  <RotateCcw size={14} className="mr-1.5" /> Zrušit
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleSaveOrder}
+                  disabled={isSavingOrder}
+                  className="flex-1 sm:flex-initial rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-9 px-5 shadow-xs cursor-pointer"
+                >
+                  {isSavingOrder ? (
+                    <Loader2 size={14} className="animate-spin mr-1.5" />
+                  ) : (
+                    <Check size={14} className="mr-1.5" />
+                  )}
+                  Uložit pořadí
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {topics.map((topic, index) => {
             const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+            const isExpanded = !!expandedTopics[topic.id];
 
             return (
               <div 
                 key={topic.id}
-                className="bg-white rounded-3xl p-6 sm:p-7 border border-gray-100 shadow-sm space-y-5"
+                onDragOver={(e) => handleDragOver(e, topic.id)}
+                onDrop={(e) => handleDrop(e, topic.id)}
+                className={`bg-white rounded-3xl p-5 sm:p-6 border transition-all ${
+                  dragOverTopicId === topic.id ? 'border-amber-500 ring-2 ring-amber-300 bg-amber-50/20' : 'border-gray-100 shadow-sm'
+                } ${draggedTopicId === topic.id ? 'opacity-40' : ''}`}
               >
-                {/* Topic Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md">
-                        Hlavní téma
-                      </span>
-                      <h3 className="text-xl sm:text-2xl font-black text-[#1E1B18]">
-                        {topic.title}
-                      </h3>
+                {/* Topic Header: Clickable to expand/collapse (except action buttons & drag handle) */}
+                <div 
+                  onClick={() => toggleTopic(topic.id)}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none group"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    {/* Drag Handle */}
+                    <div 
+                      draggable={true}
+                      onDragStart={(e) => handleDragStart(e, topic.id)}
+                      onDragEnd={handleDragEnd}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-8 h-8 rounded-lg bg-gray-50 hover:bg-amber-100 text-gray-400 hover:text-amber-900 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing transition-colors"
+                      title="Přetáhněte pro změnu pořadí"
+                    >
+                      <GripVertical size={16} />
                     </div>
-                    {topic.description && (
-                      <p className="text-gray-400 text-xs mt-0.5 font-medium">{topic.description}</p>
-                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md">
+                          Hlavní téma
+                        </span>
+                        <span className="text-[11px] font-bold text-gray-500 bg-gray-50 px-2.5 py-0.5 rounded-md border border-gray-100">
+                          {topicSubtopics.length} {topicSubtopics.length === 1 ? 'podtéma' : topicSubtopics.length < 5 ? 'podtémata' : 'podtémat'}
+                        </span>
+                        <h3 className="text-xl sm:text-2xl font-black text-[#1E1B18] group-hover:text-amber-800 transition-colors">
+                          {topic.title}
+                        </h3>
+                      </div>
+                      {topic.description && (
+                        <p className="text-gray-400 text-xs mt-0.5 font-medium line-clamp-2">{topic.description}</p>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t border-gray-100 sm:border-0">
+                  <div 
+                    onClick={(e) => e.stopPropagation()}
+                    className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t border-gray-100 sm:border-0"
+                  >
+                    {/* Move Up / Down Buttons */}
+                    <div className="flex items-center gap-0.5 bg-gray-50 p-1 rounded-xl border border-gray-200/60 shrink-0">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={index === 0}
+                        onClick={() => handleMoveTopicUp(index)}
+                        className="h-7 w-7 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                        title="Posunout nahoru"
+                      >
+                        <ArrowUp size={14} />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={index === topics.length - 1}
+                        onClick={() => handleMoveTopicDown(index)}
+                        className="h-7 w-7 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-white disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                        title="Posunout dolů"
+                      >
+                        <ArrowDown size={14} />
+                      </Button>
+                    </div>
+
                     <Button
                       onClick={() => handleOpenNewSubtopic(topic.id)}
                       size="sm"
@@ -1427,10 +1633,26 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <Trash2 size={15} />
                       </Button>
                     </div>
+
+                    {/* Expand/Collapse arrow in right corner */}
+                    <button
+                      type="button"
+                      onClick={() => toggleTopic(topic.id)}
+                      className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-amber-100 flex items-center justify-center transition-colors ml-1 cursor-pointer shrink-0 border border-gray-100"
+                      title={isExpanded ? 'Zabalit téma' : 'Rozbalit téma'}
+                      aria-expanded={isExpanded}
+                    >
+                      <ChevronDown 
+                        size={18} 
+                        className={`text-gray-600 transition-transform duration-300 ${isExpanded ? 'rotate-180 text-amber-800' : ''}`} 
+                      />
+                    </button>
                   </div>
                 </div>
 
-                {/* Subtopics List */}
+                {/* Subtopics List (Rendered when isExpanded is true) */}
+                {isExpanded && (
+                  <div className="pt-4 border-t border-gray-100 mt-4 space-y-4">
                 {topicSubtopics.length === 0 ? (
                   <p className="text-gray-400 text-xs italic py-2">
                     Toto téma zatím nemá žádná podtémata. Klikněte na "+ Přidat podtéma".
@@ -1777,8 +1999,10 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   </div>
                 )}
               </div>
-            );
-          })}
+            )}
+          </div>
+        );
+      })}
         </div>
       )}
 
@@ -1956,14 +2180,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               </div>
 
               <PdfSvgDropzone
+                userId={effectiveUserId}
                 valueSvgString={editingStudySubtopic?.svgContent}
                 valueSvgUrl={editingStudySubtopic?.svgUrl}
                 onChange={(res) => {
                   if (res) {
                     setEditingStudySubtopic(prev => ({
                       ...prev,
-                      svgContent: res.svgString,
-                      svgUrl: '',
+                      svgUrl: res.svgUrl || prev?.svgUrl || '',
+                      svgContent: res.svgUrl ? '' : res.svgString,
                       hasStudyMaterial: true
                     }));
                   } else {

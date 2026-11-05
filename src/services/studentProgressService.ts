@@ -1,5 +1,5 @@
-import { collection, getDocs, query, orderBy, Timestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, getDocs, query, orderBy, Timestamp, doc, updateDoc } from 'firebase/firestore';
+import { db, auth } from '../lib/firebase';
 import { UserProfile, PracticeSubtopic } from '../types';
 import { getSubtopics } from './practiceService';
 
@@ -24,6 +24,8 @@ export interface StudentProgressItem {
   avatarEmoji?: string;
   avatarBgColor?: string;
   createdAt?: Date;
+  enrolledCourseIds?: string[];
+  courseId?: string;
   totalAttempts: number;
   averagePercentage: number;
   totalQuestions: number;
@@ -159,6 +161,8 @@ export async function getStudentsProgressList(): Promise<StudentProgressItem[]> 
         avatarEmoji: userData.avatarEmoji,
         avatarBgColor: userData.avatarBgColor,
         createdAt: studentCreatedAt,
+        enrolledCourseIds: userData.enrolledCourseIds || [],
+        courseId: userData.courseId,
         totalAttempts,
         averagePercentage,
         totalQuestions,
@@ -185,4 +189,59 @@ export async function getStudentsProgressList(): Promise<StudentProgressItem[]> 
     console.error('Error fetching students progress list:', error);
     throw error;
   }
+}
+
+/**
+ * Aktualizace statusu/role a přiřazených kurzů studenta administrátorem.
+ */
+export async function updateStudentAccess(
+  studentId: string, 
+  data: { role: string; enrolledCourseIds: string[] }
+): Promise<{ success: boolean; role: string; enrolledCourseIds: string[]; courseId?: string | null }> {
+  const safeCourseIds = Array.isArray(data.enrolledCourseIds) 
+    ? data.enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0)
+    : [];
+  const safeRole = data.role || 'free';
+  const primaryCourseId = safeCourseIds.length > 0 ? safeCourseIds[0] : null;
+
+  // 1. Přímý a spolehlivý zápis do Firestore (učitel má v Firestore rules explicitní oprávnění isAdmin())
+  const userDocRef = doc(db, 'users', studentId);
+  const updatePayload: Record<string, any> = {
+    role: safeRole,
+    enrolledCourseIds: safeCourseIds,
+    courseId: primaryCourseId
+  };
+
+  await updateDoc(userDocRef, updatePayload);
+
+  // 2. Na pozadí (neblokující s timeoutem 1.5s) synchronizujeme cache serveru, pokud server běží
+  try {
+    const token = await auth.currentUser?.getIdToken();
+    if (token) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      fetch(`/api/students/${studentId}/update-access`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ role: safeRole, enrolledCourseIds: safeCourseIds }),
+        signal: controller.signal
+      }).catch(() => {
+        // Ignorujeme tiché chyby z neblokující synchronizace
+      }).finally(() => {
+        clearTimeout(timeoutId);
+      });
+    }
+  } catch {
+    // Tichý fallback
+  }
+
+  return {
+    success: true,
+    role: safeRole,
+    enrolledCourseIds: safeCourseIds,
+    courseId: primaryCourseId
+  };
 }

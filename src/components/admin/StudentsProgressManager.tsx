@@ -17,17 +17,30 @@ import {
   BarChart3,
   GraduationCap,
   ShieldCheck,
-  UserCheck
+  UserCheck,
+  Check,
+  Loader2
 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogHeader, 
+  DialogTitle, 
+  DialogFooter, 
+  DialogDescription 
+} from '../ui/dialog';
 import { cn } from '../../lib/utils';
 import { 
   getStudentsProgressList, 
   StudentProgressItem, 
-  StudentPracticeAttempt 
+  StudentPracticeAttempt,
+  updateStudentAccess 
 } from '../../services/studentProgressService';
+import { getAllCourses } from '../../services/courseService';
+import { Course } from '../../types';
 import { toast } from 'sonner';
 import { TeamBlueIcon, CorrectCyanIcon, StarYellowIcon, StarPinkIcon, CapIcon, BrainPinkIcon, BookCyanIcon } from '../common/CustomIcon';
 
@@ -40,6 +53,14 @@ export default function StudentsProgressManager() {
   const [selectedRole, setSelectedRole] = useState<'all' | 'free' | 'premium' | 'course'>('all');
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState<'all' | 'Matematika' | 'Čeština'>('all');
+
+  // Správa přístupu a kurzů
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState(false);
+  const [targetStudent, setTargetStudent] = useState<StudentProgressItem | null>(null);
+  const [accessRole, setAccessRole] = useState<'free' | 'premium' | 'course'>('free');
+  const [accessCourseIds, setAccessCourseIds] = useState<string[]>([]);
+  const [isSavingAccess, setIsSavingAccess] = useState(false);
 
   const loadData = async (isManual = false) => {
     if (isManual) setRefreshing(true);
@@ -66,7 +87,67 @@ export default function StudentsProgressManager() {
 
   useEffect(() => {
     loadData();
+    getAllCourses().then(cData => {
+      setCourses(cData);
+    }).catch(err => {
+      console.warn('Nepodařilo se načíst kurzy pro přiřazení:', err);
+    });
   }, []);
+
+  const handleOpenAccessModal = (student: StudentProgressItem) => {
+    setTargetStudent(student);
+    const normalizedRole = student.role === 'course' 
+      ? 'course' 
+      : (student.role === 'premium' ? 'premium' : 'free');
+    setAccessRole(normalizedRole);
+    setAccessCourseIds(student.enrolledCourseIds || []);
+    setIsAccessModalOpen(true);
+  };
+
+  const handleToggleCourse = (courseId: string) => {
+    setAccessCourseIds(prev => {
+      const exists = prev.includes(courseId);
+      const next = exists ? prev.filter(id => id !== courseId) : [...prev, courseId];
+      if (!exists && next.length > 0) {
+        setAccessRole('course');
+      }
+      return next;
+    });
+  };
+
+  const handleSaveAccess = async () => {
+    if (!targetStudent) return;
+    setIsSavingAccess(true);
+
+    try {
+      await updateStudentAccess(targetStudent.uid, {
+        role: accessRole,
+        enrolledCourseIds: accessCourseIds
+      });
+
+      // Optimistic update of local state
+      setStudents(prev => prev.map(s => {
+        if (s.uid === targetStudent.uid) {
+          return {
+            ...s,
+            role: accessRole,
+            enrolledCourseIds: accessCourseIds,
+            courseId: accessCourseIds.length > 0 ? accessCourseIds[0] : undefined
+          };
+        }
+        return s;
+      }));
+
+      toast.success(`Přístup studenta ${targetStudent.name} byl úspěšně upraven.`);
+      setIsAccessModalOpen(false);
+      setTargetStudent(null);
+    } catch (err: any) {
+      console.error('Chyba při ukládání přístupu:', err);
+      toast.error(err.message || 'Nepodařilo se uložit přístup studenta.');
+    } finally {
+      setIsSavingAccess(false);
+    }
+  };
 
   // Filtrovaný seznam studentů
   const filteredStudents = useMemo(() => {
@@ -428,6 +509,19 @@ export default function StudentsProgressManager() {
                       </p>
                     </div>
                   </div>
+
+                  {/* Button "Spravovat přístup" napravo od jména studenta */}
+                  <div className="flex items-center shrink-0 self-start sm:self-center">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenAccessModal(selectedStudent)}
+                      className="rounded-xl border-gray-200 hover:border-black hover:bg-gray-50 text-gray-800 font-bold text-xs h-10 px-4 flex items-center gap-2 cursor-pointer shadow-2xs"
+                    >
+                      <ShieldCheck size={16} className="text-blue-600" />
+                      <span>Spravovat přístup</span>
+                    </Button>
+                  </div>
                 </div>
 
                 {/* Detailed KPI row */}
@@ -602,6 +696,195 @@ export default function StudentsProgressManager() {
         </div>
 
       </div>
+
+      {/* DIALOG PRO SPRÁVU PŘÍSTUPU A KURZŮ STUDENTA */}
+      <Dialog open={isAccessModalOpen} onOpenChange={setIsAccessModalOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                <ShieldCheck size={18} />
+              </span>
+              <DialogTitle className="text-xl sm:text-2xl font-display font-black text-gray-900">
+                Spravovat přístup
+              </DialogTitle>
+            </div>
+            <DialogDescription className="text-xs sm:text-sm text-gray-500 font-medium">
+              Upravte tarif a přiřazené kurzy pro studenta <span className="font-bold text-gray-800">{targetStudent?.name}</span> ({targetStudent?.email}).
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-6 py-3">
+            {/* 1. VÝBĚR STATUSU / TARIFU */}
+            <div className="space-y-2.5">
+              <label className="text-xs font-black uppercase tracking-wider text-gray-700 block">
+                Status / Tarif studenta
+              </label>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                {/* Free */}
+                <button
+                  type="button"
+                  onClick={() => setAccessRole('free')}
+                  className={cn(
+                    "p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+                    accessRole === 'free'
+                      ? "border-gray-900 bg-gray-900 text-white shadow-sm ring-2 ring-gray-900/10"
+                      : "border-gray-200 bg-white hover:border-gray-300 text-gray-700"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-wider">Free</span>
+                    {accessRole === 'free' && <Check size={14} className="text-emerald-400" />}
+                  </div>
+                  <p className={cn(
+                    "text-[11px] leading-snug",
+                    accessRole === 'free' ? "text-gray-300" : "text-gray-500"
+                  )}>
+                    Základní bezplatný účet, omezené cvičení
+                  </p>
+                </button>
+
+                {/* Premium */}
+                <button
+                  type="button"
+                  onClick={() => setAccessRole('premium')}
+                  className={cn(
+                    "p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+                    accessRole === 'premium'
+                      ? "border-amber-500 bg-amber-500 text-white shadow-sm ring-2 ring-amber-500/20"
+                      : "border-amber-200/80 bg-amber-50/40 hover:border-amber-300 text-amber-950"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1">
+                      <StarPinkIcon size={13} /> Premium
+                    </span>
+                    {accessRole === 'premium' && <Check size={14} className="text-white" />}
+                  </div>
+                  <p className={cn(
+                    "text-[11px] leading-snug",
+                    accessRole === 'premium' ? "text-amber-100" : "text-amber-800/80"
+                  )}>
+                    Kompletní teorie, materiály a neomezené testy
+                  </p>
+                </button>
+
+                {/* Kurz VIP */}
+                <button
+                  type="button"
+                  onClick={() => setAccessRole('course')}
+                  className={cn(
+                    "p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2",
+                    accessRole === 'course'
+                      ? "border-blue-600 bg-blue-600 text-white shadow-sm ring-2 ring-blue-600/20"
+                      : "border-blue-200/80 bg-blue-50/40 hover:border-blue-300 text-blue-950"
+                  )}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-wider flex items-center gap-1">
+                      <CapIcon size={14} /> Kurz (VIP)
+                    </span>
+                    {accessRole === 'course' && <Check size={14} className="text-white" />}
+                  </div>
+                  <p className={cn(
+                    "text-[11px] leading-snug",
+                    accessRole === 'course' ? "text-blue-100" : "text-blue-800/80"
+                  )}>
+                    Živé lekce kurzů + veškeré výhody Premium
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* 2. PŘIŘAZENÍ KURZŮ */}
+            <div className="space-y-2.5 pt-4 border-t border-gray-100">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black uppercase tracking-wider text-gray-700 block">
+                  Přiřazené kurzy ({accessCourseIds.length})
+                </label>
+                <span className="text-[11px] text-gray-400 font-medium">
+                  Označte kurzy, do kterých má mít student přístup
+                </span>
+              </div>
+
+              {courses.length === 0 ? (
+                <div className="p-4 bg-gray-50 rounded-2xl text-center text-xs text-gray-400 border border-dashed border-gray-200">
+                  Žádné kurzy nejsou k dispozici.
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                  {courses.map(course => {
+                    const isChecked = accessCourseIds.includes(course.id);
+
+                    return (
+                      <div
+                        key={course.id}
+                        onClick={() => handleToggleCourse(course.id)}
+                        className={cn(
+                          "p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between gap-3",
+                          isChecked 
+                            ? "bg-blue-50/70 border-blue-200 shadow-2xs" 
+                            : "bg-white hover:bg-gray-50 border-gray-200/80"
+                        )}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className={cn(
+                            "w-5 h-5 rounded-lg border flex items-center justify-center shrink-0 transition-colors",
+                            isChecked 
+                              ? "bg-blue-600 border-blue-600 text-white" 
+                              : "border-gray-300 bg-white"
+                          )}>
+                            {isChecked && <Check size={13} strokeWidth={3} />}
+                          </div>
+
+                          <div className="min-w-0">
+                            <h5 className="font-bold text-xs sm:text-sm text-gray-900 truncate">
+                              {course.title}
+                            </h5>
+                            {course.subject && (
+                              <span className="text-[10px] font-semibold text-gray-400">
+                                {course.subject}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {course.price && (
+                          <span className="text-[11px] font-bold text-gray-500 shrink-0">
+                            {course.price}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter className="pt-4 border-t border-gray-100 flex items-center justify-end gap-2.5">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsAccessModalOpen(false)}
+              disabled={isSavingAccess}
+              className="rounded-xl font-bold text-xs h-10 px-4 cursor-pointer"
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={handleSaveAccess}
+              disabled={isSavingAccess}
+              className="rounded-xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-10 px-5 shadow-sm cursor-pointer"
+            >
+              {isSavingAccess ? <Loader2 size={14} className="animate-spin mr-1.5" /> : null}
+              Uložit změny
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

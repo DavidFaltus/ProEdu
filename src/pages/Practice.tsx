@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
   Play, Plus, 
-  ArrowRight, ChevronRight, Lock
+  ArrowRight, ChevronRight, ChevronDown, Lock
 } from 'lucide-react';
 import { BrainPinkIcon, BrainWhiteIcon, BookCyanIcon, BookWhiteIcon } from '../components/common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
@@ -37,6 +37,14 @@ export default function Practice() {
   const [loading, setLoading] = useState<boolean>(true);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [selectedSubtopicForStudy, setSelectedSubtopicForStudy] = useState<PracticeSubtopic | null>(null);
+  const [expandedTopics, setExpandedTopics] = useState<Record<string, boolean>>({});
+
+  const toggleTopic = (topicId: string) => {
+    setExpandedTopics(prev => ({
+      ...prev,
+      [topicId]: !prev[topicId]
+    }));
+  };
 
   const isTeacher = profile?.role === 'teacher';
 
@@ -54,8 +62,10 @@ export default function Practice() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const fetchedTopics = await getTopics(activeSubject);
-      const fetchedSubtopics = await getSubtopics(undefined, activeSubject);
+      const [fetchedTopics, fetchedSubtopics] = await Promise.all([
+        getTopics(activeSubject),
+        getSubtopics(undefined, activeSubject)
+      ]);
       setTopics(fetchedTopics);
       setSubtopics(fetchedSubtopics);
     } catch (err) {
@@ -172,18 +182,37 @@ export default function Practice() {
           <div className="space-y-6">
             {topics.map((topic) => {
               const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+              const isExpanded = !!expandedTopics[topic.id];
 
               return (
                 <div 
                   key={topic.id}
-                  className="bg-white rounded-[2.5rem] p-6 sm:p-8 border border-gray-100 shadow-sm space-y-5"
+                  className="bg-white rounded-[2.5rem] p-6 sm:p-8 border border-gray-100 shadow-sm transition-all"
                 >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
-                    <div>
-                      <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-md">
-                        Hlavní téma
-                      </span>
-                      <h3 className="text-2xl sm:text-3xl font-playful text-[#1E1B18] mt-1">
+                  {/* Topic Header - clickable to expand/collapse with arrow in the right corner */}
+                  <div 
+                    onClick={() => toggleTopic(topic.id)}
+                    className="flex items-center justify-between gap-4 cursor-pointer select-none group"
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleTopic(topic.id);
+                      }
+                    }}
+                    aria-expanded={isExpanded}
+                  >
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-md">
+                          Hlavní téma
+                        </span>
+                        <span className="text-xs font-bold text-gray-400 bg-gray-50 px-3 py-1 rounded-full">
+                          {topicSubtopics.length} {topicSubtopics.length === 1 ? 'podtéma' : topicSubtopics.length < 5 ? 'podtémata' : 'podtémat'}
+                        </span>
+                      </div>
+                      <h3 className="text-2xl sm:text-3xl font-playful text-[#1E1B18] mt-1 group-hover:text-blue-600 transition-colors">
                         {topic.title}
                       </h3>
                       {topic.description && (
@@ -191,16 +220,25 @@ export default function Practice() {
                       )}
                     </div>
 
-                    <span className="text-xs font-bold text-gray-400 bg-gray-50 px-3 py-1 rounded-full self-start sm:self-auto">
-                      {topicSubtopics.length} {topicSubtopics.length === 1 ? 'podtéma' : topicSubtopics.length < 5 ? 'podtémata' : 'podtémat'}
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0 self-center">
+                      <div className="w-10 h-10 rounded-2xl bg-gray-50 group-hover:bg-blue-50 flex items-center justify-center transition-colors">
+                        <ChevronDown 
+                          size={22} 
+                          className={`text-gray-500 group-hover:text-blue-600 transition-transform duration-300 ${
+                            isExpanded ? 'rotate-180 text-blue-600' : ''
+                          }`} 
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Subtopics List */}
-                  {topicSubtopics.length === 0 ? (
-                    <p className="text-gray-400 text-sm italic py-4">Žádná podtémata v tomto tématu.</p>
-                  ) : (
-                    <div className="grid gap-3.5">
+                  {/* Subtopics List (Rendered when expanded) */}
+                  {isExpanded && (
+                    <div className="mt-6 pt-5 border-t border-gray-100 space-y-4">
+                      {topicSubtopics.length === 0 ? (
+                        <p className="text-gray-400 text-sm italic py-4">Žádná podtémata v tomto tématu.</p>
+                      ) : (
+                        <div className="grid gap-3.5">
                       {topicSubtopics.map((subtopic) => {
                         const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
                         const isLockedForGuest = !user && !isFirstDemo;
@@ -306,12 +344,12 @@ export default function Practice() {
                                 onClick={handlePracticeClick}
                               >
                                 <Button
-                                  className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 px-5 flex items-center gap-1.5 shadow-sm hover:scale-105 transition-transform cursor-pointer"
+                                  className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-5 flex items-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
                                 >
                                   {isLockedForGuest ? (
-                                    <Lock size={14} className="text-yellow-400" />
+                                    <Lock size={14} className="text-[#0F2942]" />
                                   ) : (
-                                    <Play size={14} className="fill-current text-[#F5C400]" />
+                                    <Play size={14} className="fill-[#0F2942] text-[#0F2942]" />
                                   )}
                                   <span>{isLockedForGuest ? 'Odemknout' : 'Procvičovat'}</span>
                                 </Button>
@@ -323,7 +361,9 @@ export default function Practice() {
                     </div>
                   )}
                 </div>
-              );
+              )}
+            </div>
+          );
             })}
           </div>
         )}

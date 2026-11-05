@@ -3,17 +3,20 @@ import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Camera, Lock, AlertCircle } from 'lucide-react';
+import { Camera, Lock, AlertCircle, User, CreditCard } from 'lucide-react';
 import { CapIcon, CorrectCyanIcon } from '../components/common/CustomIcon';
+import SubscriptionManager from '../components/SubscriptionManager';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { cn } from '../lib/utils';
 
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
 export default function Settings() {
   const { profile, updateProfileData, updateUserPassword } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'subscription' ? 'subscription' : 'profile';
   const [name, setName] = useState(profile?.name || '');
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -163,7 +166,7 @@ export default function Settings() {
 
   return (
     <div className="page-container">
-      <section className="text-center space-y-6 max-w-3xl mx-auto mb-12">
+      <section className="text-center space-y-6 max-w-3xl mx-auto mb-8">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }} 
           animate={{ opacity: 1, y: 0 }} 
@@ -177,11 +180,45 @@ export default function Settings() {
           transition={{ delay: 0.2 }} 
           className="text-xl text-gray-500 leading-relaxed"
         >
-          Uprav si své údaje, heslo a zabezpečení účtu.
+          Uprav si své údaje, heslo, zabezpečení účtu a správu předplatného.
         </motion.p>
+
+        {/* Přepínací záložky: Osobní profil vs. Správa předplatného */}
+        <div className="inline-flex items-center p-1.5 bg-white rounded-2xl shadow-md border border-gray-100 mt-4">
+          <button
+            type="button"
+            onClick={() => setSearchParams({ tab: 'profile' })}
+            className={cn(
+              'flex items-center gap-2 px-5 sm:px-7 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
+              activeTab === 'profile'
+                ? 'bg-[#F5C400] text-[#1E1B18] shadow-sm'
+                : 'text-gray-500 hover:text-gray-900'
+            )}
+          >
+            <User size={16} />
+            <span>Osobní profil</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSearchParams({ tab: 'subscription' })}
+            className={cn(
+              'flex items-center gap-2 px-5 sm:px-7 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
+              activeTab === 'subscription'
+                ? 'bg-[#F5C400] text-[#1E1B18] shadow-sm'
+                : 'text-gray-500 hover:text-gray-900'
+            )}
+          >
+            <CreditCard size={16} />
+            <span>Správa předplatného</span>
+          </button>
+        </div>
       </section>
 
-      <div className="max-w-2xl mx-auto bg-white p-8 md:p-12 rounded-[2.5rem] shadow-xl border border-gray-100/50 space-y-8 mt-12">
+      {activeTab === 'subscription' ? (
+        <SubscriptionManager />
+      ) : (
+      <div className="max-w-2xl mx-auto bg-white p-8 md:p-12 rounded-[2.5rem] shadow-xl border border-gray-100/50 space-y-8 mt-8">
         {/* Avatar Section */}
         <div className="flex flex-col items-center gap-6">
           <div className="relative group">
@@ -376,6 +413,7 @@ export default function Settings() {
           </div>
         </div>
       </div>
+      )}
 
       <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] max-w-2xl mx-auto w-full">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />

@@ -21,5 +21,5 @@ export const db = initializeFirestore(app, {
 export const auth = getAuth(app);
 // Explicitly pass the bucket to ensure it's correctly targeted
 export const storage = getStorage(app, `gs://${resolvedFirebaseConfig.storageBucket}`);
-// Nakofigurujeme Firebase tak, aby na Storage limit narážel ihned a spustil Base64 zálohu
-storage.maxUploadRetryTime = 3000;
+// Nastavíme dostatečný limit pro nahrávání velkých souborů (až 30 MB)
+storage.maxUploadRetryTime = 60000;

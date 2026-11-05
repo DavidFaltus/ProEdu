@@ -16,6 +16,7 @@ import {
   BubbleYellowIcon,
   DialogCyanIcon,
   MaterialYellowIcon,
+  BrainPinkIcon,
 } from './common/CustomIcon';
 import { cn } from '../lib/utils';
 import { AppNotification, NotificationType } from '../hooks/useNotifications';
@@ -47,6 +48,12 @@ function formatRelativeTime(date: Date): string {
 
 function getNotificationVisuals(type: NotificationType) {
   switch (type) {
+    case 'practice':
+      return {
+        icon: BrainPinkIcon,
+        bg: 'bg-pink-100 text-[#c37393]',
+        badgeBg: 'bg-pink-50 text-pink-800 border-pink-200'
+      };
     case 'todo':
       return {
         icon: CorrectCyanIcon,
@@ -205,11 +212,13 @@ export default function NotificationPopover({
     };
   }, [isOpen, onClose, triggerRef]);
 
-  // Automatically mark all as read whenever popover opens
+  // Automatically mark all as read only once when popover opens (prevent infinite re-render loop)
+  const prevIsOpenRef = useRef(false);
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !prevIsOpenRef.current) {
       onMarkAllAsRead();
     }
+    prevIsOpenRef.current = isOpen;
   }, [isOpen, onMarkAllAsRead]);
 
   if (!isOpen || typeof document === 'undefined') return null;

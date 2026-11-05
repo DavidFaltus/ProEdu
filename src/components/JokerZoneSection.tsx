@@ -286,9 +286,9 @@ export default function JokerZoneSection() {
               <Button
                 size="sm"
                 onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
               >
-                <Lock size={12} className="text-amber-400" />
+                <Lock size={12} className="text-[#0F2942]" />
                 <span>Registrace pro streak</span>
               </Button>
             ) : hasPracticedToday ? (
@@ -345,7 +345,7 @@ export default function JokerZoneSection() {
                     "h-full rounded-full transition-all duration-300",
                     isCapped 
                       ? "bg-gradient-to-r from-amber-500 to-yellow-400" 
-                      : "bg-[#1E1B18]"
+                      : "bg-[#2B44B8]"
                   )}
                   style={{ 
                     width: `${Math.min(100, Math.round(((isGuest ? 20 : jokers) / (isGuest ? 20 : maxJokersCap)) * 100))}%` 
@@ -451,9 +451,9 @@ export default function JokerZoneSection() {
               <Button
                 size="sm"
                 onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
               >
-                <Lock size={12} className="text-amber-400" />
+                <Lock size={12} className="text-[#0F2942]" />
                 <span>Odemknout doporučení</span>
               </Button>
             ) : currentReferrals >= MAX_REFERRALS ? (
@@ -464,7 +464,7 @@ export default function JokerZoneSection() {
               <Button
                 size="sm"
                 onClick={handleCopyReferral}
-                className="w-full rounded-xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs transition-transform hover:scale-[1.02]"
+                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80 transition-transform hover:scale-[1.02]"
               >
                 {isCopied ? (
                   <>
@@ -473,7 +473,7 @@ export default function JokerZoneSection() {
                   </>
                 ) : (
                   <>
-                    <Copy size={13} className="text-amber-400" />
+                    <Copy size={13} className="text-[#0F2942]" />
                     <span>Kopírovat odkaz pro kamarády</span>
                   </>
                 )}
@@ -620,9 +620,9 @@ export default function JokerZoneSection() {
               <Button
                 size="sm"
                 onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs"
+                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
               >
-                <Lock size={12} className="text-amber-400" />
+                <Lock size={12} className="text-[#0F2942]" />
                 <span>Registrace pro +20 žolíků</span>
               </Button>
             ) : profile?.surveyCompleted ? (

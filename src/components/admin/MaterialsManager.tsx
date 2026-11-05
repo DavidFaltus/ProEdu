@@ -13,6 +13,7 @@ import {
   getAllMaterials, saveMaterial, deleteMaterial, getMaterialById,
   ExistingMaterialItem, PREDEFINED_SUBJECTS 
 } from '../../services/practiceService';
+import { sanitizeSvg } from '../../utils/svgUtils';
 import { auth } from '../../lib/firebase';
 import { StudyStep } from '../../types';
 import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
@@ -36,6 +37,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [newTopic, setNewTopic] = useState('');
   const [newTheory, setNewTheory] = useState('');
   const [uploadedSvgString, setUploadedSvgString] = useState<string>('');
+  const [uploadedSvgUrl, setUploadedSvgUrl] = useState<string>('');
+  const [uploadedThumbnailUrl, setUploadedThumbnailUrl] = useState<string>('');
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -47,6 +50,10 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [editSubject, setEditSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [editTopic, setEditTopic] = useState('');
   const [editTheory, setEditTheory] = useState('');
+  const [editSvgString, setEditSvgString] = useState<string>('');
+  const [editSvgUrl, setEditSvgUrl] = useState<string>('');
+  const [editThumbnailUrl, setEditThumbnailUrl] = useState<string>('');
+  const [editFileName, setEditFileName] = useState<string>('');
   const [editSteps, setEditSteps] = useState<StudyStep[]>([]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
@@ -75,6 +82,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     setNewTopic('');
     setNewTheory('');
     setUploadedSvgString('');
+    setUploadedSvgUrl('');
+    setUploadedThumbnailUrl('');
     setUploadedFileName('');
     setIsUploadModalOpen(true);
   };
@@ -86,7 +95,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       return;
     }
 
-    if (!uploadedSvgString && !newTheory.trim()) {
+    if (!uploadedSvgString && !uploadedSvgUrl && !newTheory.trim()) {
       toast.error('Nahrajte soubor PDF/SVG nebo zadejte textový výklad.');
       return;
     }
@@ -98,6 +107,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         subject: newSubject,
         topic: newTopic.trim() || 'Obecné',
         studyTheory: newTheory.trim(),
+        svgUrl: uploadedSvgUrl || undefined,
+        thumbnailUrl: uploadedThumbnailUrl || undefined,
         svgContent: uploadedSvgString || undefined
       }, effectiveUserId);
 
@@ -122,6 +133,10 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         setEditSubject((full.subject as 'Matematika' | 'Čeština') || 'Matematika');
         setEditTopic(full.topic || '');
         setEditTheory(full.studyTheory || '');
+        setEditSvgString(full.svgContent || '');
+        setEditSvgUrl(full.svgUrl || '');
+        setEditThumbnailUrl(full.thumbnailUrl || '');
+        setEditFileName(full.title || '');
         setEditSteps([]);
       } else {
         toast.error('Nepodařilo se načíst detail materiálu.');
@@ -151,8 +166,9 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         subject: editSubject,
         topic: editTopic.trim() || 'Obecné',
         studyTheory: editTheory.trim(),
-        svgUrl: editFullSubtopic?.svgUrl || undefined,
-        svgContent: editFullSubtopic?.svgContent || undefined
+        svgUrl: editSvgUrl || editFullSubtopic?.svgUrl || undefined,
+        thumbnailUrl: editThumbnailUrl || editFullSubtopic?.thumbnailUrl || undefined,
+        svgContent: editSvgString || editFullSubtopic?.svgContent || undefined
       }, effectiveUserId);
 
       toast.success('Materiál byl úspěšně upraven!');
@@ -295,6 +311,53 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                 key={mat.id}
                 className="bg-white rounded-3xl p-5 border border-gray-100 shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4 group"
               >
+                {/* Visual Thumbnail Preview */}
+                <div 
+                  onClick={() => setPreviewMaterial(mat)}
+                  className="w-full h-44 bg-slate-50/80 rounded-2xl border border-gray-100 overflow-hidden flex items-center justify-center relative cursor-pointer group/thumb hover:border-amber-200 transition-all"
+                >
+                  {mat.thumbnailUrl ? (
+                    <img 
+                      src={mat.thumbnailUrl} 
+                      alt={mat.title} 
+                      className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-300" 
+                      loading="lazy"
+                    />
+                  ) : mat.svgUrl ? (
+                    <img 
+                      src={mat.svgUrl} 
+                      alt={mat.title} 
+                      className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-300" 
+                      loading="lazy"
+                    />
+                  ) : mat.svgContent ? (
+                    <div 
+                      className="w-full h-full flex items-center justify-center p-2 overflow-hidden pointer-events-none group-hover/thumb:scale-105 transition-transform duration-300 [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:h-auto [&>svg]:w-auto"
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(mat.svgContent) }}
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-1.5 text-gray-400 p-4 text-center">
+                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs ${
+                        mat.subject === 'Matematika' ? "bg-teal-50 text-teal-600" : "bg-rose-50 text-rose-600"
+                      }`}>
+                        <BookCyanIcon size={20} />
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                        Grafický list
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Hover Overlay */}
+                  {hasSvg && (
+                    <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center">
+                      <span className="bg-white/95 text-gray-900 px-3 py-1.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 backdrop-blur-xs">
+                        <Eye size={12} /> Zvětšit náhled
+                      </span>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-3">
                   <div className="flex items-center justify-between gap-2">
                     <span className={`text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md ${
@@ -302,7 +365,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     }`}>
                       {mat.subject}
                     </span>
-                    </div>
+                  </div>
 
                   <div>
                     <h4 className="font-bold text-base text-gray-900 group-hover:text-amber-950 transition-colors line-clamp-1">
@@ -417,17 +480,24 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                 Grafický list (Drag & Drop souboru PDF nebo SVG)
               </label>
               <PdfSvgDropzone
+                userId={effectiveUserId}
                 valueSvgString={uploadedSvgString}
+                valueSvgUrl={uploadedSvgUrl}
+                valueThumbnailUrl={uploadedThumbnailUrl}
                 fileName={uploadedFileName}
                 onChange={(res) => {
                   if (res) {
                     setUploadedSvgString(res.svgString);
+                    setUploadedSvgUrl(res.svgUrl || '');
+                    setUploadedThumbnailUrl(res.thumbnail || '');
                     setUploadedFileName(res.fileName);
                     if (!newTitle) {
                       setNewTitle(res.fileName.replace(/\.(pdf|svg)$/i, ''));
                     }
                   } else {
                     setUploadedSvgString('');
+                    setUploadedSvgUrl('');
+                    setUploadedThumbnailUrl('');
                     setUploadedFileName('');
                   }
                 }}
@@ -536,6 +606,33 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     onChange={e => setEditTheory(e.target.value)}
                     rows={4}
                     className="w-full p-3 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                  />
+                </div>
+
+                {/* Drag & Drop PDF / SVG for editing */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-gray-700">
+                    Grafický list (Drag & Drop souboru PDF nebo SVG)
+                  </label>
+                  <PdfSvgDropzone
+                    userId={effectiveUserId}
+                    valueSvgString={editSvgString}
+                    valueSvgUrl={editSvgUrl}
+                    valueThumbnailUrl={editThumbnailUrl}
+                    fileName={editFileName}
+                    onChange={(res) => {
+                      if (res) {
+                        setEditSvgString(res.svgString);
+                        setEditSvgUrl(res.svgUrl || '');
+                        setEditThumbnailUrl(res.thumbnail || '');
+                        setEditFileName(res.fileName);
+                      } else {
+                        setEditSvgString('');
+                        setEditSvgUrl('');
+                        setEditThumbnailUrl('');
+                        setEditFileName('');
+                      }
+                    }}
                   />
                 </div>
               </div>
@@ -754,16 +851,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
             </div>
 
             <div className="flex-1 overflow-auto p-6 bg-slate-50 flex items-center justify-center min-h-[300px]">
-              {previewMaterial.svgContent ? (
-                <div 
-                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
-                  dangerouslySetInnerHTML={{ __html: previewMaterial.svgContent }}
-                />
-              ) : previewMaterial.svgUrl ? (
+              {previewMaterial.svgUrl ? (
                 <img 
                   src={previewMaterial.svgUrl} 
-                  alt="Náhled" 
+                  alt={previewMaterial.title || "Náhled"} 
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
+                />
+              ) : previewMaterial.svgContent ? (
+                <div 
+                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
+                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(previewMaterial.svgContent) }}
                 />
               ) : (
                 <div className="text-center p-8">

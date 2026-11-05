@@ -5,7 +5,8 @@ import { cn, safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { ArrowRight, Play, RotateCcw } from 'lucide-react';
+import { ArrowRight, Play, RotateCcw, Lock } from 'lucide-react';
+import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import CustomIcon, { 
   StarPinkIcon, 
   BulbYellowIcon, 
@@ -82,7 +83,7 @@ const TEACHER_HEADLINE_TEMPLATES = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile, isPremium } = useAuth();
+  const { user, profile, isPremium, openAuthModal } = useAuth();
   const navigate = useNavigate();
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
@@ -91,6 +92,7 @@ export default function StudentDashboard() {
   const isFreeOrGuest = (!user && !profile) || profile?.role === 'free' || (!isPremium && !isTeacher);
   const canViewTutorAndLessons = !isFreeOrGuest;
 
+  const [isPaywallOpen, setIsPaywallOpen] = useState(false);
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
   const [loadingInquiries, setLoadingInquiries] = useState(false);
   const [liveLessons, setLiveLessons] = useState<LiveLesson[]>([]);
@@ -283,6 +285,9 @@ export default function StudentDashboard() {
   };
 
 
+  // Stabilní index náhodného nadpisu zvolený pouze jednou při načtení komponenty
+  const [headlineIndex] = useState(() => Math.floor(Math.random() * 100));
+
   const quote = useMemo(() => {
     const today = new Date().getDate();
     return MOTIVATIONAL_QUOTES[today % MOTIVATIONAL_QUOTES.length];
@@ -290,7 +295,7 @@ export default function StudentDashboard() {
 
   const headerContent = useMemo(() => {
     if (!user && !profile) {
-      const chosen = GUEST_HEADLINES[Math.floor(Math.random() * GUEST_HEADLINES.length)];
+      const chosen = GUEST_HEADLINES[headlineIndex % GUEST_HEADLINES.length];
       return {
         title: chosen.title,
         subtitle: chosen.subtitle
@@ -302,19 +307,19 @@ export default function StudentDashboard() {
     const vocativeName = toCzechVocative(rawName, fallbackVocative);
 
     if (isTeacher) {
-      const template = TEACHER_HEADLINE_TEMPLATES[Math.floor(Math.random() * TEACHER_HEADLINE_TEMPLATES.length)];
+      const template = TEACHER_HEADLINE_TEMPLATES[headlineIndex % TEACHER_HEADLINE_TEMPLATES.length];
       return {
         title: template(vocativeName),
         subtitle: 'Vítej ve svém pracovním prostoru ProEdu. Co máme dnes v plánu?'
       };
     }
 
-    const template = STUDENT_HEADLINE_TEMPLATES[Math.floor(Math.random() * STUDENT_HEADLINE_TEMPLATES.length)];
+    const template = STUDENT_HEADLINE_TEMPLATES[headlineIndex % STUDENT_HEADLINE_TEMPLATES.length];
     return {
       title: template(vocativeName),
       subtitle: 'Vítej ve své studijní zóně ProEdu. Co si dnes procvičíme?'
     };
-  }, [user, profile, isTeacher]);
+  }, [user, profile?.name, isTeacher, headlineIndex]);
 
   return (
     <div className="space-y-6 md:space-y-10">
@@ -409,7 +414,10 @@ export default function StudentDashboard() {
                 </div>
               ) : (
                 <div className="space-y-2.5">
-                  {recommendedItems.slice(0, 3).map((item) => {
+                  {recommendedItems.slice(0, 3).map((item, index) => {
+                    const isLockedForGuest = !user && index === 2;
+                    const isStudyLocked = !isPremium;
+
                     const badgeStyles = {
                       warning: 'bg-rose-100 text-rose-800 border-rose-200',
                       accent: 'bg-purple-100 text-purple-800 border-purple-200',
@@ -424,18 +432,65 @@ export default function StudentDashboard() {
                       success: <CorrectCyanIcon size={11} />
                     }[item.badge.variant];
 
+                    const handleCardClick = () => {
+                      if (isLockedForGuest) {
+                        openAuthModal();
+                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                        return;
+                      }
+                      trackSectionClick('dashboard_recommended_card', `/practice/session/${item.subtopicId}`, {
+                        subtopicId: item.subtopicId,
+                        title: item.title,
+                        subject: item.subject
+                      });
+                      navigate(`/practice/session/${item.subtopicId}`);
+                    };
+
+                    const handleStudyClick = (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      trackSectionClick('dashboard_recommended_study', `/study/${item.subtopicId}`, {
+                        subtopicId: item.subtopicId,
+                        title: item.title,
+                        subject: item.subject,
+                        isLocked: isStudyLocked
+                      });
+                      if (isStudyLocked) {
+                        if (!user) {
+                          openAuthModal();
+                          toast.info('Studium a teorie je dostupné pro předplatitele ProEdu Premium. Přihlaste se prosím.');
+                        } else {
+                          setIsPaywallOpen(true);
+                        }
+                        return;
+                      }
+                      navigate(`/study/${item.subtopicId}`);
+                    };
+
+                    const handlePracticeBtnClick = (e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      if (isLockedForGuest) {
+                        openAuthModal();
+                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                        return;
+                      }
+                      trackSectionClick('dashboard_recommended_practice_btn', `/practice/session/${item.subtopicId}`, {
+                        subtopicId: item.subtopicId,
+                        title: item.title,
+                        subject: item.subject
+                      });
+                      navigate(`/practice/session/${item.subtopicId}`);
+                    };
+
                     return (
                       <div
                         key={item.subtopicId}
-                        onClick={() => {
-                          trackSectionClick('dashboard_recommended_card', `/practice/session/${item.subtopicId}`, {
-                            subtopicId: item.subtopicId,
-                            title: item.title,
-                            subject: item.subject
-                          });
-                          navigate(`/practice/session/${item.subtopicId}`);
-                        }}
-                        className="group p-3 sm:p-3.5 rounded-2xl bg-[#FAF7F0] hover:bg-white border border-gray-200/60 hover:border-gray-300 hover:shadow-sm transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer"
+                        onClick={handleCardClick}
+                        className={cn(
+                          "group p-3 sm:p-3.5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer",
+                          isLockedForGuest
+                            ? "bg-[#FAF7F0]/60 border-gray-200/50 opacity-85 hover:opacity-100"
+                            : "bg-[#FAF7F0] hover:bg-white border-gray-200/60 hover:border-gray-300 hover:shadow-sm"
+                        )}
                       >
                         <div className="flex items-start sm:items-center gap-3 min-w-0 flex-1">
                           <div className={cn("w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 shadow-xs transition-transform group-hover:scale-105 mt-0.5 sm:mt-0", item.bg)}>
@@ -446,10 +501,21 @@ export default function StudentDashboard() {
                               <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded", item.tagClass)}>
                                 {item.subject}
                               </span>
-                              <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1", badgeStyles)}>
-                                {badgeIcon}
-                                {item.badge.text}
-                              </span>
+                              {!user && index < 2 ? (
+                                <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                                  Vyzkoušet zdarma
+                                </span>
+                              ) : isLockedForGuest ? (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border border-amber-200 flex items-center gap-1 bg-amber-100 text-amber-900">
+                                  <Lock size={10} />
+                                  Vyžaduje registraci
+                                </span>
+                              ) : (
+                                <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1", badgeStyles)}>
+                                  {badgeIcon}
+                                  {item.badge.text}
+                                </span>
+                              )}
                             </div>
                             <h4 className="font-bold text-gray-800 text-xs sm:text-sm mt-0.5 group-hover:text-black leading-snug line-clamp-1 sm:line-clamp-2">
                               {item.title}
@@ -465,38 +531,40 @@ export default function StudentDashboard() {
                             <Button
                               size="sm"
                               variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                trackSectionClick('dashboard_recommended_theory', `/study/${item.subtopicId}`, {
-                                  subtopicId: item.subtopicId,
-                                  title: item.title,
-                                  subject: item.subject
-                                });
-                                navigate(`/study/${item.subtopicId}`);
-                              }}
-                              title="Prostudovat teorii před testem"
-                              className="flex-1 sm:flex-none rounded-xl border-gray-200 hover:border-black text-gray-700 font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+                              onClick={handleStudyClick}
+                              title={isStudyLocked ? "Studium vyžaduje ProEdu Premium" : "Prostudovat látku"}
+                              className={cn(
+                                "flex-1 sm:flex-none rounded-xl font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white",
+                                isStudyLocked 
+                                  ? "border-amber-300 hover:border-amber-400 text-amber-900" 
+                                  : "border-gray-200 hover:border-black text-gray-700"
+                              )}
                             >
-                              <BookCyanIcon size={15} />
-                              <span>Teorie</span>
+                              {isStudyLocked ? (
+                                <Lock size={12} className="text-amber-500" />
+                              ) : (
+                                <BookCyanIcon size={15} />
+                              )}
+                              <span>Studovat</span>
+                              {isStudyLocked && (
+                                <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
+                                  PRO
+                                </span>
+                              )}
                             </Button>
                           )}
 
                           <Button
                             size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              trackSectionClick('dashboard_recommended_practice_btn', `/practice/session/${item.subtopicId}`, {
-                                subtopicId: item.subtopicId,
-                                title: item.title,
-                                subject: item.subject
-                              });
-                              navigate(`/practice/session/${item.subtopicId}`);
-                            }}
-                            className="flex-1 sm:flex-none rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs px-4 h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs"
+                            onClick={handlePracticeBtnClick}
+                            className="flex-1 sm:flex-none rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs px-4 h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs border border-blue-200/80"
                           >
-                            <Play size={11} className="fill-current text-[#F5C400]" />
-                            <span>Procvičit</span>
+                            {isLockedForGuest ? (
+                              <Lock size={12} className="text-[#0F2942]" />
+                            ) : (
+                              <Play size={11} className="fill-[#0F2942] text-[#0F2942]" />
+                            )}
+                            <span>{isLockedForGuest ? 'Odemknout' : 'Procvičit'}</span>
                           </Button>
                         </div>
                       </div>
@@ -573,6 +641,13 @@ export default function StudentDashboard() {
           </div>
         );
       })()}
+
+      {/* Paywall modal for non-premium study access */}
+      <UnifiedPaywallModal
+        isOpen={isPaywallOpen}
+        onClose={() => setIsPaywallOpen(false)}
+        type="premium"
+      />
     </div>
   );
 }

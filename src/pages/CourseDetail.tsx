@@ -64,7 +64,7 @@ export default function CourseDetail() {
         <h2 className="text-2xl font-display font-black text-gray-900">Kurz nebyl nalezen</h2>
         <p className="text-gray-500 text-sm">Požadovaný kurz neexistuje nebo byl přesunut.</p>
         <Link to="/courses">
-          <Button className="rounded-xl font-bold bg-[#1E1B18] text-white">
+          <Button className="rounded-xl font-bold bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 cursor-pointer shadow-xs">
             Zpět na přehled kurzů
           </Button>
         </Link>
@@ -95,70 +95,70 @@ export default function CourseDetail() {
       </div>
 
       {/* Hero Header Card */}
-      <div className="bg-gradient-to-br from-[#1E1B18] via-[#241E30] to-[#1E1B18] text-white rounded-[2.5rem] p-6 sm:p-10 shadow-xl relative overflow-hidden border border-indigo-500/20 space-y-6">
-        <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute bottom-0 left-0 w-80 h-80 bg-amber-400/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] rounded-[2.5rem] p-6 sm:p-10 shadow-sm relative overflow-hidden border-2 border-[#B9D8FC] space-y-6">
+        <div className="absolute top-0 right-0 w-96 h-96 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-0 w-80 h-80 bg-blue-200/20 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-indigo-500/20 text-indigo-300 border border-indigo-400/30">
+            <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80">
               {course.subject || 'Příprava na SŠ'}
             </span>
             {course.badge && (
-              <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-400/20 text-amber-300 border border-amber-400/30">
+              <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
                 {course.badge}
               </span>
             )}
             {hasAccess && (
-              <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
+              <span className="px-3 py-0.5 rounded-md text-[11px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1">
                 <ShieldCheck size={12} /> Zapsán v kurzu
               </span>
             )}
           </div>
 
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-playful text-white tracking-tight">
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-playful text-[#0F2942] tracking-tight">
             {course.title}
           </h1>
 
-          <p className="text-gray-300 text-sm sm:text-base max-w-3xl leading-relaxed font-medium">
+          <p className="text-gray-600 text-sm sm:text-base max-w-3xl leading-relaxed font-medium">
             {course.description}
           </p>
         </div>
 
         {/* Quick Meta Pills */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-white/10 relative z-10">
-          <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-blue-200/60 relative z-10">
+          <div className="bg-white/80 border border-blue-100 p-3.5 rounded-2xl space-y-1 shadow-2xs">
+            <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1.5">
               <TeamBlueIcon size={13} /> Lektor
             </span>
-            <p className="text-xs sm:text-sm font-bold text-white truncate" title={course.instructorName || 'Certifikovaný lektor ProEdu'}>
+            <p className="text-xs sm:text-sm font-black text-[#0F2942] truncate" title={course.instructorName || 'Certifikovaný lektor ProEdu'}>
               {course.instructorName || 'Lektor ProEdu'}
             </p>
           </div>
 
-          <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1">
+          <div className="bg-white/80 border border-blue-100 p-3.5 rounded-2xl space-y-1 shadow-2xs">
+            <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1">
               <Clock size={12} /> Harmonogram
             </span>
-            <p className="text-xs sm:text-sm font-bold text-white truncate" title={course.schedule || '1x týdně, 90 minut'}>
+            <p className="text-xs sm:text-sm font-black text-[#0F2942] truncate" title={course.schedule || '1x týdně, 90 minut'}>
               {course.schedule || '1× týdně, 90 min'}
             </p>
           </div>
 
-          <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+          <div className="bg-white/80 border border-blue-100 p-3.5 rounded-2xl space-y-1 shadow-2xs">
+            <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1.5">
               <CalendarBlueIcon size={13} /> Období
             </span>
-            <p className="text-xs sm:text-sm font-bold text-white truncate">
+            <p className="text-xs sm:text-sm font-black text-[#0F2942] truncate">
               {course.startDate && course.endDate ? `${course.startDate} – ${course.endDate}` : 'Celý školní rok'}
             </p>
           </div>
 
-          <div className="bg-white/5 border border-white/10 p-3.5 rounded-2xl space-y-1">
-            <span className="text-[10px] uppercase font-bold text-gray-400 flex items-center gap-1.5">
+          <div className="bg-white/80 border border-blue-100 p-3.5 rounded-2xl space-y-1 shadow-2xs">
+            <span className="text-[10px] uppercase font-bold text-gray-500 flex items-center gap-1.5">
               <StarYellowIcon size={13} /> Náročnost
             </span>
-            <p className="text-xs sm:text-sm font-bold text-amber-300 truncate" title={course.difficulty || 'Cermat 9. třída'}>
+            <p className="text-xs sm:text-sm font-black text-[#2B44B8] truncate" title={course.difficulty || 'Cermat 9. třída'}>
               {course.difficulty || 'Cermat 9. třída'}
             </p>
           </div>

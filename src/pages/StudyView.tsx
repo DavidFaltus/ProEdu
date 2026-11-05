@@ -147,20 +147,20 @@ export default function StudyView() {
       {/* Vizuální výukový list NEBO Teoretický výklad (pokud není k dispozici obrázek) */}
       {hasSvg ? (
         <div className="w-full overflow-x-auto py-1 px-1 sm:px-2 flex justify-center items-start">
-          {subtopic.svgContent ? (
-            <div 
-              className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-sm rounded-2xl bg-white p-2 sm:p-4"
-              dangerouslySetInnerHTML={{ __html: sanitizeSvg(subtopic.svgContent) }}
-            />
-          ) : subtopic.svgUrl ? (
+          {subtopic.svgUrl ? (
             <img 
               src={subtopic.svgUrl} 
               alt={subtopic.title} 
               className="w-full h-auto max-w-full rounded-2xl shadow-sm bg-white p-2 sm:p-4 object-contain"
             />
+          ) : subtopic.svgContent ? (
+            <div 
+              className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-sm rounded-2xl bg-white p-2 sm:p-4"
+              dangerouslySetInnerHTML={{ __html: sanitizeSvg(subtopic.svgContent) }}
+            />
           ) : null}
         </div>
-      ) : subtopic.studyTheory?.trim() ? (
+      ) : (subtopic.studyTheory?.trim() && !subtopic.studyTheory.includes('<svg')) ? (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">

@@ -218,7 +218,33 @@ export async function convertFileToSvg(
     ${svgPagesMarkup}
   </svg>`.trim();
 
-  const thumbnail = pagesData[0]?.imgDataUrl || '';
+  // Create an ultra-compact, crisp thumbnail of page 1 for the card preview
+  let thumbnail = pagesData[0]?.imgDataUrl || '';
+  if (pagesData[0]) {
+    try {
+      const p1 = pagesData[0];
+      const thumbCanvas = document.createElement('canvas');
+      const maxThumbWidth = 600;
+      const thumbScale = Math.min(1, maxThumbWidth / p1.width);
+      thumbCanvas.width = Math.round(p1.width * thumbScale);
+      thumbCanvas.height = Math.round(p1.height * thumbScale);
+      const thumbCtx = thumbCanvas.getContext('2d');
+      if (thumbCtx) {
+        thumbCtx.fillStyle = '#ffffff';
+        thumbCtx.fillRect(0, 0, thumbCanvas.width, thumbCanvas.height);
+        const img = new Image();
+        img.src = p1.imgDataUrl;
+        await new Promise((resolve) => {
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+        });
+        thumbCtx.drawImage(img, 0, 0, thumbCanvas.width, thumbCanvas.height);
+        thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.82);
+      }
+    } catch {
+      thumbnail = pagesData[0].imgDataUrl;
+    }
+  }
 
   return {
     svgString: compositeSvg,

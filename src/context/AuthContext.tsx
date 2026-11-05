@@ -11,7 +11,7 @@ import {
   updatePassword,
   updateProfile as updateAuthProfile
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, Timestamp, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile, UserRole } from '../types';
 import { 
@@ -233,6 +233,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateDoc(docRef, { referralCode: code }).catch(console.warn);
         }
 
+        // Inicializovat lastViewedActivityAt na aktuální čas, pokud chybí (čistý štít bez starého backlogu)
+        if (!freshProfile.lastViewedActivityAt) {
+          const nowTimestamp = Timestamp.now();
+          freshProfile.lastViewedActivityAt = nowTimestamp;
+          updateDoc(docRef, { lastViewedActivityAt: nowTimestamp }).catch(console.warn);
+        }
+
         const override = getDevRoleOverride();
         if (override) {
           freshProfile.role = override;
@@ -269,6 +276,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Rule 16: Least privilege - default to free.
         const today = getTodayDateString();
         const refCode = authUser.uid.slice(0, 8).toUpperCase();
+        const nowTimestamp = Timestamp.now();
         const newProfile: UserProfile = {
           uid: authUser.uid,
           email: authUser.email || '',
@@ -281,7 +289,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           lastDailyGrantDate: today,
           lastJokerResetDate: today,
           dailyVideosWatched: 0,
-          createdAt: Timestamp.now(),
+          lastViewedActivityAt: nowTimestamp,
+          createdAt: nowTimestamp,
         };
         const override = getDevRoleOverride();
         if (override) {
@@ -451,6 +460,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { uid, createdAt, role, ...rest } = data as any;
     const safeData: any = { ...rest };
     if (canChangeRole && role) {
+      safeData.role = role;
       if (typeof window !== 'undefined') {
         localStorage.setItem('proedu_dev_role_override', role);
       }
@@ -465,8 +475,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } catch (apiErr) {
           console.warn('Backend dev set-role sync failed:', apiErr);
         }
-      } else if (profile?.role === 'teacher') {
-        safeData.role = role;
       }
     }
 
@@ -614,6 +622,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             surveyGrade: grade,
             jokers: res.newJokers,
           });
+
+          // Uložíme také přímo do kolekce surveyResponses pro okamžitou viditelnost v adminu
+          const respId = 'survey_' + user.uid;
+          await setDoc(doc(db, 'surveyResponses', respId), {
+            userId: user.uid,
+            userEmail: user.email || '',
+            userName: profile?.name || user.displayName || '',
+            answer: answer,
+            customAnswer: customAnswer || null,
+            school: school,
+            grade: grade,
+            bonusAwarded: 20,
+            createdAt: serverTimestamp(),
+          }, { merge: true });
         } catch (dbErr) {
           console.warn('Direct Firestore write warning:', dbErr);
         }

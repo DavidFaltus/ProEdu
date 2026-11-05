@@ -15,6 +15,7 @@ import { motion } from 'motion/react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Link, useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { sanitizeSvg } from '../utils/svgUtils';
 import { useAuth } from '../context/AuthContext';
 import { getAllMaterials, ExistingMaterialItem } from '../services/practiceService';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
@@ -154,40 +155,101 @@ export default function LearningSheets() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
               {filteredMaterials.map(mat => {
                 const hasSvg = Boolean(mat.svgUrl || mat.svgContent);
+                const hasTheoryText = Boolean(mat.studyTheory && !mat.studyTheory.includes('<svg'));
 
                 return (
                   <motion.div
                     key={mat.id}
                     whileHover={{ y: -3 }}
-                    className="bg-white rounded-3xl p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all flex flex-col justify-between gap-5 group"
+                    className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all flex flex-col justify-between gap-4 group"
                   >
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
-                          mat.subject === 'Matematika' 
-                            ? 'bg-teal-50 text-teal-800 border border-teal-100' 
-                            : 'bg-rose-50 text-rose-800 border border-rose-100'
-                        }`}>
-                          {mat.subject}
-                        </span>
-                      </div>
+                    <div className="space-y-3.5">
+                      {/* Vizuální obrázkový náhled první strany listu */}
+                      <div 
+                        onClick={() => {
+                          if (hasSvg) {
+                            trackSectionClick('material_thumbnail_click', `/study/${mat.id}`, {
+                              materialId: mat.id,
+                              title: mat.title,
+                              subject: mat.subject
+                            });
+                            setPreviewMaterial(mat);
+                          }
+                        }}
+                        className={cn(
+                          "w-full h-44 sm:h-48 rounded-2xl overflow-hidden bg-slate-50 border border-gray-100 relative flex items-center justify-center transition-all group-hover:border-amber-200 shadow-2xs group-hover:shadow-sm",
+                          hasSvg ? "cursor-pointer" : "cursor-default"
+                        )}
+                      >
+                        {mat.thumbnailUrl ? (
+                          <img 
+                            src={mat.thumbnailUrl} 
+                            alt={mat.title} 
+                            className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300" 
+                            loading="lazy"
+                          />
+                        ) : mat.svgUrl ? (
+                          <img 
+                            src={mat.svgUrl} 
+                            alt={mat.title} 
+                            className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300" 
+                            loading="lazy"
+                          />
+                        ) : mat.svgContent ? (
+                          <div 
+                            className="w-full h-full flex items-center justify-center p-2 overflow-hidden pointer-events-none group-hover:scale-105 transition-transform duration-300 [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:h-auto [&>svg]:w-auto"
+                            dangerouslySetInnerHTML={{ __html: sanitizeSvg(mat.svgContent) }}
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center gap-2 text-gray-400 p-4 text-center">
+                            <div className={cn(
+                              "w-12 h-12 rounded-2xl flex items-center justify-center shadow-xs",
+                              mat.subject === 'Matematika' ? "bg-teal-50 text-teal-600" : "bg-rose-50 text-rose-600"
+                            )}>
+                              <BookCyanIcon size={24} />
+                            </div>
+                            <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
+                              Výukový přehled
+                            </span>
+                          </div>
+                        )}
 
-                      <div>
-                        <h4 className="font-display font-black text-lg text-gray-900 group-hover:text-amber-900 transition-colors line-clamp-2">
-                          {mat.title}
-                        </h4>
-                        {mat.topic && (
-                          <p className="text-xs text-gray-400 font-bold mt-1">
-                            Téma: {mat.topic}
-                          </p>
+                        {/* Hover Overlay s ikonou oka pro zvětšení náhledu */}
+                        {hasSvg && (
+                          <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <span className="bg-white/95 text-gray-900 px-3 py-1.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 backdrop-blur-xs">
+                              <Eye size={13} /> Zvětšit náhled
+                            </span>
+                          </div>
                         )}
                       </div>
 
-                      {mat.studyTheory && (
-                        <p className="text-xs text-gray-600 font-medium line-clamp-3 bg-gray-50/80 p-3 rounded-2xl leading-relaxed">
-                          {mat.studyTheory}
-                        </p>
-                      )}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
+                            mat.subject === 'Matematika' 
+                              ? 'bg-teal-50 text-teal-800 border border-teal-100' 
+                              : 'bg-rose-50 text-rose-800 border border-rose-100'
+                          }`}>
+                            {mat.subject}
+                          </span>
+                          {mat.topic && (
+                            <span className="text-[11px] text-gray-400 font-bold truncate max-w-[150px]">
+                              {mat.topic}
+                            </span>
+                          )}
+                        </div>
+
+                        <h4 className="font-display font-black text-base sm:text-lg text-gray-900 group-hover:text-amber-900 transition-colors line-clamp-2">
+                          {mat.title}
+                        </h4>
+
+                        {hasTheoryText && (
+                          <p className="text-xs text-gray-600 font-medium line-clamp-2 bg-gray-50/80 p-2.5 rounded-xl leading-relaxed">
+                            {mat.studyTheory}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
@@ -256,16 +318,16 @@ export default function LearningSheets() {
             </div>
 
             <div className="flex-1 overflow-auto p-6 bg-slate-50 flex items-center justify-center min-h-[300px]">
-              {previewMaterial.svgContent ? (
-                <div 
-                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
-                  dangerouslySetInnerHTML={{ __html: previewMaterial.svgContent }}
-                />
-              ) : previewMaterial.svgUrl ? (
+              {previewMaterial.svgUrl ? (
                 <img 
                   src={previewMaterial.svgUrl} 
-                  alt="Náhled" 
+                  alt={previewMaterial.title || "Náhled"} 
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
+                />
+              ) : previewMaterial.svgContent ? (
+                <div 
+                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
+                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(previewMaterial.svgContent) }}
                 />
               ) : null}
             </div>

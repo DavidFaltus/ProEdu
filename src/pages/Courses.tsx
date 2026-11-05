@@ -56,12 +56,6 @@ export default function Courses() {
     <div className="page-container space-y-8 pb-16">
       {/* Header */}
       <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-center">
-          <span className="px-3.5 py-1 text-xs font-black uppercase tracking-widest bg-indigo-100 text-indigo-900 border border-indigo-200/60 rounded-full inline-flex items-center gap-1.5">
-            <CapIcon size={15} /> Přípravné kurzy ProEdu
-          </span>
-        </motion.div>
-
         <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight">
           {isTeacher ? 'Nabídka a správa kurzů' : isCourseUser ? 'Tvoje online kurzy' : 'Aktuální nabídka kurzů'}
         </motion.h1>
@@ -90,24 +84,24 @@ export default function Courses() {
 
       {/* Paywall Banner for non-course users */}
       {!isCourseUser && !isTeacher && (
-        <div className="bg-gradient-to-r from-[#1E1B18] via-[#241E30] to-[#1E1B18] text-white p-6 sm:p-8 rounded-[2.5rem] shadow-xl border border-indigo-500/20 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] p-6 sm:p-8 rounded-[2.5rem] shadow-sm border-2 border-[#B9D8FC] flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
 
           <div className="space-y-2 text-center md:text-left relative z-10">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider rounded-full border border-white/15">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#B9D8FC] text-[#0F2942] text-xs font-black uppercase tracking-wider rounded-full border border-blue-200/80">
               <StarYellowIcon size={13} /> Živá výuka s lektory
             </span>
-            <h2 className="text-2xl sm:text-3xl font-sans font-black text-white">
+            <h2 className="text-2xl sm:text-3xl font-sans font-black text-[#0F2942]">
               Odemkni si živou online výuku s lektorem
             </h2>
-            <p className="text-gray-300 text-sm sm:text-base max-w-xl leading-relaxed">
+            <p className="text-gray-600 text-sm sm:text-base max-w-xl leading-relaxed font-medium">
               Klikni na libovolný kurz níže pro zobrazení podrobné osnovy témat, harmonogramu a náročnosti.
             </p>
           </div>
 
           <Button
             onClick={() => setIsPaywallOpen(true)}
-            className="h-13 px-8 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-sm shadow-lg shadow-yellow-500/20 shrink-0 cursor-pointer flex items-center gap-2 relative z-10"
+            className="h-13 px-8 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm shadow-sm border border-blue-200/80 shrink-0 cursor-pointer flex items-center gap-2 relative z-10 transition-all hover:scale-102"
           >
             <CapIcon size={19} />
             <span>Zapsat se do kurzu</span>

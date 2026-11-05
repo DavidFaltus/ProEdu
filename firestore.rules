@@ -13,8 +13,12 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher';
+      return isAuthenticated() && (
+        request.auth.token.email == 'ucitel@ucitel.cz' ||
+        ('role' in request.auth.token && request.auth.token.role == 'teacher') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'teacher')
+      );
     }
 
     function unchanged(field) {
@@ -56,7 +60,17 @@ service cloud.firestore {
              (!('surveyAnswer' in data) || data.surveyAnswer == null || (data.surveyAnswer is string && data.surveyAnswer.size() <= 128)) &&
              (!('surveyAnswerCustom' in data) || data.surveyAnswerCustom == null || (data.surveyAnswerCustom is string && data.surveyAnswerCustom.size() <= 256)) &&
              (!('surveySchool' in data) || data.surveySchool == null || (data.surveySchool is string && data.surveySchool.size() <= 200)) &&
-             (!('surveyGrade' in data) || data.surveyGrade == null || (data.surveyGrade is string && data.surveyGrade.size() <= 100));
+             (!('surveyGrade' in data) || data.surveyGrade == null || (data.surveyGrade is string && data.surveyGrade.size() <= 100)) &&
+             (!('lastViewedActivityAt' in data) || data.lastViewedActivityAt == null || data.lastViewedActivityAt is timestamp) &&
+             (!('enrolledCourseIds' in data) || data.enrolledCourseIds == null || (data.enrolledCourseIds is list && data.enrolledCourseIds.size() <= 20)) &&
+             (!('courseId' in data) || data.courseId == null || (data.courseId is string && data.courseId.size() <= 128)) &&
+             (!('subscriptionStatus' in data) || data.subscriptionStatus == null || (data.subscriptionStatus is string && (data.subscriptionStatus == 'active' || data.subscriptionStatus == 'cancelled_at_period_end' || data.subscriptionStatus == 'inactive'))) &&
+             (!('subscriptionPeriodEnd' in data) || data.subscriptionPeriodEnd == null || (data.subscriptionPeriodEnd is string && data.subscriptionPeriodEnd.size() <= 64)) &&
+             (!('subscriptionCancelledAt' in data) || data.subscriptionCancelledAt == null || (data.subscriptionCancelledAt is string && data.subscriptionCancelledAt.size() <= 64)) &&
+             (!('subscriptionCancelReason' in data) || data.subscriptionCancelReason == null || (data.subscriptionCancelReason is string && data.subscriptionCancelReason.size() <= 500)) &&
+             (!('preferredPaymentMethod' in data) || data.preferredPaymentMethod == null || (data.preferredPaymentMethod is string && (data.preferredPaymentMethod == 'comgate' || data.preferredPaymentMethod == 'qr_bank_transfer'))) &&
+             (!('billingDetails' in data) || data.billingDetails == null || data.billingDetails is map) &&
+             (!('premiumSince' in data) || data.premiumSince == null || (data.premiumSince is string && data.premiumSince.size() <= 64));
     }
 
     function isValidTest(data) {
@@ -149,6 +163,8 @@ service cloud.firestore {
              data.createdBy is string && data.createdBy.size() <= 128 &&
              data.createdAt is timestamp &&
              (!('fileUrl' in data) || data.fileUrl == null || (data.fileUrl is string && data.fileUrl.size() <= 2048)) &&
+             (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 2048)) &&
+             (!('thumbnailUrl' in data) || data.thumbnailUrl == null || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 300000)) &&
              (!('fileType' in data) || data.fileType == null || (data.fileType is string && data.fileType.size() <= 128)) &&
              (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
              (!('level' in data) || data.level == null || (data.level is string && data.level.size() <= 128)) &&
@@ -295,7 +311,7 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
       allow create: if isAuthenticated() &&
         isOwner(uid) &&
-        (request.resource.data.role == 'student' || request.resource.data.role == 'free') &&
+        (request.resource.data.role == 'student' || request.resource.data.role == 'free' || (request.auth.token.email == 'ucitel@ucitel.cz' && request.resource.data.role == 'teacher')) &&
         isValidUser(request.resource.data);
       allow update: if isAuthenticated() &&
         (isOwner(uid) || isAdmin()) &&
@@ -460,7 +476,8 @@ service cloud.firestore {
 
     match /surveyResponses/{responseId} {
       allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
-      allow write: if false;
+      allow create: if isAuthenticated() && (isAdmin() || request.resource.data.userId == request.auth.uid);
+      allow update, delete: if isAdmin();
     }
   }
 }

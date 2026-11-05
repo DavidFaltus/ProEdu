@@ -17,6 +17,9 @@ export default defineConfig({
   },
   server: {
     hmr: process.env.DISABLE_HMR !== 'true',
+    watch: {
+      ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
+    },
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:3005',

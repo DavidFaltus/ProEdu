@@ -19,6 +19,18 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('--- FATAL UNHANDLED REJECTION ---', reason);
 });
 
+process.on('exit', (code) => {
+  console.log('--- PROCESS EXIT EVENT WITH CODE:', code);
+});
+
+process.on('SIGTERM', () => {
+  console.log('--- RECEIVED SIGTERM ---');
+});
+
+process.on('SIGINT', () => {
+  console.log('--- RECEIVED SIGINT ---');
+});
+
 const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ? 3000 : 3005));
 
 const __filename = fileURLToPath(import.meta.url);
@@ -81,6 +93,7 @@ async function getDevDb() {
       updateDoc, 
       setDoc, 
       getDoc, 
+      deleteDoc,
       collection, 
       query, 
       where, 
@@ -100,6 +113,7 @@ async function getDevDb() {
       updateDoc, 
       setDoc, 
       getDoc, 
+      deleteDoc,
       collection, 
       query, 
       where, 
@@ -112,13 +126,20 @@ async function getDevDb() {
 }
 
 async function startServer() {
-  app.use(express.json({ limit: '25mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+  const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
+  const uploadsMaterialsDir = path.join(uploadsDir, 'materials');
+  if (!fs.existsSync(uploadsMaterialsDir)) {
+    fs.mkdirSync(uploadsMaterialsDir, { recursive: true });
+  }
+  app.use('/uploads', express.static(uploadsDir));
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
 
   if (req.method === 'OPTIONS') {
     res.status(204).end();
@@ -127,6 +148,54 @@ app.use((req, res, next) => {
 
   next();
 });
+
+const userRoleCache = new Map(); // uid -> { role, expiresAt }
+
+async function resolveUserRole(uid, email, tokenRole) {
+  if (tokenRole) return tokenRole;
+  if (email === 'ucitel@ucitel.cz') return 'teacher';
+
+  const cached = userRoleCache.get(uid);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.role;
+  }
+
+  let role = 'student';
+
+  // 1. Zkusíme Admin SDK
+  try {
+    const uSnap = await Promise.race([
+      db.collection('users').doc(uid).get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+    ]);
+    if (uSnap.exists && uSnap.data()?.role) {
+      role = uSnap.data().role;
+      userRoleCache.set(uid, { role, expiresAt: Date.now() + 60000 });
+      return role;
+    }
+  } catch (adminErr) {
+    // Admin SDK selhal (např. lokální dev bez service account JSON)
+  }
+
+  // 2. Dev fallback přes klientský Firestore (učitel má práva číst users)
+  try {
+    const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+    const cSnap = await cGetDoc(cDoc(clientDb, 'users', uid));
+    if (cSnap.exists()) {
+      const data = cSnap.data();
+      if (data?.role) {
+        role = data.role;
+        userRoleCache.set(uid, { role, expiresAt: Date.now() + 60000 });
+        return role;
+      }
+    }
+  } catch (devErr) {
+    console.warn('[resolveUserRole fallback error]:', devErr?.message || devErr);
+  }
+
+  userRoleCache.set(uid, { role, expiresAt: Date.now() + 15000 });
+  return role;
+}
 
 async function requireAuth(req, res, next) {
   try {
@@ -151,6 +220,7 @@ async function requireAuth(req, res, next) {
               uid: payload.user_id || payload.sub,
               email: payload.email || '',
               name: payload.name || '',
+              role: payload.role || payload.claims?.role || '',
             };
           }
         } catch (e) {
@@ -160,13 +230,8 @@ async function requireAuth(req, res, next) {
       if (!decodedToken) throw verifyErr;
     }
     
-    let role = 'student';
-    const isTeacherEmail = decodedToken.email === 'ucitel@ucitel.cz';
-    if (isTeacherEmail) {
-      role = 'teacher';
-    } else if (decodedToken.role) {
-      role = decodedToken.role;
-    }
+    const role = await resolveUserRole(decodedToken.uid, decodedToken.email, decodedToken.role);
+    console.log(`[requireAuth] User ${decodedToken.email || decodedToken.uid} (${decodedToken.uid}) role resolved to: ${role}`);
 
     req.user = {
       uid: decodedToken.uid,
@@ -182,7 +247,7 @@ async function requireAuth(req, res, next) {
 }
 
 function requireTeacher(req, res, next) {
-  if (req.user?.role !== 'teacher') {
+  if (req.user?.role !== 'teacher' && req.user?.role !== 'admin') {
     res.status(403).json({ error: 'Tato akce je dostupná jen učiteli.' });
     return;
   }
@@ -194,10 +259,18 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-// Dev endpoint pro synchronizaci role do Firestore databáze
+// Dev endpoint pro synchronizaci role a stavu předplatného do Firestore databáze
 app.post('/api/dev/set-role', async (req, res) => {
   try {
-    const { uid, role } = req.body || {};
+    const {
+      uid,
+      role,
+      subscriptionStatus,
+      subscriptionPeriodEnd,
+      subscriptionCancelledAt,
+      subscriptionCancelReason,
+      premiumSince
+    } = req.body || {};
     if (!uid || !role) {
       return res.status(400).json({ error: 'Chybí uid nebo role.' });
     }
@@ -207,17 +280,29 @@ app.post('/api/dev/set-role', async (req, res) => {
       return res.status(400).json({ error: 'Neplatná role.' });
     }
 
+    const updatePayload = { role };
+    if (subscriptionStatus !== undefined) updatePayload.subscriptionStatus = subscriptionStatus;
+    if (subscriptionPeriodEnd !== undefined) updatePayload.subscriptionPeriodEnd = subscriptionPeriodEnd;
+    if (subscriptionCancelledAt !== undefined) updatePayload.subscriptionCancelledAt = subscriptionCancelledAt;
+    if (subscriptionCancelReason !== undefined) updatePayload.subscriptionCancelReason = subscriptionCancelReason;
+    if (premiumSince !== undefined) updatePayload.premiumSince = premiumSince;
+
     try {
       const userRef = db.collection('users').doc(uid);
-      await userRef.set({ role }, { merge: true });
+      await Promise.race([
+        userRef.set(updatePayload, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2000))
+      ]);
+      userRoleCache.delete(uid);
       console.log(`[DEV API via Admin] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
-      return res.json({ success: true, uid, role });
+      return res.json({ success: true, uid, ...updatePayload });
     } catch (adminErr) {
       console.log('[DEV API Admin fallback to dev teacher client]:', adminErr?.message || adminErr);
       const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
-      await cSetDoc(cDoc(clientDb, 'users', uid), { role }, { merge: true });
+      await cSetDoc(cDoc(clientDb, 'users', uid), updatePayload, { merge: true });
+      userRoleCache.delete(uid);
       console.log(`[DEV API via Teacher Client] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
-      return res.json({ success: true, uid, role });
+      return res.json({ success: true, uid, ...updatePayload });
     }
   } catch (err) {
     console.error('[DEV API] Chyba při nastavování role:', err);
@@ -453,7 +538,10 @@ app.get('/api/admin/surveys', requireAuth, requireTeacher, async (req, res) => {
   try {
     let surveys = [];
     try {
-      const snap = await db.collection('surveyResponses').get();
+      const snap = await Promise.race([
+        db.collection('surveyResponses').get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
       surveys = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (adminErr) {
       console.log('[Admin Surveys fallback to dev client]:', adminErr?.message || adminErr);
@@ -462,9 +550,34 @@ app.get('/api/admin/surveys', requireAuth, requireTeacher, async (req, res) => {
       surveys = cSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     }
 
+    // Pokud je v kolekci surveyResponses prázdno, zkontrolujeme uživatelské profily s surveyCompleted
+    if (surveys.length === 0) {
+      try {
+        const { clientDb, collection: cCollection, getDocs: cGetDocs } = await getDevDb();
+        const usersSnap = await cGetDocs(cCollection(clientDb, 'users'));
+        surveys = usersSnap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(u => u.surveyCompleted)
+          .map(u => ({
+            id: 'survey_' + u.uid,
+            userId: u.uid,
+            userEmail: u.email || '',
+            userName: u.name || '',
+            answer: u.surveyAnswer || 'Nezadáno',
+            customAnswer: u.surveyAnswerCustom || null,
+            school: u.surveySchool || '',
+            grade: u.surveyGrade || '',
+            bonusAwarded: 20,
+            createdAt: u.createdAt || null
+          }));
+      } catch (fallbackErr) {
+        console.warn('Fallback users survey read note:', fallbackErr?.message || fallbackErr);
+      }
+    }
+
     surveys.sort((a, b) => {
-      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : 0);
-      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : 0);
+      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (a.createdAt?._seconds ? a.createdAt._seconds * 1000 : 0));
+      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (b.createdAt?._seconds ? b.createdAt._seconds * 1000 : 0));
       return bTime - aTime;
     });
 
@@ -472,6 +585,83 @@ app.get('/api/admin/surveys', requireAuth, requireTeacher, async (req, res) => {
   } catch (err) {
     console.error('Chyba při načítání dotazníků pro admina:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se načíst dotazníky.' });
+  }
+});
+
+// --- ADMIN SURVEY DELETE ENDPOINT ---
+app.delete('/api/admin/surveys/:id', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: 'Chybí ID odpovědi.' });
+    }
+
+    let targetUserId = null;
+
+    try {
+      const docRef = db.collection('surveyResponses').doc(id);
+      const snap = await Promise.race([
+        docRef.get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      if (snap.exists) {
+        targetUserId = snap.data().userId;
+      }
+      await docRef.delete();
+
+      if (targetUserId) {
+        try {
+          await db.collection('users').doc(targetUserId).set({
+            surveyCompleted: false,
+            surveyAnswer: null,
+            surveyAnswerCustom: null,
+            surveySchool: null,
+            surveyGrade: null
+          }, { merge: true });
+        } catch (uErr) {
+          console.warn('Could not reset survey on user (admin):', uErr?.message);
+        }
+      }
+      return res.json({ success: true, message: 'Odpověď z dotazníku byla úspěšně smazána.' });
+    } catch (adminErr) {
+      console.log('[Admin Survey Delete fallback to dev client]:', adminErr?.message || adminErr);
+      const { clientDb, doc: cDoc, getDoc: cGetDoc, deleteDoc: cDeleteDoc, updateDoc: cUpdateDoc } = await getDevDb();
+      const docRef = cDoc(clientDb, 'surveyResponses', id);
+      const snap = await cGetDoc(docRef);
+      if (snap.exists()) {
+        targetUserId = snap.data().userId;
+      } else if (id.startsWith('survey_')) {
+        targetUserId = id.replace('survey_', '');
+      }
+      
+      try {
+        await cDeleteDoc(docRef);
+      } catch (delErr) {
+        console.warn('Doc delete note:', delErr?.message);
+      }
+
+      if (targetUserId) {
+        try {
+          const userRef = cDoc(clientDb, 'users', targetUserId);
+          const uSnap = await cGetDoc(userRef);
+          if (uSnap.exists()) {
+            await cUpdateDoc(userRef, {
+              surveyCompleted: false,
+              surveyAnswer: null,
+              surveyAnswerCustom: null,
+              surveySchool: null,
+              surveyGrade: null
+            });
+          }
+        } catch (uErr) {
+          console.warn('Could not reset survey on user (dev client):', uErr?.message);
+        }
+      }
+      return res.json({ success: true, message: 'Odpověď z dotazníku byla úspěšně smazána.' });
+    }
+  } catch (err) {
+    console.error('Chyba při mazání odpovědi dotazníku:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se smazat odpověď.' });
   }
 });
 
@@ -530,7 +720,7 @@ async function saveOrderDoc(orderId, orderData) {
     const docRef = db.collection('orders').doc(orderId);
     await Promise.race([
       docRef.set(orderData),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 2500))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 1200))
     ]);
     return true;
   } catch (adminErr) {
@@ -546,7 +736,7 @@ async function updateOrderDoc(orderId, updateFields) {
     const docRef = db.collection('orders').doc(orderId);
     await Promise.race([
       docRef.set(updateFields, { merge: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 2500))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 1200))
     ]);
     return true;
   } catch (adminErr) {
@@ -561,7 +751,7 @@ async function getOrderDoc(orderId) {
   try {
     const docSnap = await Promise.race([
       db.collection('orders').doc(orderId).get(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 2500))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 1200))
     ]);
     if (docSnap && docSnap.exists) return { id: docSnap.id, ...docSnap.data() };
   } catch (adminErr) {
@@ -574,15 +764,20 @@ async function getOrderDoc(orderId) {
 }
 
 async function activatePremiumForUser(userId) {
+  const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const updateData = {
     role: 'premium',
-    premiumSince: new Date().toISOString()
+    premiumSince: new Date().toISOString(),
+    subscriptionStatus: 'active',
+    subscriptionPeriodEnd: periodEnd,
+    subscriptionCancelledAt: null,
+    subscriptionCancelReason: null
   };
   try {
     const userRef = db.collection('users').doc(userId);
     await Promise.race([
       userRef.set(updateData, { merge: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 2500))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 1200))
     ]);
     console.log(`[Premium Activation] Úspěšně aktivováno pro ${userId}`);
     return true;
@@ -598,6 +793,8 @@ async function activatePremiumForUser(userId) {
 app.post('/api/orders/create', requireAuth, async (req, res) => {
   try {
     const {
+      orderId: clientOrderId,
+      variableSymbol: clientVariableSymbol,
       clientName,
       billingAddress,
       invoiceEmail,
@@ -627,9 +824,13 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Pro pokračování je nutné odsouhlasit obchodní podmínky.' });
     }
 
-    // Generování 9místného variabilního symbolu
-    const variableSymbol = String(Date.now()).slice(-9);
-    const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    // Generování 9místného variabilního symbolu (nebo použití klientského pro idempotenci)
+    const variableSymbol = clientVariableSymbol && typeof clientVariableSymbol === 'string'
+      ? clientVariableSymbol
+      : String(Date.now()).slice(-9);
+    const orderId = clientOrderId && typeof clientOrderId === 'string'
+      ? clientOrderId
+      : `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 
     // Příprava SPAYD řetězce a zprávy pro příjemce
     const paymentMessage = `ProEdu: ${userEmail}`.slice(0, 60);
@@ -797,28 +998,29 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
   }
 });
 
-// 3. Sandbox simulace platby Comgate (pro testování před aktivací ostrého účtu)
+// 3. Sandbox simulace platby Comgate / Dummy QR (pro testování před aktivací ostrého účtu)
 app.post('/api/payments/comgate/sandbox-simulate-pay', requireAuth, async (req, res) => {
   try {
     const { orderId } = req.body || {};
-    if (!orderId) {
-      return res.status(400).json({ error: 'Chybí orderId.' });
+    const targetUserId = req.user.uid;
+
+    if (orderId) {
+      try {
+        const order = await getOrderDoc(orderId);
+        if (order) {
+          await updateOrderDoc(orderId, {
+            status: 'paid',
+            paidAt: new Date().toISOString(),
+            comgateTransId: `SANDBOX_${Date.now()}`
+          });
+        }
+      } catch (orderErr) {
+        console.warn('[Sandbox Simulate Order Update Warning]:', orderErr?.message || orderErr);
+      }
     }
 
-    const order = await getOrderDoc(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Objednávka nenalezena.' });
-    }
-
-    await updateOrderDoc(orderId, {
-      status: 'paid',
-      paidAt: new Date().toISOString(),
-      comgateTransId: `SANDBOX_${Date.now()}`
-    });
-
-    if (order.userId) {
-      await activatePremiumForUser(order.userId);
-    }
+    await activatePremiumForUser(targetUserId);
+    userRoleCache.delete(targetUserId);
 
     return res.json({
       success: true,
@@ -835,7 +1037,10 @@ app.get('/api/orders/all', requireAuth, requireTeacher, async (req, res) => {
   try {
     let orders = [];
     try {
-      const snap = await db.collection('orders').orderBy('createdAt', 'desc').get();
+      const snap = await Promise.race([
+        db.collection('orders').orderBy('createdAt', 'desc').get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
       orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (adminErr) {
       console.log('[Orders all fallback to dev client]:', adminErr?.message || adminErr);
@@ -858,7 +1063,10 @@ app.get('/api/orders/my', requireAuth, async (req, res) => {
     const userId = req.user.uid;
     let orders = [];
     try {
-      const snap = await db.collection('orders').where('userId', '==', userId).get();
+      const snap = await Promise.race([
+        db.collection('orders').where('userId', '==', userId).get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
       orders = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (adminErr) {
       console.log('[Orders my fallback to dev client]:', adminErr?.message || adminErr);
@@ -872,6 +1080,145 @@ app.get('/api/orders/my', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Chyba při načítání mých objednávek:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se načíst objednávky.' });
+  }
+});
+
+// 5b. Zrušení předplatného (Comgate rekurentní platby + stav v profilu)
+app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { reason, immediate } = req.body || {};
+    const safeReason = typeof reason === 'string' ? reason.slice(0, 500) : 'Bez udání důvodu';
+    const nowIso = new Date().toISOString();
+    const defaultPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    // TODO (Comgate): Při nasazení ostrých klíčů COMGATE_MERCHANT_ID a COMGATE_SECRET
+    // zde zavolat zrušení rekurentní platby v Comgate bráně.
+
+    const updateData = immediate
+      ? {
+          role: 'free',
+          subscriptionStatus: 'inactive',
+          subscriptionCancelledAt: nowIso,
+          subscriptionCancelReason: safeReason
+        }
+      : {
+          subscriptionStatus: 'cancelled_at_period_end',
+          subscriptionCancelledAt: nowIso,
+          subscriptionCancelReason: safeReason,
+          subscriptionPeriodEnd: defaultPeriodEnd
+        };
+
+    try {
+      const userRef = db.collection('users').doc(userId);
+      await Promise.race([
+        userRef.set(updateData, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+      ]);
+    } catch (adminErr) {
+      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+      await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+    }
+
+    userRoleCache.delete(userId);
+
+    return res.json({
+      success: true,
+      immediate: Boolean(immediate),
+      subscriptionStatus: updateData.subscriptionStatus,
+      subscriptionPeriodEnd: updateData.subscriptionPeriodEnd || null,
+      message: immediate
+        ? 'Předplatné bylo okamžitě ukončeno a účet byl přepnut na tarif Free.'
+        : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.'
+    });
+  } catch (err) {
+    console.error('Chyba při rušení předplatného:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se zrušit předplatné.' });
+  }
+});
+
+// 5c. Obnovení předplatného (zrušení výpovědi ke konci období)
+app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const updateData = {
+      role: 'premium',
+      subscriptionStatus: 'active',
+      subscriptionCancelledAt: null,
+      subscriptionPeriodEnd: periodEnd
+    };
+
+    try {
+      const userRef = db.collection('users').doc(userId);
+      await Promise.race([
+        userRef.set(updateData, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+      ]);
+    } catch (adminErr) {
+      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+      await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+    }
+
+    userRoleCache.delete(userId);
+
+    return res.json({
+      success: true,
+      subscriptionStatus: 'active',
+      subscriptionPeriodEnd: periodEnd,
+      message: 'Předplatné ProEducator Premium bylo úspěšně obnoveno!'
+    });
+  } catch (err) {
+    console.error('Chyba při obnovení předplatného:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se obnovit předplatné.' });
+  }
+});
+
+// 5d. Uložení fakturačních údajů (pro iÚčto) a preferované platební metody (Comgate / QR)
+app.put('/api/subscription/billing', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { billingDetails, preferredPaymentMethod } = req.body || {};
+
+    const updateData = {};
+    if (preferredPaymentMethod === 'comgate' || preferredPaymentMethod === 'qr_bank_transfer') {
+      updateData.preferredPaymentMethod = preferredPaymentMethod;
+    }
+
+    if (billingDetails && typeof billingDetails === 'object') {
+      updateData.billingDetails = {
+        clientName: String(billingDetails.clientName || '').trim().slice(0, 128),
+        invoiceEmail: String(billingDetails.invoiceEmail || '').trim().slice(0, 256),
+        street: String(billingDetails.street || '').trim().slice(0, 150),
+        city: String(billingDetails.city || '').trim().slice(0, 100),
+        zip: String(billingDetails.zip || '').trim().slice(0, 20),
+        country: String(billingDetails.country || 'Česká republika').trim().slice(0, 64),
+        ico: String(billingDetails.ico || '').trim().slice(0, 20),
+        dic: String(billingDetails.dic || '').trim().slice(0, 20)
+      };
+    }
+
+    // TODO (iÚčto API): Při napojení klíče IUCTO_API_KEY zde synchronizovat adresář kontaktu v iÚčto.
+
+    try {
+      const userRef = db.collection('users').doc(userId);
+      await Promise.race([
+        userRef.set(updateData, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+      ]);
+    } catch (adminErr) {
+      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+      await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+    }
+
+    return res.json({
+      success: true,
+      ...updateData,
+      message: 'Fakturační a platební nastavení bylo uloženo.'
+    });
+  } catch (err) {
+    console.error('Chyba při ukládání fakturačních údajů:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se uložit fakturační údaje.' });
   }
 });
 
@@ -901,11 +1248,148 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
   }
 });
 
+// 6b. Smazání jednotlivé objednávky (pro učitele / administraci)
+app.delete('/api/orders/:orderId', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    if (!orderId) {
+      return res.status(400).json({ error: 'Chybí ID objednávky.' });
+    }
+
+    try {
+      const docRef = db.collection('orders').doc(orderId);
+      await Promise.race([
+        docRef.delete(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 2500))
+      ]);
+    } catch (adminErr) {
+      console.log('[Orders delete fallback to dev client]:', adminErr?.message || adminErr);
+      const { clientDb, doc: cDoc, deleteDoc: cDeleteDoc } = await getDevDb();
+      await cDeleteDoc(cDoc(clientDb, 'orders', orderId));
+    }
+
+    return res.json({ success: true, message: 'Objednávka byla úspěšně smazána.' });
+  } catch (err) {
+    console.error('Chyba při mazání objednávky:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se smazat objednávku.' });
+  }
+});
+
+// 7. Správa přístupu studenta (role, status a přiřazené kurzy učitelem/adminem)
+app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const { role, enrolledCourseIds } = req.body || {};
+
+    if (!studentId) {
+      return res.status(400).json({ error: 'Chybí ID studenta.' });
+    }
+
+    const validRoles = ['student', 'free', 'premium', 'course'];
+    const safeRole = validRoles.includes(role) ? role : 'free';
+    const safeCourseIds = Array.isArray(enrolledCourseIds) 
+      ? enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0)
+      : [];
+
+    const updateData = {
+      role: safeRole,
+      enrolledCourseIds: safeCourseIds,
+      courseId: safeCourseIds.length > 0 ? safeCourseIds[0] : null,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (safeRole === 'premium' || safeRole === 'course') {
+      updateData.premiumSince = new Date().toISOString();
+    }
+
+    // 1. Zkusíme Admin SDK
+    try {
+      const userRef = db.collection('users').doc(studentId);
+      await Promise.race([
+        userRef.set(updateData, { merge: true }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+      ]);
+      console.log(`[Update Student Access] Úspěšně aktualizován přístup pro ${studentId} (role: ${safeRole}, kurzy: ${safeCourseIds.length})`);
+    } catch (adminErr) {
+      console.log('[Update Student Access fallback to dev client]:', adminErr?.message || adminErr);
+      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+      await cSetDoc(cDoc(clientDb, 'users', studentId), updateData, { merge: true });
+    }
+
+    // Zneplatníme cache role v paměti serveru
+    userRoleCache.delete(studentId);
+
+    return res.json({ 
+      success: true, 
+      message: 'Přístup studenta byl úspěšně aktualizován.',
+      role: safeRole,
+      enrolledCourseIds: safeCourseIds,
+      courseId: safeCourseIds.length > 0 ? safeCourseIds[0] : null
+    });
+  } catch (err) {
+    console.error('Chyba při aktualizaci přístupu studenta:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se aktualizovat přístup studenta.' });
+  }
+});
+
+// 7. Bezpečné nahrávání studijních materiálů (SVG grafické listy a JPEG miniatury)
+app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { svgContent, thumbnailDataUrl, originalName } = req.body || {};
+    if (!svgContent && !thumbnailDataUrl) {
+      return res.status(400).json({ error: 'Chybí obsah souboru pro nahrání.' });
+    }
+
+    const timestamp = Date.now();
+    const randomSuffix = Math.random().toString(36).substring(2, 9);
+    let svgUrl = null;
+    let thumbnailUrl = null;
+
+    if (svgContent) {
+      const safeName = (originalName || 'material')
+        .replace(/[^a-zA-Z0-9_\-\.]/g, '_')
+        .replace(/\.svg$/i, '');
+      const svgFileName = `${timestamp}_${randomSuffix}_${safeName}.svg`;
+      const svgFilePath = path.join(uploadsMaterialsDir, svgFileName);
+      fs.writeFileSync(svgFilePath, svgContent, 'utf8');
+      svgUrl = `/uploads/materials/${svgFileName}`;
+    }
+
+    if (thumbnailDataUrl) {
+      const thumbFileName = `${timestamp}_${randomSuffix}_thumb.jpg`;
+      const thumbFilePath = path.join(uploadsMaterialsDir, thumbFileName);
+      const base64Data = thumbnailDataUrl.replace(/^data:image\/\w+;base64,/, '');
+      fs.writeFileSync(thumbFilePath, Buffer.from(base64Data, 'base64'));
+      thumbnailUrl = `/uploads/materials/${thumbFileName}`;
+    }
+
+    return res.json({
+      success: true,
+      svgUrl,
+      thumbnailUrl
+    });
+  } catch (err) {
+    console.error('Chyba při nahrávání materiálu na server:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se uložit soubor materiálu.' });
+  }
+});
+
+// 404 handler pro všechny neexistující API požadavky, aby nepropadávaly do Vite middleware a nezasekávaly se
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `API endpoint ${req.method} ${req.path} nenalezen.` });
+});
+
 // Vite middleware / static serving
 if (process.env.NODE_ENV !== 'production') {
   const { createServer: createViteServer } = await import('vite');
   const vite = await createViteServer({
-    server: { middlewareMode: true, hmr: true },
+    server: { 
+      middlewareMode: true, 
+      hmr: true,
+      watch: {
+        ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
+      },
+    },
     appType: 'spa',
   });
   app.use(vite.middlewares);
@@ -919,6 +1403,18 @@ if (process.env.NODE_ENV !== 'production') {
     });
   }
 }
+
+// Globální ošetření chyb (např. přerušené requesty z klienta při reloadu)
+app.use((err, req, res, next) => {
+  if (err.type === 'request.aborted' || err.code === 'ECONNABORTED' || err.message?.includes('aborted')) {
+    console.warn('[Server]: Request byl přerušen klientem:', req.path);
+    return;
+  }
+  console.error('[Server Error Handler]:', err);
+  if (!res.headersSent) {
+    res.status(err.status || 500).json({ error: err.message || 'Interní chyba serveru.' });
+  }
+});
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`ProEdu Server running on http://0.0.0.0:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);

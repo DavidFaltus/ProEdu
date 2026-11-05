@@ -8,6 +8,7 @@ import { markInquiryAsRead } from '../services/inquiryService';
 import { LiveLesson } from '../types';
 
 export type NotificationType = 
+  | 'practice'
   | 'todo' 
   | 'test' 
   | 'test_review' 
@@ -34,6 +35,7 @@ export function useNotifications() {
   const [todosList, setTodosList] = useState<any[]>([]);
   const [testsList, setTestsList] = useState<any[]>([]);
   const [sheetsList, setSheetsList] = useState<any[]>([]);
+  const [practiceList, setPracticeList] = useState<any[]>([]);
   const [inquiriesList, setInquiriesList] = useState<any[]>([]);
   const [lessonsList, setLessonsList] = useState<LiveLesson[]>([]);
   const [loading, setLoading] = useState(true);
@@ -48,17 +50,40 @@ export function useNotifications() {
     }
   });
 
-  // Store lastViewed timestamp to compare against (takes the latest of profile or optimistic)
+  const role = profile?.role || 'free';
+  const isTeacher = role === 'teacher';
+  const isCourseUser = role === 'course';
+  const isPremium = role === 'premium' || isCourseUser;
+  const isFree = !isTeacher && !isPremium;
+  const uid = profile?.uid;
+
+  // Enrolled courses for course student
+  const enrolledCourseIds = useMemo(() => {
+    const list: string[] = [];
+    if (profile?.enrolledCourseIds && Array.isArray(profile.enrolledCourseIds)) {
+      list.push(...profile.enrolledCourseIds);
+    }
+    if (profile?.courseId && !list.includes(profile.courseId)) {
+      list.push(profile.courseId);
+    }
+    return list;
+  }, [profile?.enrolledCourseIds, profile?.courseId]);
+
+  // Registration timestamp of user - baseline before which no notification should be displayed
+  const userCreatedAt = useMemo(() => {
+    return profile?.createdAt ? safeToDate(profile.createdAt) || new Date() : new Date();
+  }, [profile?.createdAt]);
+
+  // Store lastViewed timestamp to compare against (takes the latest of profile or optimistic, defaults to registration date)
   const lastViewed = useMemo(() => {
-    const profileDate = profile?.lastViewedActivityAt ? safeToDate(profile.lastViewedActivityAt) || new Date(0) : new Date(0);
+    const profileDate = profile?.lastViewedActivityAt 
+      ? safeToDate(profile.lastViewedActivityAt) || userCreatedAt 
+      : userCreatedAt;
     if (optimisticLastViewed && optimisticLastViewed.getTime() > profileDate.getTime()) {
       return optimisticLastViewed;
     }
     return profileDate;
-  }, [profile?.lastViewedActivityAt, optimisticLastViewed]);
-
-  const isTeacher = profile?.role === 'teacher';
-  const uid = profile?.uid;
+  }, [profile?.lastViewedActivityAt, optimisticLastViewed, userCreatedAt]);
 
   // Realtime listeners based on role
   useEffect(() => {
@@ -66,6 +91,7 @@ export function useNotifications() {
       setTodosList([]);
       setTestsList([]);
       setSheetsList([]);
+      setPracticeList([]);
       setInquiriesList([]);
       setLessonsList([]);
       setLoading(false);
@@ -75,106 +101,11 @@ export function useNotifications() {
     setLoading(true);
     const unsubs: (() => void)[] = [];
 
-    if (!isTeacher) {
-      // 1. Student Todos assigned by teacher (active only, bounded)
-      try {
-        const qTodos = query(
-          collection(db, 'todos'),
-          where('studentId', '==', uid),
-          where('completed', '==', false),
-          limit(20)
-        );
-        const unsubTodos = onSnapshot(
-          qTodos,
-          (snap) => {
-            const items = snap.docs
-              .map(doc => ({ id: doc.id, ...doc.data() }))
-              .filter((item: any) => item.addedBy !== uid && !item.completed);
-            setTodosList(items);
-          },
-          (err) => console.warn('Error listening to notifications (todos):', err)
-        );
-        unsubs.push(unsubTodos);
-      } catch (err) {
-        console.warn('Failed to subscribe to todos notifications', err);
-      }
+    // Helper: fetch only recent items, not older than 30 days and not older than registration
+    const minTimestampDate = new Date(Math.max(userCreatedAt.getTime() - 60000, Date.now() - 30 * 24 * 60 * 60 * 1000));
+    const minTimestamp = Timestamp.fromDate(minTimestampDate);
 
-      // 2. Student Assigned Tests (pending or graded, bounded)
-      try {
-        const qTests = query(
-          collection(db, 'assignedTests'),
-          where('studentId', '==', uid),
-          limit(20)
-        );
-        const unsubTests = onSnapshot(
-          qTests,
-          (snap) => {
-            const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setTestsList(items);
-          },
-          (err) => console.warn('Error listening to notifications (assignedTests):', err)
-        );
-        unsubs.push(unsubTests);
-      } catch (err) {
-        console.warn('Failed to subscribe to tests notifications', err);
-      }
-
-      // 3. Learning sheets (recent sheets only, bounded to avoid broad reads)
-      try {
-        const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-        const qSheets = query(
-          collection(db, 'learningSheets'),
-          where('createdAt', '>=', Timestamp.fromDate(twoWeeksAgo)),
-          limit(10)
-        );
-        const unsubSheets = onSnapshot(
-          qSheets,
-          (snap) => {
-            const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setSheetsList(items);
-          },
-          (err) => console.warn('Error listening to notifications (learningSheets):', err)
-        );
-        unsubs.push(unsubSheets);
-      } catch (err) {
-        console.warn('Failed to subscribe to sheets notifications', err);
-      }
-
-      // 4. Student Inquiries (answered, bounded)
-      try {
-        const qInquiries = query(
-          collection(db, 'questionInquiries'),
-          where('studentId', '==', uid),
-          limit(20)
-        );
-        const unsubInquiries = onSnapshot(
-          qInquiries,
-          (snap) => {
-            const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setInquiriesList(items);
-          },
-          (err) => console.warn('Error listening to notifications (questionInquiries):', err)
-        );
-        unsubs.push(unsubInquiries);
-      } catch (err) {
-        console.warn('Failed to subscribe to student inquiries notifications', err);
-      }
-
-      // 5. Live lessons
-      try {
-        const unsubLessons = subscribeToStudentLiveLessons(
-          uid,
-          (lessons) => {
-            setLessonsList(lessons.filter(l => l.status === 'live' || l.status === 'scheduled'));
-          },
-          (err) => console.warn('Error listening to notifications (liveLessons):', err)
-        );
-        unsubs.push(unsubLessons);
-      } catch (err) {
-        console.warn('Failed to subscribe to student live lessons notifications', err);
-      }
-
-    } else {
+    if (isTeacher) {
       // Teacher Notifications (bounded to latest 25 items)
       // 1. Pending student inquiries waiting for answer
       try {
@@ -229,6 +160,131 @@ export function useNotifications() {
       } catch (err) {
         console.warn('Failed to subscribe to teacher live lessons', err);
       }
+
+    } else {
+      // STUDENT NOTIFICATIONS
+
+      // 1. New practice subtopics - available to ALL students (Free, Pro, Course)
+      try {
+        const qPractice = query(
+          collection(db, 'practiceSubtopics'),
+          where('createdAt', '>=', minTimestamp),
+          limit(15)
+        );
+        const unsubPractice = onSnapshot(
+          qPractice,
+          (snap) => {
+            const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setPracticeList(items);
+          },
+          (err) => console.warn('Error listening to practice subtopics notifications:', err)
+        );
+        unsubs.push(unsubPractice);
+      } catch (err) {
+        console.warn('Failed to subscribe to practice subtopics notifications', err);
+      }
+
+      // If FREE, do NOT subscribe to anything else (no materials, inquiries, tests, todos, live lessons)
+      if (!isFree) {
+        // PRO & COURSE STUDENTS:
+
+        // 2. Learning sheets (recent sheets created after minTimestamp)
+        try {
+          const qSheets = query(
+            collection(db, 'learningSheets'),
+            where('createdAt', '>=', minTimestamp),
+            limit(15)
+          );
+          const unsubSheets = onSnapshot(
+            qSheets,
+            (snap) => {
+              const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setSheetsList(items);
+            },
+            (err) => console.warn('Error listening to notifications (learningSheets):', err)
+          );
+          unsubs.push(unsubSheets);
+        } catch (err) {
+          console.warn('Failed to subscribe to sheets notifications', err);
+        }
+
+        // 3. Student Inquiries (answered, bounded)
+        try {
+          const qInquiries = query(
+            collection(db, 'questionInquiries'),
+            where('studentId', '==', uid),
+            limit(20)
+          );
+          const unsubInquiries = onSnapshot(
+            qInquiries,
+            (snap) => {
+              const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setInquiriesList(items);
+            },
+            (err) => console.warn('Error listening to notifications (questionInquiries):', err)
+          );
+          unsubs.push(unsubInquiries);
+        } catch (err) {
+          console.warn('Failed to subscribe to student inquiries notifications', err);
+        }
+
+        // 4. Student Todos (active only)
+        try {
+          const qTodos = query(
+            collection(db, 'todos'),
+            where('studentId', '==', uid),
+            where('completed', '==', false),
+            limit(20)
+          );
+          const unsubTodos = onSnapshot(
+            qTodos,
+            (snap) => {
+              const items = snap.docs
+                .map(doc => ({ id: doc.id, ...doc.data() }))
+                .filter((item: any) => item.addedBy !== uid && !item.completed);
+              setTodosList(items);
+            },
+            (err) => console.warn('Error listening to notifications (todos):', err)
+          );
+          unsubs.push(unsubTodos);
+        } catch (err) {
+          console.warn('Failed to subscribe to todos notifications', err);
+        }
+
+        // 5. Student Assigned Tests
+        try {
+          const qTests = query(
+            collection(db, 'assignedTests'),
+            where('studentId', '==', uid),
+            limit(20)
+          );
+          const unsubTests = onSnapshot(
+            qTests,
+            (snap) => {
+              const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              setTestsList(items);
+            },
+            (err) => console.warn('Error listening to notifications (assignedTests):', err)
+          );
+          unsubs.push(unsubTests);
+        } catch (err) {
+          console.warn('Failed to subscribe to tests notifications', err);
+        }
+
+        // 6. Live lessons
+        try {
+          const unsubLessons = subscribeToStudentLiveLessons(
+            uid,
+            (lessons) => {
+              setLessonsList(lessons.filter(l => l.status === 'live' || l.status === 'scheduled'));
+            },
+            (err) => console.warn('Error listening to notifications (liveLessons):', err)
+          );
+          unsubs.push(unsubLessons);
+        } catch (err) {
+          console.warn('Failed to subscribe to student live lessons notifications', err);
+        }
+      }
     }
 
     setLoading(false);
@@ -236,7 +292,7 @@ export function useNotifications() {
     return () => {
       unsubs.forEach(unsub => unsub());
     };
-  }, [uid, isTeacher]);
+  }, [uid, isTeacher, isFree, isCourseUser, userCreatedAt]);
 
   // Aggregate into standardized notification objects
   const notifications = useMemo<AppNotification[]>(() => {
@@ -244,105 +300,141 @@ export function useNotifications() {
 
     if (!isTeacher) {
       // Student notifications:
-      // a) Todos
-      todosList.forEach(todo => {
-        const time = safeToDate(todo.createdAt) || new Date(0);
-        list.push({
-          id: `todo-${todo.id}`,
-          type: 'todo',
-          title: todo.title || 'Nový úkol od učitele',
-          description: todo.dueDate ? `Termín do: ${safeToDate(todo.dueDate)?.toLocaleDateString('cs-CZ') || ''}` : 'Nový zadaný úkol v To-Do seznamu',
-          timestamp: time,
-          isNew: time > lastViewed,
-          link: '/todo',
-          tagText: 'Úkol',
+
+      // 1. New Practice Subtopics (for Free, Pro, and Course)
+      practiceList.forEach(subtopic => {
+        const time = safeToDate(subtopic.createdAt) || new Date(0);
+        // Strict check: only items created after user registration
+        if (time.getTime() >= userCreatedAt.getTime()) {
+          list.push({
+            id: `practice-${subtopic.id}`,
+            type: 'practice',
+            title: subtopic.title ? `Nové procvičování: ${subtopic.title}` : 'Nové procvičování',
+            description: subtopic.subjectId 
+              ? `${subtopic.subjectId} • K dispozici v sekci Procvičování` 
+              : 'Nové cvičení k procvičení látky',
+            timestamp: time,
+            isNew: time > lastViewed,
+            link: `/practice/session/${subtopic.id}`,
+            tagText: 'Nové cvičení',
+          });
+        }
+      });
+
+      // If FREE, no other notifications
+      if (!isFree) {
+        // 2. Learning sheets (Pro & Course)
+        sheetsList.forEach(sheet => {
+          const time = safeToDate(sheet.createdAt) || new Date(0);
+          if (time.getTime() >= userCreatedAt.getTime()) {
+            list.push({
+              id: `sheet-${sheet.id}`,
+              type: 'sheet',
+              title: sheet.title || 'Nový studijní materiál',
+              description: sheet.subject ? `${sheet.subject} • K dispozici v sekci Materiály` : 'Nový studijní materiál k procvičování',
+              timestamp: time,
+              isNew: time > lastViewed,
+              link: '/learning',
+              tagText: 'Materiál',
+            });
+          }
         });
-      });
 
-      // b) Tests (Pending & Graded)
-      testsList.forEach(test => {
-        if (test.status === 'pending') {
-          const time = safeToDate(test.assignedAt) || new Date(0);
+        // 3. Todos (Course-tagged for course students, standard for Pro)
+        todosList.forEach(todo => {
+          const time = safeToDate(todo.createdAt) || new Date(0);
+          const isCourseTodo = isCourseUser && (
+            (typeof todo.type === 'string' && todo.type.startsWith('course_')) || 
+            (todo.courseId && enrolledCourseIds.includes(todo.courseId))
+          );
           list.push({
-            id: `test-pending-${test.id}`,
-            type: 'test',
-            title: test.testTitle || 'Přiřazený test',
-            description: 'Nový test čeká na tvé vypracování',
+            id: `todo-${todo.id}`,
+            type: 'todo',
+            title: todo.title || (isCourseTodo ? 'Úkol ke kurzu' : 'Nový úkol od učitele'),
+            description: todo.dueDate 
+              ? `Termín do: ${safeToDate(todo.dueDate)?.toLocaleDateString('cs-CZ') || ''}` 
+              : (isCourseTodo ? 'Nový úkol z tvého kurzu' : 'Nový zadaný úkol v To-Do seznamu'),
             timestamp: time,
             isNew: time > lastViewed,
-            link: `/test/${test.id}`,
-            tagText: 'Test k vyřešení',
+            link: '/todo',
+            tagText: isCourseTodo ? 'Úkol ke kurzu' : 'Úkol',
           });
-        } else if (test.status === 'graded') {
-          const time = safeToDate(test.gradedAt) || safeToDate(test.submittedAt) || new Date(0);
-          list.push({
-            id: `test-graded-${test.id}`,
-            type: 'test_review',
-            title: test.testTitle || 'Vyhodnocený test',
-            description: test.grade ? `Výsledek: známka ${test.grade}` : (test.feedback ? `Hodnocení: ${test.feedback.slice(0, 50)}...` : 'Test byl opraven učitelem'),
-            timestamp: time,
-            isNew: time > lastViewed,
-            link: `/review/${test.id}`,
-            tagText: 'Hodnocení testu',
-          });
-        }
-      });
+        });
 
-      // c) Learning sheets (recent sheets)
-      const twoWeeksAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-      sheetsList.forEach(sheet => {
-        const time = safeToDate(sheet.createdAt) || new Date(0);
-        if (time > twoWeeksAgo || time > lastViewed) {
-          list.push({
-            id: `sheet-${sheet.id}`,
-            type: 'sheet',
-            title: sheet.title || 'Nový studijní materiál',
-            description: sheet.subject ? `${sheet.subject} • K dispozici v sekci Materiály` : 'Nový studijní materiál k procvičování',
-            timestamp: time,
-            isNew: time > lastViewed,
-            link: '/learning',
-            tagText: 'Materiál',
-          });
-        }
-      });
+        // 4. Tests (Pending & Graded)
+        testsList.forEach(test => {
+          const isCourseTest = isCourseUser && Boolean(test.courseId && enrolledCourseIds.includes(test.courseId));
+          if (test.status === 'pending') {
+            const time = safeToDate(test.assignedAt) || new Date(0);
+            list.push({
+              id: `test-pending-${test.id}`,
+              type: 'test',
+              title: test.testTitle || (isCourseTest ? 'Test ke kurzu' : 'Přiřazený test'),
+              description: isCourseTest ? 'Test z tvého kurzu čeká na tvé vypracování' : 'Nový test čeká na tvé vypracování',
+              timestamp: time,
+              isNew: time > lastViewed,
+              link: `/test/${test.id}`,
+              tagText: isCourseTest ? 'Test ke kurzu' : 'Test k vyřešení',
+            });
+          } else if (test.status === 'graded') {
+            const time = safeToDate(test.gradedAt) || safeToDate(test.submittedAt) || new Date(0);
+            list.push({
+              id: `test-graded-${test.id}`,
+              type: 'test_review',
+              title: test.testTitle || (isCourseTest ? 'Vyhodnocený test z kurzu' : 'Vyhodnocený test'),
+              description: test.grade 
+                ? `Výsledek: známka ${test.grade}` 
+                : (test.feedback ? `Hodnocení: ${test.feedback.slice(0, 50)}...` : 'Test byl opraven učitelem'),
+              timestamp: time,
+              isNew: time > lastViewed,
+              link: `/review/${test.id}`,
+              tagText: isCourseTest ? 'Hodnocení kurzu' : 'Hodnocení testu',
+            });
+          }
+        });
 
-      // d) Answered inquiries
-      inquiriesList.forEach(inquiry => {
-        if (inquiry.status === 'answered') {
-          const time = safeToDate(inquiry.repliedAt) || safeToDate(inquiry.createdAt) || new Date(0);
-          const isUnread = !inquiry.isReadByStudent && time > lastViewed;
+        // 5. Answered inquiries
+        inquiriesList.forEach(inquiry => {
+          if (inquiry.status === 'answered') {
+            const time = safeToDate(inquiry.repliedAt) || safeToDate(inquiry.createdAt) || new Date(0);
+            const isUnread = !inquiry.isReadByStudent && time > lastViewed;
+            list.push({
+              id: `inquiry-${inquiry.id}`,
+              type: 'inquiry_answer',
+              title: `Odpověď na: ${inquiry.topic || 'Dotaz k učivu'}`,
+              description: inquiry.reply ? `"${inquiry.reply.slice(0, 60)}${inquiry.reply.length > 60 ? '...' : ''}"` : 'Učitel odpověděl na tvůj dotaz',
+              timestamp: time,
+              isNew: isUnread,
+              link: '/',
+              tagText: 'Odpověď na dotaz',
+            });
+          }
+        });
+
+        // 6. Live lessons
+        lessonsList.forEach(lesson => {
+          const createdTime = safeToDate(lesson.createdAt) || safeToDate(lesson.scheduledAt) || new Date(0);
+          const scheduledTime = safeToDate(lesson.scheduledAt);
+          const isLive = lesson.status === 'live';
+          const isCourseLesson = isCourseUser && (
+            lesson.targetAudience === 'individual' || 
+            Boolean(lesson.studentIds?.includes(uid))
+          );
           list.push({
-            id: `inquiry-${inquiry.id}`,
-            type: 'inquiry_answer',
-            title: `Odpověď na: ${inquiry.topic || 'Dotaz k učivu'}`,
-            description: inquiry.reply ? `"${inquiry.reply.slice(0, 60)}${inquiry.reply.length > 60 ? '...' : ''}"` : 'Učitel odpověděl na tvůj dotaz',
-            timestamp: time,
-            isNew: isUnread,
+            id: `lesson-${lesson.id}`,
+            type: 'lesson',
+            title: lesson.title || (isCourseLesson ? 'Online lekce kurzu' : 'Online hodina'),
+            description: isLive 
+              ? `Lektor ${lesson.teacherName} čeká v hovoru Google Meet` 
+              : `Plánováno: ${scheduledTime ? scheduledTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' }) : ''} (${lesson.teacherName})`,
+            timestamp: createdTime,
+            isNew: createdTime > lastViewed,
             link: '/',
-            tagText: 'Odpověď na dotaz',
+            meetUrl: lesson.meetUrl,
+            tagText: isLive ? 'Právě probíhá' : (isCourseLesson ? 'Lekce kurzu' : 'Online lekce'),
           });
-        }
-      });
-
-      // e) Live lessons
-      lessonsList.forEach(lesson => {
-        const createdTime = safeToDate(lesson.createdAt) || safeToDate(lesson.scheduledAt) || new Date(0);
-        const scheduledTime = safeToDate(lesson.scheduledAt);
-        const isLive = lesson.status === 'live';
-        list.push({
-          id: `lesson-${lesson.id}`,
-          type: 'lesson',
-          title: lesson.title || 'Online hodina',
-          description: isLive 
-            ? `Lektor ${lesson.teacherName} čeká v hovoru Google Meet` 
-            : `Plánováno: ${scheduledTime ? scheduledTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' }) : ''} (${lesson.teacherName})`,
-          timestamp: createdTime,
-          isNew: createdTime > lastViewed,
-          link: '/',
-          meetUrl: lesson.meetUrl,
-          tagText: isLive ? 'Právě probíhá' : 'Online lekce',
         });
-      });
+      }
 
     } else {
       // Teacher notifications:
@@ -400,15 +492,21 @@ export function useNotifications() {
     // Sort descending by timestamp (newest first)
     list.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
     return list;
-  }, [isTeacher, todosList, testsList, sheetsList, inquiriesList, lessonsList, lastViewed]);
+  }, [isTeacher, isFree, isCourseUser, practiceList, todosList, testsList, sheetsList, inquiriesList, lessonsList, lastViewed, userCreatedAt, enrolledCourseIds, uid]);
 
   // Unread badge count
   const unreadCount = useMemo(() => {
     return notifications.filter(n => n.isNew).length;
   }, [notifications]);
 
+  // Ref to access current unreadCount without re-creating markAllAsRead callback
+  const unreadCountRef = useRef(0);
+  unreadCountRef.current = unreadCount;
+
   // Mark all as read by updating optimistic state immediately and persisting to Firestore
   const markAllAsRead = useCallback(async () => {
+    if (unreadCountRef.current === 0) return;
+
     const now = new Date();
     setOptimisticLastViewed(now);
     try {
@@ -416,7 +514,7 @@ export function useNotifications() {
     } catch {}
 
     // Mark any unread inquiries as read for student
-    if (!isTeacher && uid) {
+    if (!isTeacher && uid && !isFree) {
       inquiriesList.forEach(inq => {
         if (inq.status === 'answered' && inq.isReadByStudent === false) {
           markInquiryAsRead(inq.id).catch(err => console.warn('Failed to mark inquiry as read:', err));
@@ -433,7 +531,7 @@ export function useNotifications() {
         console.error('Failed to update lastViewedActivityAt:', err);
       }
     }
-  }, [uid, isTeacher, inquiriesList, updateProfileData]);
+  }, [uid, isTeacher, isFree, inquiriesList, updateProfileData]);
 
   return {
     notifications,

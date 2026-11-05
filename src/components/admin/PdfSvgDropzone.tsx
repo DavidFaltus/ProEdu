@@ -5,21 +5,27 @@ import {
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { convertFileToSvg, ConvertedSvgResult } from '../../utils/pdfToSvg';
+import { uploadMaterialAssets } from '../../services/practiceService';
+import { sanitizeSvg } from '../../utils/svgUtils';
 import { toast } from 'sonner';
 import { MaterialYellowIcon, StarYellowIcon } from '../common/CustomIcon';
 
 interface PdfSvgDropzoneProps {
   valueSvgString?: string;
   valueSvgUrl?: string;
+  valueThumbnailUrl?: string;
   fileName?: string;
-  onChange: (result: { svgString: string; fileName: string; thumbnail?: string } | null) => void;
+  userId?: string;
+  onChange: (result: { svgString: string; fileName: string; thumbnail?: string; svgUrl?: string } | null) => void;
   className?: string;
 }
 
 export default function PdfSvgDropzone({
   valueSvgString,
   valueSvgUrl,
+  valueThumbnailUrl,
   fileName,
+  userId,
   onChange,
   className = ''
 }: PdfSvgDropzoneProps) {
@@ -39,9 +45,9 @@ export default function PdfSvgDropzone({
       return;
     }
 
-    // Limit to 20MB for conversion
-    if (file.size > 20 * 1024 * 1024) {
-      toast.error('Soubor je příliš velký (max 20 MB).');
+    // Limit to 30MB for conversion
+    if (file.size > 30 * 1024 * 1024) {
+      toast.error('Soubor je příliš velký (max 30 MB).');
       return;
     }
 
@@ -53,10 +59,28 @@ export default function PdfSvgDropzone({
         setProgressMsg(msg);
       });
 
+      let storageSvgUrl = '';
+      let storageThumbnailUrl = '';
+
+      try {
+        setProgressMsg('Nahrávám grafický list do zabezpečeného úložiště...');
+        const uploaded = await uploadMaterialAssets(res.svgString, res.thumbnailDataUrl, userId || '', file.name);
+        storageSvgUrl = uploaded.svgUrl;
+        storageThumbnailUrl = uploaded.thumbnailUrl || '';
+      } catch (uploadErr: any) {
+        console.warn('Upload to Storage / Server failed:', uploadErr);
+        if (res.svgString.length > 200000) {
+          throw new Error('Chyba při nahrávání do úložiště: ' + (uploadErr?.message || 'Neznámá chyba') + '. Soubor je příliš velký pro přímé uložení bez funkčního úložiště.');
+        } else {
+          toast.warning('Upozornění: Soubor se nepodařilo uložit do vzdáleného úložiště, bude použit přímý kód.');
+        }
+      }
+
       onChange({
         svgString: res.svgString,
+        svgUrl: storageSvgUrl || undefined,
         fileName: file.name,
-        thumbnail: res.thumbnailDataUrl
+        thumbnail: storageThumbnailUrl || res.thumbnailDataUrl
       });
 
       toast.success(
@@ -248,7 +272,7 @@ export default function PdfSvgDropzone({
               {valueSvgString ? (
                 <div 
                   className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
-                  dangerouslySetInnerHTML={{ __html: valueSvgString }}
+                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(valueSvgString) }}
                 />
               ) : valueSvgUrl ? (
                 <img 

@@ -33,6 +33,16 @@ export interface UserProfile {
   surveyAnswerCustom?: string; // Doplňující text při volbě "Jiné"
   surveySchool?: string; // Škola, na kterou student chodí
   surveyGrade?: string; // Ročník, do kterého student chodí
+  enrolledCourseIds?: string[]; // Seznam ID kurzů, do kterých je student zapsán
+  courseId?: string; // ID primárního kurzu (pokud má role === 'course')
+  // --- Správa předplatného (Comgate & iÚčto) ---
+  subscriptionStatus?: SubscriptionStatus;
+  subscriptionPeriodEnd?: string; // ISO datum konce aktuálního fakturačního období
+  subscriptionCancelledAt?: string | null; // ISO datum žádosti o zrušení
+  subscriptionCancelReason?: string | null; // Důvod zrušení předplatného
+  preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate' | 'qr_bank_transfer')
+  billingDetails?: BillingDetails; // Uložené fakturační údaje pro iÚčto
+  premiumSince?: string;
 }
 
 export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď
@@ -181,12 +191,20 @@ export interface Course {
 
 export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
 export type OrderStatus = 'pending' | 'paid' | 'cancelled';
+export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive';
 
 export interface BillingAddress {
   street: string;
   city: string;
   zip: string;
   country?: string;
+}
+
+export interface BillingDetails extends BillingAddress {
+  clientName: string;
+  invoiceEmail: string;
+  ico?: string;
+  dic?: string;
 }
 
 export interface Order {
@@ -207,6 +225,9 @@ export interface Order {
   spaydString?: string;
   comgateTransId?: string;
   comgateRedirectUrl?: string;
+  iuctoInvoiceId?: string;
+  iuctoInvoiceNumber?: string;
+  iuctoPdfUrl?: string;
   paidAt?: any;
   createdAt: any;
   updatedAt?: any;

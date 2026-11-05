@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, RotateCcw, 
-  ArrowRight, ChevronLeft, ChevronRight, Send
+  ArrowRight, ChevronLeft, ChevronRight, Send, Bookmark
 } from 'lucide-react';
 import {
   BookCyanIcon,
@@ -92,6 +92,9 @@ export default function PracticeSession() {
   const [isSubmittingInquiry, setIsSubmittingInquiry] = useState(false);
   const [askedInquirySet, setAskedInquirySet] = useState<Set<number>>(new Set());
 
+  // Bookmarked / marked questions for later review
+  const [bookmarkedSet, setBookmarkedSet] = useState<Set<number>>(new Set());
+
   // Slider scrolling refs
   const sliderScrollRef = useRef<HTMLDivElement>(null);
   const sliderButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
@@ -178,6 +181,14 @@ export default function PracticeSession() {
       }
     }));
 
+    // Automaticky odebereme označení, jakmile je otázka zodpovězena
+    setBookmarkedSet(prev => {
+      if (!prev.has(currentIndex)) return prev;
+      const next = new Set(prev);
+      next.delete(currentIndex);
+      return next;
+    });
+
     if (!isPremium && user) {
       await consumeOneJoker();
     }
@@ -217,6 +228,14 @@ export default function PracticeSession() {
         tutorFeedback: evalResult.tutorFeedback
       }
     }));
+
+    // Automaticky odebereme označení, jakmile je otázka zodpovězena
+    setBookmarkedSet(prev => {
+      if (!prev.has(currentIndex)) return prev;
+      const next = new Set(prev);
+      next.delete(currentIndex);
+      return next;
+    });
 
     if (!isPremium && user) {
       await consumeOneJoker();
@@ -307,8 +326,21 @@ export default function PracticeSession() {
     setAnswersMap({});
     setOpenInputs({});
     setShowHintMap({});
+    setBookmarkedSet(new Set());
     setIsCompleted(false);
     sessionStartTimeRef.current = Date.now();
+  };
+
+  const handleToggleBookmark = () => {
+    setBookmarkedSet(prev => {
+      const next = new Set(prev);
+      if (next.has(currentIndex)) {
+        next.delete(currentIndex);
+      } else {
+        next.add(currentIndex);
+      }
+      return next;
+    });
   };
 
   // Inquiry submission handler (Decision Q3 = Option A)
@@ -369,7 +401,7 @@ export default function PracticeSession() {
         <div className="flex justify-center gap-3 pt-2">
           {subtopic?.hasStudyMaterial && (
             <Link to={`/study/${subtopic.id}`}>
-              <Button className="rounded-xl bg-[#1E1B18] text-white font-bold">
+              <Button className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black border border-blue-200/80 cursor-pointer shadow-xs">
                 Přejít na teorii (Studovat)
               </Button>
             </Link>
@@ -453,7 +485,7 @@ export default function PracticeSession() {
 
             <Link to="/practice">
               <Button
-                className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold h-12 px-6 flex items-center gap-2 cursor-pointer shadow-md"
+                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black h-12 px-6 flex items-center gap-2 cursor-pointer shadow-xs border border-blue-200/80"
               >
                 <span>Další témata</span>
                 <ArrowRight size={16} />
@@ -597,7 +629,7 @@ export default function PracticeSession() {
           <Button
             size="sm"
             onClick={handleFinishPractice}
-            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-9 px-4 cursor-pointer shadow-sm transition-transform hover:scale-102"
+            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 px-4 cursor-pointer shadow-xs border border-blue-200/80 transition-transform hover:scale-102"
           >
             Ukončit a vyhodnotit
           </Button>
@@ -623,6 +655,7 @@ export default function PracticeSession() {
             {questions.map((_, idx) => {
               const ans = answersMap[idx];
               const isActive = idx === currentIndex;
+              const isBookmarked = bookmarkedSet.has(idx);
               
               // Determine button color
               let colorClasses = 'bg-gray-100 text-gray-700 hover:bg-gray-200 border-gray-200';
@@ -640,8 +673,11 @@ export default function PracticeSession() {
                   // Answered incorrectly: Red
                   colorClasses = 'bg-rose-500 hover:bg-rose-600 text-white border-rose-600';
                 }
+              } else if (isBookmarked) {
+                // Bookmarked question not yet answered: Bright orange
+                colorClasses = 'bg-orange-500 hover:bg-orange-600 text-white border-orange-600';
               } else if (isActive) {
-                colorClasses = 'bg-[#FAF7F0] text-[#1E1B18] border-[#1E1B18]';
+                colorClasses = 'bg-blue-50 text-[#0F2942] border-[#B9D8FC]';
               }
 
               return (
@@ -650,9 +686,9 @@ export default function PracticeSession() {
                   ref={el => { sliderButtonRefs.current[idx] = el; }}
                   onClick={() => setCurrentIndex(idx)}
                   className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl text-xs sm:text-sm font-bold flex items-center justify-center shrink-0 border transition-all cursor-pointer ${colorClasses} ${
-                    isActive ? 'ring-2 ring-inset ring-[#1E1B18] shadow-sm font-black' : ''
+                    isActive ? 'ring-2 ring-inset ring-[#2B44B8] shadow-sm font-black' : ''
                   }`}
-                  title={`Přejít na otázku ${idx + 1}`}
+                  title={isBookmarked ? `Otázka ${idx + 1} (označeno k návratu)` : `Přejít na otázku ${idx + 1}`}
                 >
                   {idx + 1}
                 </button>
@@ -677,7 +713,7 @@ export default function PracticeSession() {
           </div>
           <div className="w-full h-1.5 bg-gray-100 rounded-full overflow-hidden">
             <div 
-              className="h-full bg-[#1E1B18] rounded-full transition-all duration-300"
+              className="h-full bg-[#2B44B8] rounded-full transition-all duration-300"
               style={{ width: `${progressPercent}%` }}
             />
           </div>
@@ -692,7 +728,7 @@ export default function PracticeSession() {
         {/* Card Header with Question Type, Hint & Inquiry buttons */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-5 relative z-10">
           <div className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-xl bg-[#1E1B18] text-white text-xs font-black flex items-center justify-center shadow-xs">
+            <span className="w-8 h-8 rounded-xl bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 text-xs font-black flex items-center justify-center shadow-2xs">
               {currentIndex + 1}
             </span>
             <span className="px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-gray-100 text-gray-700">
@@ -710,6 +746,25 @@ export default function PracticeSession() {
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Bookmark / Mark question button */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleToggleBookmark}
+              className={`rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5 transition-colors ${
+                bookmarkedSet.has(currentIndex)
+                  ? 'bg-orange-50 text-orange-950 border border-orange-200/80 hover:bg-orange-100 shadow-2xs'
+                  : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              }`}
+              title={bookmarkedSet.has(currentIndex) ? 'Zrušit označení otázky' : 'Označit otázku k návratu'}
+            >
+              <Bookmark
+                size={15}
+                className={bookmarkedSet.has(currentIndex) ? 'fill-orange-500 text-orange-500' : 'text-gray-500'}
+              />
+              <span>{bookmarkedSet.has(currentIndex) ? 'Označeno' : 'Označit otázku'}</span>
+            </Button>
+
             {/* Ask Tutor button (Decision Q3 = Option A) */}
             <Button
               variant="ghost"
@@ -725,7 +780,6 @@ export default function PracticeSession() {
             >
               <DialogCyanIcon size={16} />
               <span>Doptat se lektora</span>
-              {!isPremium && <StarPinkIcon size={13} className="ml-0.5" />}
               {askedInquirySet.has(currentIndex) && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500" title="Dotaz odeslán" />
               )}
@@ -877,7 +931,7 @@ export default function PracticeSession() {
                 <Button
                   onClick={handleCheckOpenAnswer}
                   disabled={!(openInputs[currentIndex] || '').trim()}
-                  className="h-16 rounded-2xl bg-[#1E1B18] hover:bg-[#332f2b] text-white px-8 font-black text-base cursor-pointer shadow-md shrink-0"
+                  className="h-16 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 font-black text-base cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
                 >
                   Zkontrolovat
                 </Button>
@@ -941,7 +995,7 @@ export default function PracticeSession() {
             {currentIndex + 1 < questions.length ? (
               <Button
                 onClick={handleNext}
-                className="rounded-2xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-black text-sm px-7 h-12 shadow-md flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
+                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-7 h-12 shadow-xs flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
               >
                 <span>Další otázka</span>
                 <ArrowRight size={16} />
@@ -949,7 +1003,7 @@ export default function PracticeSession() {
             ) : (
               <Button
                 onClick={handleFinishPractice}
-                className="rounded-2xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-black text-sm px-7 h-12 shadow-md flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
+                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-7 h-12 shadow-xs flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
               >
                 <span>Zobrazit vyhodnocení</span>
                 <ArrowRight size={16} />
@@ -1018,7 +1072,7 @@ export default function PracticeSession() {
             <Button
               onClick={handleSubmitInquiry}
               disabled={isSubmittingInquiry || !inquiryComment.trim()}
-              className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold h-11 px-6 flex items-center gap-2 cursor-pointer shadow-md disabled:opacity-40"
+              className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black h-11 px-6 flex items-center gap-2 cursor-pointer shadow-xs disabled:opacity-40"
             >
               <Send size={15} />
               <span>{isSubmittingInquiry ? 'Odesílání...' : 'Odeslat dotaz lektorovi'}</span>

@@ -94,27 +94,26 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
     <aside className={cn("w-64 md:w-72 shrink-0 bg-white border-r border-gray-100 flex flex-col justify-between p-5 sm:p-6 h-full md:h-[100dvh] md:sticky md:top-0 shadow-sm z-30 overflow-y-auto overscroll-contain", className)}>
       <div className="flex-1 flex flex-col min-h-0">
         {/* Logo and Brand */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between relative">
           <Link 
             to="/" 
             onClick={() => {
               trackSectionClick('sidebar_logo', '/');
               if (onNavigate) onNavigate();
             }} 
-            className="flex flex-row items-center gap-2 group py-2 pl-2 shrink-0"
+            className="w-full flex items-center justify-center group py-2"
           >
             <img 
-              src={`${import.meta.env.BASE_URL}photo/logo2.svg`} 
-              alt="ProEdu" 
-              className="h-[46px] md:h-[51px] w-auto group-hover:scale-105 transition-transform"
+              src={`${import.meta.env.BASE_URL}photo/proeducator-logo.svg`} 
+              alt="ProEducator" 
+              className="w-full max-w-[235px] md:max-w-[255px] h-auto max-h-[68px] group-hover:scale-105 transition-transform object-contain"
               referrerPolicy="no-referrer"
             />
-            <span className="font-playful text-3xl text-[#F5C400] leading-none mt-3">-cator</span>
           </Link>
           {onNavigate && (
             <button
               onClick={onNavigate}
-              className="md:hidden p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+              className="md:hidden absolute right-0 top-1/2 -translate-y-1/2 p-2 rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
               aria-label="Zavřít menu"
             >
               ✕
@@ -249,25 +248,45 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                 </div>
               </div>
 
-              {/* Řádek 2: Role / Odznáček plánu a žolíky */}
+              {/* Řádek 2: Role / Odznáček plánu a žolíky (kliknutím otevře Správu předplatného) */}
               <div className="pt-2 border-t border-gray-200/50 flex items-center justify-between gap-1.5">
                 {profile?.role === 'premium' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 py-1 px-2.5 rounded-lg border border-amber-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                  <Link
+                    to="/settings?tab=subscription"
+                    onClick={onNavigate}
+                    title="Otevřít správu předplatného"
+                    className="w-full text-center text-[10px] font-black uppercase tracking-wider text-amber-800 bg-amber-100/90 hover:bg-amber-200/90 py-1 px-2.5 rounded-lg border border-amber-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  >
                     <StarPinkIcon size={14} /> Premium účet
-                  </span>
+                  </Link>
                 ) : profile?.role === 'course' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                  <Link
+                    to="/settings?tab=subscription"
+                    onClick={onNavigate}
+                    title="Otevřít správu předplatného"
+                    className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 hover:bg-blue-200/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  >
                     <CapIcon size={14} /> Kurz student
-                  </span>
+                  </Link>
                 ) : profile?.role === 'teacher' ? (
-                  <span className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1.5 shadow-2xs">
+                  <Link
+                    to="/settings?tab=subscription"
+                    onClick={onNavigate}
+                    title="Otevřít správu předplatného"
+                    className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 hover:bg-purple-200/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  >
                     <StarYellowIcon size={14} /> Učitel
-                  </span>
+                  </Link>
                 ) : (
                   <div className="flex items-center justify-between w-full">
-                    <span className="text-[10px] font-black uppercase tracking-wider text-gray-600 bg-gray-100/80 px-2 py-0.5 rounded-lg border border-gray-200/70">
+                    <Link
+                      to="/settings?tab=subscription"
+                      onClick={onNavigate}
+                      title="Otevřít správu předplatného"
+                      className="text-[10px] font-black uppercase tracking-wider text-gray-600 bg-gray-100/80 hover:bg-gray-200/90 hover:text-gray-900 px-2 py-0.5 rounded-lg border border-gray-200/70 transition-colors cursor-pointer"
+                    >
                       Základní plán
-                    </span>
+                    </Link>
                     <span className="text-[10px] font-bold text-gray-700 bg-white px-2 py-0.5 rounded-lg border border-gray-200/70 flex items-center gap-1.5 shadow-2xs">
                       <span>🃏</span>
                       <span className="font-mono font-black text-gray-900">{jokers}</span>

@@ -2,7 +2,8 @@ import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch,
   query, where, Timestamp 
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { db, auth, storage } from '../lib/firebase';
 import { cacheManager } from '../lib/cacheManager';
 import { 
   PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig 
@@ -59,7 +60,12 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
       topics = topics.filter(t => t.subjectId === subjectId);
     }
 
-    return topics.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    return topics.sort((a, b) => {
+      const orderA = typeof a.order === 'number' ? a.order : 0;
+      const orderB = typeof b.order === 'number' ? b.order : 0;
+      if (orderA !== orderB) return orderA - orderB;
+      return (a.title || '').localeCompare(b.title || '');
+    });
   } catch (error) {
     console.error('Error fetching topics:', error);
     return [];
@@ -93,32 +99,81 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
   const now = Timestamp.now();
   const effectiveUserId = getEffectiveUserId(userId);
   const title = topicData.title?.trim() || 'Nové téma';
+  const subjectId = topicData.subjectId || 'Matematika';
 
   if (topicData.id) {
     const docRef = doc(db, 'customTopics', topicData.id);
-    await updateDoc(docRef, {
+    const updatePayload: Record<string, any> = {
       name: title,
       title: title,
-      subjectId: topicData.subjectId || 'Matematika',
+      subjectId: subjectId,
       description: topicData.description?.trim() || '',
-      order: typeof topicData.order === 'number' ? topicData.order : 0,
       updatedAt: now
-    });
+    };
+    if (typeof topicData.order === 'number') {
+      updatePayload.order = topicData.order;
+    }
+    await updateDoc(docRef, updatePayload);
     cacheManager.invalidate('topics');
     return topicData.id;
   } else {
+    let assignedOrder = topicData.order;
+    if (typeof assignedOrder !== 'number') {
+      // Find maximum order of topics in this subject to place at the end of the queue
+      try {
+        const q = query(collRef, where('subjectId', '==', subjectId));
+        const snap = await getDocs(q);
+        let maxOrder = 0;
+        snap.forEach(d => {
+          const val = d.data().order;
+          if (typeof val === 'number' && val > maxOrder) {
+            maxOrder = val;
+          }
+        });
+        assignedOrder = Math.max(maxOrder, snap.size) + 1;
+      } catch (err) {
+        console.warn('Could not determine max order for topic, defaulting to 1:', err);
+        assignedOrder = 1;
+      }
+    }
+
     const newDoc = await addDoc(collRef, {
       name: title,
       title: title,
-      subjectId: topicData.subjectId || 'Matematika',
+      subjectId: subjectId,
       description: topicData.description?.trim() || '',
-      order: typeof topicData.order === 'number' ? topicData.order : 0,
+      order: assignedOrder,
       createdAt: now,
       createdBy: effectiveUserId
     });
     cacheManager.invalidate('topics');
     return newDoc.id;
   }
+}
+
+/**
+ * Updates the sort order for multiple topics in batches.
+ */
+export async function updateTopicsOrder(orderedTopics: { id: string; order: number }[]): Promise<void> {
+  if (!orderedTopics || orderedTopics.length === 0) return;
+
+  const now = Timestamp.now();
+  const BATCH_SIZE = 450;
+  for (let i = 0; i < orderedTopics.length; i += BATCH_SIZE) {
+    const chunk = orderedTopics.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+    for (const item of chunk) {
+      if (!item.id) continue;
+      const docRef = doc(db, 'customTopics', item.id);
+      batch.update(docRef, {
+        order: item.order,
+        updatedAt: now
+      });
+    }
+    await batch.commit();
+  }
+
+  cacheManager.invalidate('topics');
 }
 
 export async function deleteTopic(topicId: string): Promise<void> {
@@ -210,8 +265,15 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     : [];
   const sampleProblem = subtopicData.sampleProblem || null;
   const svgUrl = subtopicData.svgUrl || null;
-  const svgContent = subtopicData.svgContent || null;
-  const hasStudyMaterial = !!(svgUrl || svgContent || studyTheory || studySteps.length > 0 || sampleProblem);
+  let safeSvgContent = subtopicData.svgContent || null;
+  if (safeSvgContent) {
+    if (safeSvgContent.length > 200000) {
+      safeSvgContent = null;
+    } else if (svgUrl && safeSvgContent.length > 50000) {
+      safeSvgContent = null;
+    }
+  }
+  const hasStudyMaterial = !!(svgUrl || safeSvgContent || studyTheory || studySteps.length > 0 || sampleProblem);
   const practiceConfig = subtopicData.practiceConfig ? cleanPracticeConfig(subtopicData.practiceConfig) : null;
 
   return {
@@ -222,7 +284,7 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     order,
     hasStudyMaterial,
     svgUrl,
-    svgContent,
+    svgContent: safeSvgContent,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -322,11 +384,18 @@ export function buildSubtopicUpdatePayload(
 
   const sampleProblem = updates.sampleProblem !== undefined ? updates.sampleProblem : (existing.sampleProblem || null);
   const svgUrl = updates.svgUrl !== undefined ? updates.svgUrl : (existing.svgUrl || null);
-  const svgContent = updates.svgContent !== undefined ? updates.svgContent : (existing.svgContent || null);
+  let safeSvgContent = updates.svgContent !== undefined ? updates.svgContent : (existing.svgContent || null);
+  if (safeSvgContent) {
+    if (safeSvgContent.length > 200000) {
+      safeSvgContent = null;
+    } else if (svgUrl && safeSvgContent.length > 50000) {
+      safeSvgContent = null;
+    }
+  }
 
   const hasStudyMaterial = updates.hasStudyMaterial !== undefined
     ? updates.hasStudyMaterial
-    : !!(svgUrl || svgContent || studyTheory || (studySteps && studySteps.length > 0) || sampleProblem);
+    : !!(svgUrl || safeSvgContent || studyTheory || (studySteps && studySteps.length > 0) || sampleProblem);
 
   let practiceConfig: PracticeConfig | null | undefined = existing.practiceConfig;
   if (updates.practiceConfig !== undefined) {
@@ -341,7 +410,7 @@ export function buildSubtopicUpdatePayload(
     order,
     hasStudyMaterial,
     svgUrl,
-    svgContent,
+    svgContent: safeSvgContent,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -387,6 +456,8 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
 // -------------------------------------------------------------
 // MATERIALS / LEARNING SHEETS API (Stored in `learningSheets`)
 // -------------------------------------------------------------
+// LEARNING SHEETS / MATERIALS API
+// -------------------------------------------------------------
 
 export const LEARNING_SHEETS_COLLECTION = 'learningSheets';
 
@@ -396,6 +467,8 @@ export interface ExistingMaterialItem {
   subject: string;
   topic: string;
   svgUrl?: string | null;
+  thumbnailUrl?: string | null;
+  fileUrl?: string | null;
   svgContent?: string | null;
   studyTheory?: string;
   hasStudyMaterial: boolean;
@@ -410,19 +483,193 @@ export interface MaterialInput {
   studyTheory?: string;
   svgContent?: string | null;
   svgUrl?: string | null;
+  thumbnailUrl?: string | null;
+  fileUrl?: string | null;
   fileType?: string;
+}
+
+/**
+ * Nahraje soubory grafického listu (SVG a volitelně JPEG náhled).
+ * Nejprve zkusí Firebase Storage; pokud není inicializován/dostupný, automaticky použije serverové API (/api/materials/upload).
+ */
+export async function uploadMaterialAssets(
+  svgContent: string,
+  thumbnailDataUrl?: string,
+  userId?: string,
+  fileName?: string
+): Promise<{ svgUrl: string; thumbnailUrl?: string }> {
+  const cleanUserId = userId || auth.currentUser?.uid || 'teacher';
+  let svgUrl = '';
+  let thumbnailUrl = '';
+
+  // 1. Zkusíme Firebase Storage
+  try {
+    const fileId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.svg`;
+    const storageRef = ref(storage, `learningSheets/${cleanUserId}/${fileId}`);
+    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
+    const snapshot = await uploadBytes(storageRef, blob, {
+      contentType: 'image/svg+xml',
+      customMetadata: {
+        originalName: fileName || 'material.svg',
+        uploadedBy: cleanUserId
+      }
+    });
+    svgUrl = await getDownloadURL(snapshot.ref);
+
+    if (thumbnailDataUrl) {
+      try {
+        const thumbFileId = `${Date.now()}_thumb_${Math.random().toString(36).substring(2, 9)}.jpg`;
+        const thumbStorageRef = ref(storage, `learningSheets/${cleanUserId}/${thumbFileId}`);
+        const response = await fetch(thumbnailDataUrl);
+        const thumbBlob = await response.blob();
+        const thumbSnapshot = await uploadBytes(thumbStorageRef, thumbBlob, {
+          contentType: 'image/jpeg',
+          customMetadata: {
+            uploadedBy: cleanUserId
+          }
+        });
+        thumbnailUrl = await getDownloadURL(thumbSnapshot.ref);
+      } catch (thumbErr) {
+        console.warn('Miniatura se do Storage nenahrála, pokračuji bez ní:', thumbErr);
+      }
+    }
+
+    if (svgUrl) {
+      return { svgUrl, thumbnailUrl: thumbnailUrl || undefined };
+    }
+  } catch (storageErr) {
+    console.warn('[Firebase Storage nedostupný, použijeme serverové úložiště API]:', storageErr);
+  }
+
+  // 2. Automatický fallback na serverové API /api/materials/upload
+  const token = await auth.currentUser?.getIdToken();
+  const res = await fetch('/api/materials/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({
+      svgContent,
+      thumbnailDataUrl: thumbnailDataUrl || undefined,
+      originalName: fileName || 'material.svg'
+    })
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `Upload do serverového úložiště selhal (HTTP ${res.status})`);
+  }
+
+  const data = await res.json();
+  return {
+    svgUrl: data.svgUrl,
+    thumbnailUrl: data.thumbnailUrl || undefined
+  };
+}
+
+/**
+ * Nahraje vygenerovaný SVG grafický list do Storage a vrátí trvalou veřejnou/autentizovanou URL.
+ */
+export async function uploadLearningSheetSvg(
+  svgContent: string,
+  userId: string,
+  fileName?: string
+): Promise<string> {
+  const result = await uploadMaterialAssets(svgContent, undefined, userId, fileName);
+  return result.svgUrl;
+}
+
+/**
+ * Nahraje náhledovou miniaturu (JPEG z 1. strany) do Storage a vrátí URL.
+ */
+export async function uploadLearningSheetThumbnail(
+  thumbnailDataUrl: string,
+  userId: string
+): Promise<string> {
+  const cleanUserId = userId || auth.currentUser?.uid || 'teacher';
+
+  // 1. Zkusíme Firebase Storage
+  try {
+    const fileId = `${Date.now()}_thumb_${Math.random().toString(36).substring(2, 9)}.jpg`;
+    const storageRef = ref(storage, `learningSheets/${cleanUserId}/${fileId}`);
+    const response = await fetch(thumbnailDataUrl);
+    const blob = await response.blob();
+    const snapshot = await uploadBytes(storageRef, blob, {
+      contentType: 'image/jpeg',
+      customMetadata: {
+        uploadedBy: cleanUserId
+      }
+    });
+    return await getDownloadURL(snapshot.ref);
+  } catch (storageErr) {
+    console.warn('[Thumbnail storage upload failed, falling back to server API]:', storageErr);
+  }
+
+  // 2. Fallback na serverové API
+  const token = await auth.currentUser?.getIdToken();
+  const resp = await fetch('/api/materials/upload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify({
+      thumbnailDataUrl
+    })
+  });
+
+  if (!resp.ok) {
+    const errData = await resp.json().catch(() => ({}));
+    throw new Error(errData.error || `Upload miniatury selhal s kódem ${resp.status}`);
+  }
+
+  const data = await resp.json();
+  return data.thumbnailUrl;
 }
 
 export function normalizeMaterialPayload(input: MaterialInput) {
   const title = input.title?.trim() || 'Nový výukový materiál';
   const subject = input.subject?.trim() || 'Matematika';
   const topic = input.topic?.trim() || 'Obecné';
-  const fileUrl = input.svgUrl?.trim() || null;
-  const fileType = input.fileType || (input.svgContent ? 'image/svg+xml' : 'application/pdf');
+  const svgUrl = input.svgUrl?.trim() || null;
+  const fileUrl = input.fileUrl?.trim() || svgUrl || null;
+  
+  // Ochrana před příliš velkými inline base64 náhledy v dokumentu Firestore
+  let thumbnailUrl = input.thumbnailUrl?.trim() || null;
+  if (thumbnailUrl && thumbnailUrl.startsWith('data:') && thumbnailUrl.length > 100000) {
+    thumbnailUrl = null;
+  }
+
+  const fileType = input.fileType || (svgUrl ? 'image/svg+xml' : 'application/pdf');
+
+  // SVG ukládáme do Firestore content jen pokud je malé (např. < 200 KB) jako nouzový fallback,
+  // jinak se spoléhá na svgUrl v úložišti, aby se NIKDY nepřekročil tvrdý 1MB limit Firestore.
+  let safeSvgContent = input.svgContent || null;
+  if (safeSvgContent) {
+    if (safeSvgContent.length > 200000) {
+      safeSvgContent = null;
+    } else if (svgUrl && safeSvgContent.length > 50000) {
+      safeSvgContent = null;
+    }
+  }
+
+  // Pokud byl nahrán velký soubor, ale nepodařilo se získat URL z úložiště a obsah byl oříznut:
+  if (!svgUrl && !fileUrl && !safeSvgContent && input.svgContent && input.svgContent.length > 200000) {
+    throw new Error(
+      `Grafický list má velikost ${(input.svgContent.length / 1024 / 1024).toFixed(1)} MB, což překračuje limit databáze Firestore (1 MB). Soubor musí být úspěšně nahrán do úložiště a mít platnou URL.`
+    );
+  }
+
+  // Zajistíme, že se do textového výkladu nedostane kód z .svg souboru
+  let cleanStudyTheory = input.studyTheory?.trim() || '';
+  if (cleanStudyTheory.startsWith('<svg') || cleanStudyTheory.includes('xmlns="http://www.w3.org/2000/svg"')) {
+    cleanStudyTheory = '';
+  }
 
   const contentObj = {
-    studyTheory: input.studyTheory?.trim() || '',
-    svgContent: input.svgContent || null
+    studyTheory: cleanStudyTheory,
+    svgContent: safeSvgContent
   };
 
   return {
@@ -430,6 +677,8 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     subject,
     topic,
     fileUrl,
+    svgUrl,
+    thumbnailUrl,
     fileType,
     content: JSON.stringify(contentObj)
   };
@@ -441,21 +690,25 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
   const effectiveUserId = getEffectiveUserId(userId);
   const normalized = normalizeMaterialPayload(materialData);
 
-  const payload: any = {
-    ...normalized,
-    createdBy: effectiveUserId
-  };
-
   if (materialData.id) {
     const docRef = doc(db, LEARNING_SHEETS_COLLECTION, materialData.id);
-    await updateDoc(docRef, payload);
+    const updatePayload: any = {
+      ...normalized,
+      updatedAt: now
+    };
+    // Nikdy neměníme imutabilní pole při updateDoc
+    delete updatePayload.createdBy;
+    delete updatePayload.createdAt;
+    await updateDoc(docRef, updatePayload);
     cacheManager.invalidate('materials');
     return materialData.id;
   } else {
-    const newDoc = await addDoc(collRef, {
-      ...payload,
+    const payload: any = {
+      ...normalized,
+      createdBy: effectiveUserId,
       createdAt: now
-    });
+    };
+    const newDoc = await addDoc(collRef, payload);
     cacheManager.invalidate('materials');
     return newDoc.id;
   }
@@ -476,17 +729,31 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
     try {
       parsedContent = JSON.parse(data.content);
     } catch {
-      parsedContent = { studyTheory: data.content };
+      if (data.content.startsWith('<svg') || data.content.includes('<svg')) {
+        parsedContent = { svgContent: data.content, studyTheory: '' };
+      } else {
+        parsedContent = { studyTheory: data.content };
+      }
     }
   }
+
+  let studyTheory = parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') && !data.content.startsWith('<svg') ? data.content : '');
+  let svgContent = parsedContent.svgContent || null;
+  if (typeof studyTheory === 'string' && (studyTheory.startsWith('<svg') || studyTheory.includes('xmlns="http://www.w3.org/2000/svg"'))) {
+    if (!svgContent) svgContent = studyTheory;
+    studyTheory = '';
+  }
+
   return {
     id: snap.id,
     title: data.title || '',
     subject: data.subject || 'Matematika',
     topic: data.topic || '',
-    svgUrl: data.fileUrl || null,
-    svgContent: parsedContent.svgContent || null,
-    studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' ? data.content : ''),
+    svgUrl: data.svgUrl || data.fileUrl || null,
+    thumbnailUrl: data.thumbnailUrl || null,
+    fileUrl: data.fileUrl || data.svgUrl || null,
+    svgContent: svgContent,
+    studyTheory: studyTheory,
     hasStudyMaterial: true,
     createdAt: data.createdAt
   };
@@ -504,17 +771,31 @@ export async function getAllMaterials(): Promise<ExistingMaterialItem[]> {
           try {
             parsedContent = JSON.parse(data.content);
           } catch {
-            parsedContent = { studyTheory: data.content };
+            if (data.content.startsWith('<svg') || data.content.includes('<svg')) {
+              parsedContent = { svgContent: data.content, studyTheory: '' };
+            } else {
+              parsedContent = { studyTheory: data.content };
+            }
           }
         }
+
+        let studyTheory = parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') && !data.content.startsWith('<svg') ? data.content : '');
+        let svgContent = parsedContent.svgContent || null;
+        if (typeof studyTheory === 'string' && (studyTheory.startsWith('<svg') || studyTheory.includes('xmlns="http://www.w3.org/2000/svg"'))) {
+          if (!svgContent) svgContent = studyTheory;
+          studyTheory = '';
+        }
+
         return {
           id: d.id,
           title: data.title || 'Materiál',
           subject: data.subject || 'Matematika',
           topic: data.topic || '',
-          svgUrl: data.fileUrl || null,
-          svgContent: parsedContent.svgContent || null,
-          studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' ? data.content : ''),
+          svgUrl: data.svgUrl || data.fileUrl || null,
+          thumbnailUrl: data.thumbnailUrl || null,
+          fileUrl: data.fileUrl || data.svgUrl || null,
+          svgContent: svgContent,
+          studyTheory: studyTheory,
           hasStudyMaterial: true,
           createdAt: data.createdAt
         };
@@ -535,6 +816,7 @@ export async function deleteSubtopic(subtopicId: string): Promise<void> {
     }
     await deleteDoc(doc(db, PRACTICE_SUBTOPICS_COLLECTION, subtopicId));
     cacheManager.invalidate('subtopics');
+    cacheManager.invalidate('questions');
   } catch (error) {
     console.error('Error deleting subtopic:', error);
     throw error;
@@ -545,32 +827,61 @@ export async function deleteSubtopic(subtopicId: string): Promise<void> {
 // QUESTIONS API (Stored in `questions`)
 // -------------------------------------------------------------
 
+function mapDocToQuestion(d: any): PracticeQuestion {
+  const data = d.data();
+  return {
+    id: d.id,
+    question: data.question || '',
+    type: data.type || (Array.isArray(data.options) && data.options.length > 0 ? 'choice' : 'open'),
+    options: Array.isArray(data.options) ? data.options : [],
+    correctAnswer: data.correctAnswer || '',
+    hint: data.hint || '',
+    explanation: data.explanation || '',
+    difficulty: data.difficulty || 'Střední',
+    subjectId: data.subjectId || 'Matematika',
+    topicId: data.topicId || data.topic || '',
+    subtopicId: data.subtopicId || '',
+    imageUrl: data.imageUrl || '',
+    svgContent: data.svgContent || '',
+    createdAt: data.createdAt,
+    createdBy: data.createdBy
+  } as PracticeQuestion;
+}
+
+/**
+ * Načte všechny otázky jedním dotazem do cache a seskupí je podle subtopicId (10x–30x rychlejší než N sekvenčních dotazů)
+ */
+export async function getAllQuestionsGroupedBySubtopic(): Promise<Record<string, PracticeQuestion[]>> {
+  try {
+    const allQuestions = await cacheManager.getOrFetch('questions:all', async () => {
+      const collRef = collection(db, 'questions');
+      const snap = await getDocs(collRef);
+      return snap.docs.map(mapDocToQuestion);
+    }, 5 * 60 * 1000);
+
+    const grouped: Record<string, PracticeQuestion[]> = {};
+    for (const q of allQuestions) {
+      if (!q.subtopicId) continue;
+      if (!grouped[q.subtopicId]) {
+        grouped[q.subtopicId] = [];
+      }
+      grouped[q.subtopicId].push(q);
+    }
+    return grouped;
+  } catch (error) {
+    console.error('Error fetching all grouped questions:', error);
+    return {};
+  }
+}
+
 export async function getQuestionsForSubtopic(subtopicId: string): Promise<PracticeQuestion[]> {
   try {
-    const collRef = collection(db, 'questions');
-    const q = query(collRef, where('subtopicId', '==', subtopicId));
-    const snap = await getDocs(q);
-
-    return snap.docs.map(d => {
-      const data = d.data();
-      return {
-        id: d.id,
-        question: data.question || '',
-        type: data.type || (Array.isArray(data.options) && data.options.length > 0 ? 'choice' : 'open'),
-        options: Array.isArray(data.options) ? data.options : [],
-        correctAnswer: data.correctAnswer || '',
-        hint: data.hint || '',
-        explanation: data.explanation || '',
-        difficulty: data.difficulty || 'Střední',
-        subjectId: data.subjectId || 'Matematika',
-        topicId: data.topicId || data.topic || '',
-        subtopicId: data.subtopicId || '',
-        imageUrl: data.imageUrl || '',
-        svgContent: data.svgContent || '',
-        createdAt: data.createdAt,
-        createdBy: data.createdBy
-      } as PracticeQuestion;
-    });
+    return await cacheManager.getOrFetch(`questions:subtopic:${subtopicId}`, async () => {
+      const collRef = collection(db, 'questions');
+      const q = query(collRef, where('subtopicId', '==', subtopicId));
+      const snap = await getDocs(q);
+      return snap.docs.map(mapDocToQuestion);
+    }, 5 * 60 * 1000);
   } catch (error) {
     console.error('Error fetching questions for subtopic:', error);
     return [];
@@ -583,24 +894,7 @@ export async function getQuestionById(questionId: string): Promise<PracticeQuest
     const docRef = doc(db, 'questions', questionId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
-    const data = snap.data();
-    return {
-      id: snap.id,
-      question: data.question || '',
-      type: data.type || (Array.isArray(data.options) && data.options.length > 0 ? 'choice' : 'open'),
-      options: Array.isArray(data.options) ? data.options : [],
-      correctAnswer: data.correctAnswer || '',
-      hint: data.hint || '',
-      explanation: data.explanation || '',
-      difficulty: data.difficulty || 'Střední',
-      subjectId: data.subjectId || 'Matematika',
-      topicId: data.topicId || data.topic || '',
-      subtopicId: data.subtopicId || '',
-      imageUrl: data.imageUrl || '',
-      svgContent: data.svgContent || '',
-      createdAt: data.createdAt,
-      createdBy: data.createdBy
-    } as PracticeQuestion;
+    return mapDocToQuestion(snap);
   } catch (error) {
     console.error('Error fetching question by ID:', error);
     return null;
@@ -638,17 +932,20 @@ export async function saveQuestion(questionData: Partial<PracticeQuestion>, user
   if (questionData.id) {
     const docRef = doc(db, 'questions', questionData.id);
     await updateDoc(docRef, cleanData);
+    cacheManager.invalidate('questions');
     return questionData.id;
   } else {
     cleanData.createdAt = now;
     cleanData.createdBy = effectiveUserId;
     const newDoc = await addDoc(collRef, cleanData);
+    cacheManager.invalidate('questions');
     return newDoc.id;
   }
 }
 
 export async function deleteQuestion(questionId: string): Promise<void> {
   await deleteDoc(doc(db, 'questions', questionId));
+  cacheManager.invalidate('questions');
 }
 
 export async function deleteQuestionsBulk(questionIds: string[]): Promise<number> {
@@ -664,6 +961,7 @@ export async function deleteQuestionsBulk(questionIds: string[]): Promise<number
     }
     await batch.commit();
   }
+  cacheManager.invalidate('questions');
   return uniqueIds.length;
 }
 
