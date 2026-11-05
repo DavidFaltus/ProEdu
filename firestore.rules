@@ -163,6 +163,7 @@ service cloud.firestore {
              data.createdBy is string && data.createdBy.size() <= 128 &&
              data.createdAt is timestamp &&
              (!('fileUrl' in data) || data.fileUrl == null || (data.fileUrl is string && data.fileUrl.size() <= 2048)) &&
+             (!('pdfUrl' in data) || data.pdfUrl == null || (data.pdfUrl is string && data.pdfUrl.size() <= 2048)) &&
              (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 2048)) &&
              (!('thumbnailUrl' in data) || data.thumbnailUrl == null || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 300000)) &&
              (!('fileType' in data) || data.fileType == null || (data.fileType is string && data.fileType.size() <= 128)) &&

@@ -16,7 +16,7 @@ interface PdfSvgDropzoneProps {
   valueThumbnailUrl?: string;
   fileName?: string;
   userId?: string;
-  onChange: (result: { svgString: string; fileName: string; thumbnail?: string; svgUrl?: string } | null) => void;
+  onChange: (result: { svgString: string; fileName: string; thumbnail?: string; svgUrl?: string; pdfUrl?: string } | null) => void;
   className?: string;
 }
 
@@ -61,12 +61,20 @@ export default function PdfSvgDropzone({
 
       let storageSvgUrl = '';
       let storageThumbnailUrl = '';
+      let storagePdfUrl = '';
 
       try {
         setProgressMsg('Nahrávám grafický list do zabezpečeného úložiště...');
-        const uploaded = await uploadMaterialAssets(res.svgString, res.thumbnailDataUrl, userId || '', file.name);
+        const uploaded = await uploadMaterialAssets(
+          res.svgString,
+          res.thumbnailDataUrl,
+          userId || '',
+          file.name,
+          ext === 'pdf' ? file : undefined
+        );
         storageSvgUrl = uploaded.svgUrl;
         storageThumbnailUrl = uploaded.thumbnailUrl || '';
+        storagePdfUrl = uploaded.pdfUrl || '';
       } catch (uploadErr: any) {
         console.warn('Upload to Storage / Server failed:', uploadErr);
         if (res.svgString.length > 200000) {
@@ -79,6 +87,7 @@ export default function PdfSvgDropzone({
       onChange({
         svgString: res.svgString,
         svgUrl: storageSvgUrl || undefined,
+        pdfUrl: storagePdfUrl || undefined,
         fileName: file.name,
         thumbnail: storageThumbnailUrl || res.thumbnailDataUrl
       });

@@ -256,3 +256,244 @@ export async function convertFileToSvg(
     height: totalHeight
   };
 }
+
+/**
+ * Normalizes any image data URL (JPEG, PNG, WebP) or SVG string into a baseline RGB JPEG DataURL
+ * along with its pixel dimensions so it can be embedded directly into a PDF 1.4 /DCTDecode stream.
+ */
+async function imageSourceToJpegPage(src: string, fallbackWidth = 1240, fallbackHeight = 1754): Promise<{
+  width: number;
+  height: number;
+  jpegBytes: Uint8Array;
+}> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth || img.width || fallbackWidth;
+        const h = img.naturalHeight || img.height || fallbackHeight;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { alpha: false });
+        if (!ctx) {
+          reject(new Error('Nelze inicializovat 2D kontext pro generování PDF.'));
+          return;
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.92));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('Nepodařilo se načíst grafickou stránku pro PDF.'));
+    img.src = src;
+  });
+
+  const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, '');
+  const binaryStr = atob(base64);
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) {
+    bytes[i] = binaryStr.charCodeAt(i);
+  }
+
+  // Extract dimensions from canvas pass via temporary image or SOF0 marker
+  const dims = await new Promise<{ w: number; h: number }>((resolve) => {
+    const tempImg = new Image();
+    tempImg.onload = () => resolve({ w: tempImg.naturalWidth || fallbackWidth, h: tempImg.naturalHeight || fallbackHeight });
+    tempImg.onerror = () => resolve({ w: fallbackWidth, h: fallbackHeight });
+    tempImg.src = dataUrl;
+  });
+
+  return {
+    width: dims.w,
+    height: dims.h,
+    jpegBytes: bytes
+  };
+}
+
+/**
+ * Builds a valid multi-page binary PDF 1.4 document from an array of JPEG page images.
+ */
+function buildPdfFromJpegPages(pages: Array<{ width: number; height: number; jpegBytes: Uint8Array }>): Blob {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const offsets: number[] = [0]; // index 0 is free object
+  let currentOffset = 0;
+
+  const pushBytes = (bytes: Uint8Array) => {
+    chunks.push(bytes);
+    currentOffset += bytes.length;
+  };
+
+  const pushStr = (str: string) => {
+    pushBytes(encoder.encode(str));
+  };
+
+  pushStr('%PDF-1.4\n%\xFF\xFF\xFF\xFF\n');
+
+  const numPages = pages.length;
+  const pageObjIds = pages.map((_, i) => 3 + i * 3);
+
+  // Object 1: Catalog
+  offsets[1] = currentOffset;
+  pushStr('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+
+  // Object 2: Pages
+  offsets[2] = currentOffset;
+  pushStr(`2 0 obj\n<< /Type /Pages /Kids [${pageObjIds.map(id => `${id} 0 R`).join(' ')}] /Count ${numPages} >>\nendobj\n`);
+
+  pages.forEach((p, i) => {
+    const pageObjId = 3 + i * 3;
+    const contentObjId = 4 + i * 3;
+    const imageObjId = 5 + i * 3;
+
+    const pageWidthPt = 595.28; // Standard A4 width in points
+    const pageHeightPt = Math.max(100, Number(((p.height / Math.max(1, p.width)) * pageWidthPt).toFixed(2)));
+
+    // Page Object
+    offsets[pageObjId] = currentOffset;
+    pushStr(
+      `${pageObjId} 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im0 ${imageObjId} 0 R >> >> /MediaBox [0 0 ${pageWidthPt} ${pageHeightPt}] /Contents ${contentObjId} 0 R >>\nendobj\n`
+    );
+
+    // Content Stream Object
+    const contentStream = `q\n${pageWidthPt} 0 0 ${pageHeightPt} 0 0 cm\n/Im0 Do\nQ\n`;
+    const contentBytes = encoder.encode(contentStream);
+    offsets[contentObjId] = currentOffset;
+    pushStr(`${contentObjId} 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n`);
+    pushBytes(contentBytes);
+    pushStr('\nendstream\nendobj\n');
+
+    // Image XObject (DCTDecode raw JPEG)
+    offsets[imageObjId] = currentOffset;
+    pushStr(
+      `${imageObjId} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${p.width} /Height ${p.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${p.jpegBytes.length} >>\nstream\n`
+    );
+    pushBytes(p.jpegBytes);
+    pushStr('\nendstream\nendobj\n');
+  });
+
+  const totalObjects = 2 + numPages * 3;
+  const xrefOffset = currentOffset;
+  pushStr(`xref\n0 ${totalObjects + 1}\n`);
+  pushStr('0000000000 65535 f \n');
+  for (let id = 1; id <= totalObjects; id++) {
+    const offStr = String(offsets[id] || 0).padStart(10, '0');
+    pushStr(`${offStr} 00000 n \n`);
+  }
+
+  pushStr(`trailer\n<< /Size ${totalObjects + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`);
+
+  return new Blob(chunks, { type: 'application/pdf' });
+}
+
+/**
+ * Triggers a browser download of the material as a PDF file.
+ * If the original PDF URL is available, downloads that exact PDF file.
+ * Otherwise, reconstructs the PDF from the stored SVG graphic sheet pages.
+ */
+export async function downloadMaterialAsPdf(material: {
+  title: string;
+  pdfUrl?: string | null;
+  fileUrl?: string | null;
+  svgUrl?: string | null;
+  svgContent?: string | null;
+}): Promise<void> {
+  const safeBaseName = (material.title || 'Studijni_material')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, '_') || 'Studijni_material';
+  const downloadFileName = safeBaseName.toLowerCase().endsWith('.pdf') ? safeBaseName : `${safeBaseName}.pdf`;
+
+  const directPdfUrl =
+    material.pdfUrl ||
+    (material.fileUrl && (material.fileUrl.toLowerCase().endsWith('.pdf') || material.fileUrl.startsWith('data:application/pdf'))
+      ? material.fileUrl
+      : null);
+
+  if (directPdfUrl) {
+    try {
+      const response = await fetch(directPdfUrl);
+      if (response.ok) {
+        const blob = await response.blob();
+        const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(pdfBlob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = downloadFileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+        return;
+      }
+    } catch {
+      // Fallback to direct anchor click if CORS blocks fetch
+      const link = document.createElement('a');
+      link.href = directPdfUrl;
+      link.download = downloadFileName;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      return;
+    }
+  }
+
+  // Reconstruct PDF from SVG content or SVG URL
+  let svgText = material.svgContent || '';
+  if (!svgText && material.svgUrl) {
+    const resp = await fetch(material.svgUrl);
+    if (!resp.ok) {
+      throw new Error('Nepodařilo se načíst podklad pro stažení PDF.');
+    }
+    svgText = await resp.text();
+  }
+
+  if (!svgText) {
+    throw new Error('Tento materiál neobsahuje žádný soubor ke stažení.');
+  }
+
+  // Extract embedded page images from composite SVG (created by convertFileToSvg)
+  const imageHrefRegex = /<image[^>]+(?:href|xlink:href)=["'](data:image\/[^"']+)["'][^>]*>/gi;
+  const pageDataUrls: string[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = imageHrefRegex.exec(svgText)) !== null) {
+    if (match[1]) {
+      pageDataUrls.push(match[1]);
+    }
+  }
+
+  const jpegPages: Array<{ width: number; height: number; jpegBytes: Uint8Array }> = [];
+
+  if (pageDataUrls.length > 0) {
+    for (const src of pageDataUrls) {
+      const page = await imageSourceToJpegPage(src);
+      jpegPages.push(page);
+    }
+  } else {
+    // Pure vector SVG sheet -> render whole SVG to a high-res page
+    const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+    const svgObjectUrl = URL.createObjectURL(svgBlob);
+    try {
+      const page = await imageSourceToJpegPage(svgObjectUrl, 1240, 1754);
+      jpegPages.push(page);
+    } finally {
+      URL.revokeObjectURL(svgObjectUrl);
+    }
+  }
+
+  const pdfBlob = buildPdfFromJpegPages(jpegPages);
+  const blobUrl = URL.createObjectURL(pdfBlob);
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = downloadFileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+}

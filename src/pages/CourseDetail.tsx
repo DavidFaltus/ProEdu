@@ -194,13 +194,13 @@ export default function CourseDetail() {
                 {course.syllabus.map((topic, index) => (
                   <div 
                     key={index}
-                    className="p-4 rounded-2xl bg-gray-50/80 border border-gray-100 hover:border-indigo-200 transition-all flex items-start gap-3.5 group"
+                    className="p-4 rounded-2xl bg-gray-50/80 border border-gray-100 hover:bg-white hover:shadow-sm hover:-translate-y-0.5 transition-all duration-300 flex items-start gap-3.5"
                   >
-                    <div className="w-7 h-7 rounded-xl bg-white border border-gray-200 text-indigo-700 text-xs font-black flex items-center justify-center shrink-0 shadow-xs group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                    <div className="w-7 h-7 rounded-xl bg-white border border-gray-200 text-[#1E1B18] text-xs font-black flex items-center justify-center shrink-0 shadow-xs">
                       {index + 1}
                     </div>
                     <div className="space-y-0.5 min-w-0">
-                      <h4 className="text-sm font-bold text-gray-900 leading-snug">
+                      <h4 className="text-sm font-bold text-[#1E1B18] leading-snug">
                         {topic}
                       </h4>
                       <p className="text-xs text-gray-400 font-medium">

@@ -38,6 +38,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [newTheory, setNewTheory] = useState('');
   const [uploadedSvgString, setUploadedSvgString] = useState<string>('');
   const [uploadedSvgUrl, setUploadedSvgUrl] = useState<string>('');
+  const [uploadedPdfUrl, setUploadedPdfUrl] = useState<string>('');
   const [uploadedThumbnailUrl, setUploadedThumbnailUrl] = useState<string>('');
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
   const [isSaving, setIsSaving] = useState(false);
@@ -52,6 +53,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [editTheory, setEditTheory] = useState('');
   const [editSvgString, setEditSvgString] = useState<string>('');
   const [editSvgUrl, setEditSvgUrl] = useState<string>('');
+  const [editPdfUrl, setEditPdfUrl] = useState<string>('');
   const [editThumbnailUrl, setEditThumbnailUrl] = useState<string>('');
   const [editFileName, setEditFileName] = useState<string>('');
   const [editSteps, setEditSteps] = useState<StudyStep[]>([]);
@@ -83,6 +85,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     setNewTheory('');
     setUploadedSvgString('');
     setUploadedSvgUrl('');
+    setUploadedPdfUrl('');
     setUploadedThumbnailUrl('');
     setUploadedFileName('');
     setIsUploadModalOpen(true);
@@ -108,6 +111,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         topic: newTopic.trim() || 'Obecné',
         studyTheory: newTheory.trim(),
         svgUrl: uploadedSvgUrl || undefined,
+        pdfUrl: uploadedPdfUrl || undefined,
         thumbnailUrl: uploadedThumbnailUrl || undefined,
         svgContent: uploadedSvgString || undefined
       }, effectiveUserId);
@@ -135,6 +139,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         setEditTheory(full.studyTheory || '');
         setEditSvgString(full.svgContent || '');
         setEditSvgUrl(full.svgUrl || '');
+        setEditPdfUrl(full.pdfUrl || '');
         setEditThumbnailUrl(full.thumbnailUrl || '');
         setEditFileName(full.title || '');
         setEditSteps([]);
@@ -167,6 +172,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         topic: editTopic.trim() || 'Obecné',
         studyTheory: editTheory.trim(),
         svgUrl: editSvgUrl || editFullSubtopic?.svgUrl || undefined,
+        pdfUrl: editPdfUrl || editFullSubtopic?.pdfUrl || undefined,
         thumbnailUrl: editThumbnailUrl || editFullSubtopic?.thumbnailUrl || undefined,
         svgContent: editSvgString || editFullSubtopic?.svgContent || undefined
       }, effectiveUserId);
@@ -489,6 +495,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                   if (res) {
                     setUploadedSvgString(res.svgString);
                     setUploadedSvgUrl(res.svgUrl || '');
+                    setUploadedPdfUrl(res.pdfUrl || '');
                     setUploadedThumbnailUrl(res.thumbnail || '');
                     setUploadedFileName(res.fileName);
                     if (!newTitle) {
@@ -497,6 +504,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                   } else {
                     setUploadedSvgString('');
                     setUploadedSvgUrl('');
+                    setUploadedPdfUrl('');
                     setUploadedThumbnailUrl('');
                     setUploadedFileName('');
                   }
@@ -624,11 +632,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                       if (res) {
                         setEditSvgString(res.svgString);
                         setEditSvgUrl(res.svgUrl || '');
+                        setEditPdfUrl(res.pdfUrl || '');
                         setEditThumbnailUrl(res.thumbnail || '');
                         setEditFileName(res.fileName);
                       } else {
                         setEditSvgString('');
                         setEditSvgUrl('');
+                        setEditPdfUrl('');
                         setEditThumbnailUrl('');
                         setEditFileName('');
                       }

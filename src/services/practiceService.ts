@@ -469,6 +469,7 @@ export interface ExistingMaterialItem {
   svgUrl?: string | null;
   thumbnailUrl?: string | null;
   fileUrl?: string | null;
+  pdfUrl?: string | null;
   svgContent?: string | null;
   studyTheory?: string;
   hasStudyMaterial: boolean;
@@ -485,22 +486,25 @@ export interface MaterialInput {
   svgUrl?: string | null;
   thumbnailUrl?: string | null;
   fileUrl?: string | null;
+  pdfUrl?: string | null;
   fileType?: string;
 }
 
 /**
- * Nahraje soubory grafického listu (SVG a volitelně JPEG náhled).
+ * Nahraje soubory grafického listu (SVG, volitelně původní PDF a volitelně JPEG náhled).
  * Nejprve zkusí Firebase Storage; pokud není inicializován/dostupný, automaticky použije serverové API (/api/materials/upload).
  */
 export async function uploadMaterialAssets(
   svgContent: string,
   thumbnailDataUrl?: string,
   userId?: string,
-  fileName?: string
-): Promise<{ svgUrl: string; thumbnailUrl?: string }> {
+  fileName?: string,
+  originalPdfFile?: File
+): Promise<{ svgUrl: string; thumbnailUrl?: string; pdfUrl?: string }> {
   const cleanUserId = userId || auth.currentUser?.uid || 'teacher';
   let svgUrl = '';
   let thumbnailUrl = '';
+  let pdfUrl = '';
 
   // 1. Zkusíme Firebase Storage
   try {
@@ -515,6 +519,23 @@ export async function uploadMaterialAssets(
       }
     });
     svgUrl = await getDownloadURL(snapshot.ref);
+
+    if (originalPdfFile && (originalPdfFile.type === 'application/pdf' || originalPdfFile.name.toLowerCase().endsWith('.pdf'))) {
+      try {
+        const pdfFileId = `${Date.now()}_orig_${Math.random().toString(36).substring(2, 9)}.pdf`;
+        const pdfStorageRef = ref(storage, `learningSheets/${cleanUserId}/${pdfFileId}`);
+        const pdfSnapshot = await uploadBytes(pdfStorageRef, originalPdfFile, {
+          contentType: 'application/pdf',
+          customMetadata: {
+            originalName: originalPdfFile.name,
+            uploadedBy: cleanUserId
+          }
+        });
+        pdfUrl = await getDownloadURL(pdfSnapshot.ref);
+      } catch (pdfErr) {
+        console.warn('Původní PDF se do Storage nenahrálo, pokračuji:', pdfErr);
+      }
+    }
 
     if (thumbnailDataUrl) {
       try {
@@ -535,13 +556,31 @@ export async function uploadMaterialAssets(
     }
 
     if (svgUrl) {
-      return { svgUrl, thumbnailUrl: thumbnailUrl || undefined };
+      return {
+        svgUrl,
+        thumbnailUrl: thumbnailUrl || undefined,
+        pdfUrl: pdfUrl || undefined
+      };
     }
   } catch (storageErr) {
     console.warn('[Firebase Storage nedostupný, použijeme serverové úložiště API]:', storageErr);
   }
 
   // 2. Automatický fallback na serverové API /api/materials/upload
+  let pdfDataUrl: string | undefined;
+  if (originalPdfFile && (originalPdfFile.type === 'application/pdf' || originalPdfFile.name.toLowerCase().endsWith('.pdf'))) {
+    try {
+      pdfDataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Chyba při čtení PDF.'));
+        reader.readAsDataURL(originalPdfFile);
+      });
+    } catch (readErr) {
+      console.warn('Nepodařilo se načíst původní PDF pro serverový upload:', readErr);
+    }
+  }
+
   const token = await auth.currentUser?.getIdToken();
   const res = await fetch('/api/materials/upload', {
     method: 'POST',
@@ -552,6 +591,7 @@ export async function uploadMaterialAssets(
     body: JSON.stringify({
       svgContent,
       thumbnailDataUrl: thumbnailDataUrl || undefined,
+      pdfDataUrl: pdfDataUrl || undefined,
       originalName: fileName || 'material.svg'
     })
   });
@@ -564,7 +604,8 @@ export async function uploadMaterialAssets(
   const data = await res.json();
   return {
     svgUrl: data.svgUrl,
-    thumbnailUrl: data.thumbnailUrl || undefined
+    thumbnailUrl: data.thumbnailUrl || undefined,
+    pdfUrl: data.pdfUrl || undefined
   };
 }
 
@@ -633,7 +674,8 @@ export function normalizeMaterialPayload(input: MaterialInput) {
   const subject = input.subject?.trim() || 'Matematika';
   const topic = input.topic?.trim() || 'Obecné';
   const svgUrl = input.svgUrl?.trim() || null;
-  const fileUrl = input.fileUrl?.trim() || svgUrl || null;
+  const pdfUrl = input.pdfUrl?.trim() || (input.fileUrl?.trim()?.toLowerCase().endsWith('.pdf') ? input.fileUrl.trim() : null);
+  const fileUrl = pdfUrl || input.fileUrl?.trim() || svgUrl || null;
   
   // Ochrana před příliš velkými inline base64 náhledy v dokumentu Firestore
   let thumbnailUrl = input.thumbnailUrl?.trim() || null;
@@ -641,7 +683,7 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     thumbnailUrl = null;
   }
 
-  const fileType = input.fileType || (svgUrl ? 'image/svg+xml' : 'application/pdf');
+  const fileType = input.fileType || (pdfUrl ? 'application/pdf' : (svgUrl ? 'image/svg+xml' : 'application/pdf'));
 
   // SVG ukládáme do Firestore content jen pokud je malé (např. < 200 KB) jako nouzový fallback,
   // jinak se spoléhá na svgUrl v úložišti, aby se NIKDY nepřekročil tvrdý 1MB limit Firestore.
@@ -669,7 +711,8 @@ export function normalizeMaterialPayload(input: MaterialInput) {
 
   const contentObj = {
     studyTheory: cleanStudyTheory,
-    svgContent: safeSvgContent
+    svgContent: safeSvgContent,
+    pdfUrl: pdfUrl || undefined
   };
 
   return {
@@ -744,14 +787,17 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
     studyTheory = '';
   }
 
+  const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
+
   return {
     id: snap.id,
     title: data.title || '',
     subject: data.subject || 'Matematika',
     topic: data.topic || '',
-    svgUrl: data.svgUrl || data.fileUrl || null,
+    svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
     thumbnailUrl: data.thumbnailUrl || null,
     fileUrl: data.fileUrl || data.svgUrl || null,
+    pdfUrl: pdfUrl,
     svgContent: svgContent,
     studyTheory: studyTheory,
     hasStudyMaterial: true,
@@ -786,14 +832,17 @@ export async function getAllMaterials(): Promise<ExistingMaterialItem[]> {
           studyTheory = '';
         }
 
+        const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
+
         return {
           id: d.id,
           title: data.title || 'Materiál',
           subject: data.subject || 'Matematika',
           topic: data.topic || '',
-          svgUrl: data.svgUrl || data.fileUrl || null,
+          svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
           thumbnailUrl: data.thumbnailUrl || null,
           fileUrl: data.fileUrl || data.svgUrl || null,
+          pdfUrl: pdfUrl,
           svgContent: svgContent,
           studyTheory: studyTheory,
           hasStudyMaterial: true,

@@ -1332,11 +1332,11 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
   }
 });
 
-// 7. Bezpečné nahrávání studijních materiálů (SVG grafické listy a JPEG miniatury)
+// 7. Bezpečné nahrávání studijních materiálů (SVG grafické listy, původní PDF a JPEG miniatury)
 app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) => {
   try {
-    const { svgContent, thumbnailDataUrl, originalName } = req.body || {};
-    if (!svgContent && !thumbnailDataUrl) {
+    const { svgContent, thumbnailDataUrl, pdfDataUrl, originalName } = req.body || {};
+    if (!svgContent && !thumbnailDataUrl && !pdfDataUrl) {
       return res.status(400).json({ error: 'Chybí obsah souboru pro nahrání.' });
     }
 
@@ -1344,15 +1344,25 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
     const randomSuffix = Math.random().toString(36).substring(2, 9);
     let svgUrl = null;
     let thumbnailUrl = null;
+    let pdfUrl = null;
+
+    const safeName = (originalName || 'material')
+      .replace(/[^a-zA-Z0-9_\-\.]/g, '_')
+      .replace(/\.(svg|pdf)$/i, '');
 
     if (svgContent) {
-      const safeName = (originalName || 'material')
-        .replace(/[^a-zA-Z0-9_\-\.]/g, '_')
-        .replace(/\.svg$/i, '');
       const svgFileName = `${timestamp}_${randomSuffix}_${safeName}.svg`;
       const svgFilePath = path.join(uploadsMaterialsDir, svgFileName);
       fs.writeFileSync(svgFilePath, svgContent, 'utf8');
       svgUrl = `/uploads/materials/${svgFileName}`;
+    }
+
+    if (pdfDataUrl && typeof pdfDataUrl === 'string') {
+      const pdfFileName = `${timestamp}_${randomSuffix}_${safeName}.pdf`;
+      const pdfFilePath = path.join(uploadsMaterialsDir, pdfFileName);
+      const base64Pdf = pdfDataUrl.replace(/^data:application\/pdf;base64,/, '').replace(/^data:[^;]+;base64,/, '');
+      fs.writeFileSync(pdfFilePath, Buffer.from(base64Pdf, 'base64'));
+      pdfUrl = `/uploads/materials/${pdfFileName}`;
     }
 
     if (thumbnailDataUrl) {
@@ -1366,7 +1376,8 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
     return res.json({
       success: true,
       svgUrl,
-      thumbnailUrl
+      thumbnailUrl,
+      pdfUrl
     });
   } catch (err) {
     console.error('Chyba při nahrávání materiálu na server:', err);

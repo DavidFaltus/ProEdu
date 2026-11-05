@@ -114,9 +114,9 @@ export default function StudyView() {
         {questionCount > 0 && (
           <Button
             onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-            className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-black px-5 h-11 flex items-center gap-2 shadow-md hover:scale-[1.02] transition-transform cursor-pointer"
+            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-5 h-11 flex items-center gap-2 shadow-xs hover:scale-[1.02] transition-transform cursor-pointer"
           >
-            <Play size={16} className="fill-current text-[#F5C400]" />
+            <Play size={16} className="fill-[#0F2942] text-[#0F2942]" />
             <span>Spustit procvičování ({questionCount} úloh)</span>
           </Button>
         )}
@@ -216,9 +216,9 @@ export default function StudyView() {
                     <div className="flex justify-center pt-2">
                       <Button
                         onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-                        className="rounded-2xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-11 px-6 shadow-md cursor-pointer"
+                        className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-xs h-11 px-6 shadow-xs cursor-pointer"
                       >
-                        <Play size={14} className="fill-current text-[#F5C400] mr-1" />
+                        <Play size={14} className="fill-[#0F2942] text-[#0F2942] mr-1" />
                         Přejít na procvičování tohoto tématu
                       </Button>
                     </div>
@@ -236,7 +236,7 @@ export default function StudyView() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-4 sm:gap-6 flex-1 min-w-0">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-[#1E1B18] text-[#FAF7F0] font-black text-base sm:text-lg flex items-center justify-center shrink-0 shadow-md">
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 font-black text-base sm:text-lg flex items-center justify-center shrink-0 shadow-xs">
                       {idx + 1}
                     </div>
                     <div className="space-y-1.5 flex-1 min-w-0">
@@ -439,24 +439,26 @@ export default function StudyView() {
       )}
 
       {/* Prominent Bottom Action Banner to Practice */}
-      <div className="bg-gradient-to-br from-[#1E1B18] to-[#38332d] text-white rounded-[2.5rem] p-8 sm:p-10 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+      <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] rounded-[2.5rem] p-8 sm:p-10 shadow-sm border-2 border-[#B9D8FC] flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-80 h-80 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
+
         <div className="space-y-2 text-center md:text-left z-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/10 text-yellow-300 text-xs font-black uppercase tracking-wider">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 text-xs font-black uppercase tracking-wider">
             <StarYellowIcon size={15} /> Jsi připraven?
           </div>
-          <h3 className="text-2xl sm:text-3xl font-display font-black tracking-tight">
+          <h3 className="text-2xl sm:text-3xl font-display font-black tracking-tight text-[#0F2942]">
             Máš látku nastudovanou?
           </h3>
-          <p className="text-gray-300 font-medium text-sm sm:text-base max-w-xl">
+          <p className="text-gray-600 font-medium text-sm sm:text-base max-w-xl">
             Vyzkoušej si interaktivní procvičování a ověř si, zda látku ovládáš na 100 %.
           </p>
         </div>
 
         <Button
           onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-          className="rounded-2xl bg-[#F5C400] hover:bg-[#ffcf1a] text-[#1E1B18] font-black text-base px-8 h-14 shadow-lg hover:scale-105 transition-transform shrink-0 flex items-center gap-3 cursor-pointer z-10"
+          className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-base px-8 h-14 shadow-sm hover:scale-105 transition-transform shrink-0 flex items-center gap-3 cursor-pointer z-10"
         >
-          <Play size={20} className="fill-current text-[#1E1B18]" />
+          <Play size={20} className="fill-[#0F2942] text-[#0F2942]" />
           <span>Spustit procvičování</span>
         </Button>
       </div>

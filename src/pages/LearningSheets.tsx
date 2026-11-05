@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button';
 import { 
   Search, Filter, 
-  Eye, X
+  Eye, X, Download
 } from 'lucide-react';
 import {
   CapIcon,
@@ -13,9 +13,10 @@ import {
 import { Input } from '../components/ui/input';
 import { motion } from 'motion/react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { sanitizeSvg } from '../utils/svgUtils';
+import { downloadMaterialAsPdf } from '../utils/pdfToSvg';
 import { useAuth } from '../context/AuthContext';
 import { getAllMaterials, ExistingMaterialItem } from '../services/practiceService';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
@@ -32,7 +33,33 @@ export default function LearningSheets() {
   const [selectedTopic, setSelectedTopic] = useState<string>('Vše');
   const [selectedSubject, setSelectedSubject] = useState<string>('Vše');
   const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
+
+  const handleDownload = async (mat: ExistingMaterialItem) => {
+    if (downloadingId === mat.id) return;
+    trackSectionClick('material_download_click', `/learning`, {
+      materialId: mat.id,
+      title: mat.title,
+      subject: mat.subject
+    });
+    setDownloadingId(mat.id);
+    try {
+      await downloadMaterialAsPdf({
+        title: mat.title,
+        pdfUrl: mat.pdfUrl,
+        fileUrl: mat.fileUrl,
+        svgUrl: mat.svgUrl,
+        svgContent: mat.svgContent
+      });
+      toast.success(`PDF „${mat.title}“ bylo staženo.`);
+    } catch (err: any) {
+      console.error('Failed to download PDF:', err);
+      toast.error(err?.message || 'Nepodařilo se stáhnout PDF soubor.');
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   useEffect(() => {
     async function load() {
@@ -66,9 +93,9 @@ export default function LearningSheets() {
     <div className="page-container space-y-8 pb-16">
       <section className="text-center space-y-4 max-w-3xl mx-auto">
         <motion.h1 
-          initial={{ opacity: 0, y: -20 }} 
+          initial={{ opacity: 0, y: -15 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
         >
           Výukové materiály
         </motion.h1>
@@ -152,16 +179,19 @@ export default function LearningSheets() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {filteredMaterials.map(mat => {
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredMaterials.map((mat, index) => {
                 const hasSvg = Boolean(mat.svgUrl || mat.svgContent);
                 const hasTheoryText = Boolean(mat.studyTheory && !mat.studyTheory.includes('<svg'));
 
                 return (
                   <motion.div
                     key={mat.id}
-                    whileHover={{ y: -3 }}
-                    className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-sm hover:shadow-lg transition-all flex flex-col justify-between gap-4 group"
+                    initial={{ opacity: 0, y: 15 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.05 }}
+                    whileHover={{ y: -4 }}
+                    className="bg-white rounded-[2.5rem] p-5 sm:p-6 border border-gray-200/80 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between gap-4 group"
                   >
                     <div className="space-y-3.5">
                       {/* Vizuální obrázkový náhled první strany listu */}
@@ -177,7 +207,7 @@ export default function LearningSheets() {
                           }
                         }}
                         className={cn(
-                          "w-full h-44 sm:h-48 rounded-2xl overflow-hidden bg-slate-50 border border-gray-100 relative flex items-center justify-center transition-all group-hover:border-amber-200 shadow-2xs group-hover:shadow-sm",
+                          "w-full h-44 sm:h-48 rounded-2xl overflow-hidden bg-slate-50 border border-gray-100 relative flex items-center justify-center transition-all duration-300 shadow-2xs group-hover:shadow-sm",
                           hasSvg ? "cursor-pointer" : "cursor-default"
                         )}
                       >
@@ -240,7 +270,7 @@ export default function LearningSheets() {
                           )}
                         </div>
 
-                        <h4 className="font-display font-black text-base sm:text-lg text-gray-900 group-hover:text-amber-900 transition-colors line-clamp-2">
+                        <h4 className="font-display font-black text-base sm:text-lg text-[#1E1B18] line-clamp-2">
                           {mat.title}
                         </h4>
 
@@ -265,30 +295,22 @@ export default function LearningSheets() {
                             });
                             setPreviewMaterial(mat);
                           }}
-                          className="flex-1 rounded-xl h-10 text-xs font-bold border-gray-200 hover:border-black flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+                          className="flex-1 rounded-xl h-10 text-xs font-bold border-gray-200 hover:border-black flex items-center justify-center gap-1.5 cursor-pointer bg-white transition-all"
                         >
                           <Eye size={14} />
                           <span>Náhled</span>
                         </Button>
                       )}
 
-                      <Link 
-                        to={`/study/${mat.id}`} 
-                        onClick={() => trackSectionClick('material_study_click', `/study/${mat.id}`, {
-                          materialId: mat.id,
-                          title: mat.title,
-                          subject: mat.subject
-                        })}
-                        className="flex-1"
+                      <Button
+                        size="sm"
+                        onClick={() => handleDownload(mat)}
+                        disabled={downloadingId === mat.id}
+                        className="flex-1 rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
                       >
-                        <Button
-                          size="sm"
-                          className="w-full rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold text-xs h-10 flex items-center justify-center gap-1.5 cursor-pointer shadow-sm"
-                        >
-                          <MaterialYellowIcon size={15} />
-                          <span>Studovat</span>
-                        </Button>
-                      </Link>
+                        <Download size={14} className="text-[#0F2942]" />
+                        <span>{downloadingId === mat.id ? 'Stahuji...' : 'Stáhnout'}</span>
+                      </Button>
                     </div>
                   </motion.div>
                 );
@@ -333,15 +355,18 @@ export default function LearningSheets() {
             </div>
 
             <div className="px-6 py-3 bg-white border-t border-gray-100 flex items-center justify-between">
-              <Link to={`/study/${previewMaterial.id}`}>
-                <Button className="rounded-xl font-bold text-xs bg-[#1E1B18] text-white">
-                  Přejít na kompletní výklad
-                </Button>
-              </Link>
+              <Button
+                onClick={() => handleDownload(previewMaterial)}
+                disabled={downloadingId === previewMaterial.id}
+                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-5 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
+              >
+                <Download size={14} className="text-[#0F2942]" />
+                <span>{downloadingId === previewMaterial.id ? 'Stahuji...' : 'Stáhnout'}</span>
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => setPreviewMaterial(null)}
-                className="rounded-xl font-bold text-xs"
+                className="rounded-xl font-bold text-xs cursor-pointer"
               >
                 Zavřít
               </Button>

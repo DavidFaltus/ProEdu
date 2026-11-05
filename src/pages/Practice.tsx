@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, Plus, 
   ArrowRight, ChevronRight, ChevronDown, Lock
@@ -84,7 +84,7 @@ export default function Practice() {
       {/* Page Header */}
       <section className="text-center space-y-3 max-w-3xl mx-auto">
         <motion.h1 
-          initial={{ opacity: 0, y: -10 }} 
+          initial={{ opacity: 0, y: -15 }} 
           animate={{ opacity: 1, y: 0 }} 
           className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
         >
@@ -104,22 +104,23 @@ export default function Practice() {
       <section className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-5xl mx-auto">
         {PREDEFINED_SUBJECTS.map((sub) => {
           const isActive = activeSubject === sub.id;
+          const isSubMath = sub.id === 'Matematika';
           return (
             <motion.div
               key={sub.id}
-              whileHover={{ scale: 1.015 }}
+              whileHover={{ y: -3 }}
               whileTap={{ scale: 0.985 }}
               onClick={() => {
                 setActiveSubject(sub.id as any);
                 trackPracticeSubjectChange(sub.id);
               }}
-              className={`cursor-pointer rounded-3xl p-5 sm:p-6 border transition-all relative overflow-hidden flex items-center gap-5 sm:gap-6 ${
+              className={`cursor-pointer rounded-3xl p-5 sm:p-6 border transition-all duration-300 relative overflow-hidden flex items-center gap-5 sm:gap-6 group ${
                 isActive 
-                  ? `border-transparent bg-gradient-to-br ${sub.gradient} text-white shadow-xl shadow-teal-900/10 ring-4 ring-offset-2 ring-emerald-500/20` 
-                  : 'bg-white border-gray-200/80 hover:border-gray-300 shadow-sm hover:shadow-md'
+                  ? `border-transparent bg-gradient-to-br ${sub.gradient} text-white shadow-xl ${isSubMath ? 'shadow-teal-900/10 ring-emerald-500/20' : 'shadow-rose-900/10 ring-rose-500/20'} ring-4 ring-offset-2` 
+                  : `bg-white border-gray-200/80 ${isSubMath ? 'hover:border-emerald-500' : 'hover:border-rose-500'} shadow-sm hover:shadow-xl`
               }`}
             >
-              <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-sm ${
+              <div className={`w-14 h-14 sm:w-16 sm:h-16 rounded-2xl flex items-center justify-center shrink-0 shadow-sm transition-transform duration-300 group-hover:scale-105 ${
                 isActive ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'
               }`}>
                 {getSubjectIcon(sub.id, isActive)}
@@ -127,8 +128,12 @@ export default function Practice() {
               
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className={`text-2xl sm:text-3xl font-sans font-black tracking-tight ${
-                    isActive ? 'text-white' : 'text-[#1E1B18]'
+                  <h3 className={`text-2xl sm:text-3xl font-sans font-black tracking-tight transition-colors duration-300 ${
+                    isActive
+                      ? 'text-white'
+                      : isSubMath
+                        ? 'text-[#1E1B18] group-hover:text-emerald-600'
+                        : 'text-[#1E1B18] group-hover:text-rose-600'
                   }`}>
                     {sub.title}
                   </h3>
@@ -180,14 +185,21 @@ export default function Practice() {
           </div>
         ) : (
           <div className="space-y-6">
-            {topics.map((topic) => {
+            {topics.map((topic, index) => {
               const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
               const isExpanded = !!expandedTopics[topic.id];
+              const isMath = activeSubject === 'Matematika';
 
               return (
-                <div 
+                <motion.div 
                   key={topic.id}
-                  className="bg-white rounded-[2.5rem] p-6 sm:p-8 border border-gray-100 shadow-sm transition-all"
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  whileHover={{ y: -4 }}
+                  className={`bg-white rounded-[2.5rem] p-6 sm:p-8 border border-gray-200/80 shadow-sm hover:shadow-xl ${
+                    isMath ? 'hover:border-emerald-500' : 'hover:border-rose-500'
+                  } transition-all duration-300`}
                 >
                   {/* Topic Header - clickable to expand/collapse with arrow in the right corner */}
                   <div 
@@ -205,14 +217,18 @@ export default function Practice() {
                   >
                     <div className="space-y-1 min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-md">
+                        <span className={`text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
+                          isMath ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'
+                        }`}>
                           Hlavní téma
                         </span>
                         <span className="text-xs font-bold text-gray-400 bg-gray-50 px-3 py-1 rounded-full">
                           {topicSubtopics.length} {topicSubtopics.length === 1 ? 'podtéma' : topicSubtopics.length < 5 ? 'podtémata' : 'podtémat'}
                         </span>
                       </div>
-                      <h3 className="text-2xl sm:text-3xl font-playful text-[#1E1B18] mt-1 group-hover:text-blue-600 transition-colors">
+                      <h3 className={`text-2xl sm:text-3xl font-playful text-[#1E1B18] mt-1 ${
+                        isMath ? 'group-hover:text-emerald-600' : 'group-hover:text-rose-600'
+                      } transition-colors duration-300`}>
                         {topic.title}
                       </h3>
                       {topic.description && (
@@ -221,11 +237,19 @@ export default function Practice() {
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0 self-center">
-                      <div className="w-10 h-10 rounded-2xl bg-gray-50 group-hover:bg-blue-50 flex items-center justify-center transition-colors">
+                      <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-300 group-hover:scale-105 ${
+                        isExpanded
+                          ? isMath
+                            ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-2xs'
+                            : 'bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-2xs'
+                          : isMath
+                            ? 'bg-gray-50 group-hover:bg-emerald-500 text-gray-500 group-hover:text-white'
+                            : 'bg-gray-50 group-hover:bg-rose-500 text-gray-500 group-hover:text-white'
+                      }`}>
                         <ChevronDown 
                           size={22} 
-                          className={`text-gray-500 group-hover:text-blue-600 transition-transform duration-300 ${
-                            isExpanded ? 'rotate-180 text-blue-600' : ''
+                          className={`transition-transform duration-300 ${
+                            isExpanded ? 'rotate-180' : ''
                           }`} 
                         />
                       </div>
@@ -233,137 +257,149 @@ export default function Practice() {
                   </div>
 
                   {/* Subtopics List (Rendered when expanded) */}
-                  {isExpanded && (
-                    <div className="mt-6 pt-5 border-t border-gray-100 space-y-4">
-                      {topicSubtopics.length === 0 ? (
-                        <p className="text-gray-400 text-sm italic py-4">Žádná podtémata v tomto tématu.</p>
-                      ) : (
-                        <div className="grid gap-3.5">
-                      {topicSubtopics.map((subtopic) => {
-                        const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
-                        const isLockedForGuest = !user && !isFirstDemo;
-                        const isStudyLocked = !isPremium;
+                  <AnimatePresence>
+                    {isExpanded && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.2 }}
+                        className="mt-6 pt-5 border-t border-gray-100 space-y-4"
+                      >
+                        {topicSubtopics.length === 0 ? (
+                          <p className="text-gray-400 text-sm italic py-4">Žádná podtémata v tomto tématu.</p>
+                        ) : (
+                          <div className="grid gap-3.5">
+                            {topicSubtopics.map((subtopic) => {
+                              const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
+                              const isLockedForGuest = !user && !isFirstDemo;
+                              const isStudyLocked = !isPremium;
 
-                        const handlePracticeClick = (e: React.MouseEvent) => {
-                          trackSectionClick('practice_start_btn', `/practice/session/${subtopic.id}`, {
-                            subtopicId: subtopic.id,
-                            subtopicTitle: subtopic.title,
-                            subject: activeSubject,
-                            isLocked: isLockedForGuest
-                          });
+                              const handlePracticeClick = (e: React.MouseEvent) => {
+                                trackSectionClick('practice_start_btn', `/practice/session/${subtopic.id}`, {
+                                  subtopicId: subtopic.id,
+                                  subtopicTitle: subtopic.title,
+                                  subject: activeSubject,
+                                  isLocked: isLockedForGuest
+                                });
 
-                          if (isLockedForGuest) {
-                            e.preventDefault();
-                            openAuthModal();
-                            toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
-                          }
-                        };
+                                if (isLockedForGuest) {
+                                  e.preventDefault();
+                                  openAuthModal();
+                                  toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                                }
+                              };
 
-                        const handleStudyClick = (e: React.MouseEvent) => {
-                          trackSectionClick('practice_study_btn', `/study/${subtopic.id}`, {
-                            subtopicId: subtopic.id,
-                            subtopicTitle: subtopic.title,
-                            subject: activeSubject,
-                            isLocked: isStudyLocked
-                          });
+                              const handleStudyClick = (e: React.MouseEvent) => {
+                                trackSectionClick('practice_study_btn', `/study/${subtopic.id}`, {
+                                  subtopicId: subtopic.id,
+                                  subtopicTitle: subtopic.title,
+                                  subject: activeSubject,
+                                  isLocked: isStudyLocked
+                                });
 
-                          if (isStudyLocked) {
-                            e.preventDefault();
-                            if (!user) {
-                              openAuthModal();
-                              toast.info('Studium a teorie je dostupné pro předplatitele ProEdu Premium. Přihlaste se prosím.');
-                            } else {
-                              setSelectedSubtopicForStudy(subtopic);
-                              setIsPremiumModalOpen(true);
-                            }
-                          }
-                        };
+                                if (isStudyLocked) {
+                                  e.preventDefault();
+                                  if (!user) {
+                                    openAuthModal();
+                                    toast.info('Studium a teorie je dostupné pro předplatitele ProEdu Premium. Přihlaste se prosím.');
+                                  } else {
+                                    setSelectedSubtopicForStudy(subtopic);
+                                    setIsPremiumModalOpen(true);
+                                  }
+                                }
+                              };
 
-                        return (
-                          <div
-                            key={subtopic.id}
-                            className={`p-5 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                              isLockedForGuest
-                                ? 'bg-[#FAF7F0]/60 border-gray-200/50 opacity-85'
-                                : 'bg-[#FAF7F0] hover:bg-white border-gray-200/70 hover:border-gray-300 hover:shadow-md'
-                            }`}
-                          >
-                            <div className="space-y-1.5 flex-1 min-w-0">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <h4 className="font-bold text-lg text-gray-900 leading-tight">
-                                  {subtopic.title}
-                                </h4>
-                                {isFirstDemo && !user && (
-                                  <span className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
-                                    Vyzkoušet zdarma
-                                  </span>
-                                )}
-                                {isLockedForGuest && (
-                                  <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
-                                    <Lock size={12} /> Vyžaduje registraci
-                                  </span>
-                                )}
-                              </div>
-                              {subtopic.description && (
-                                <p className="text-gray-500 text-xs sm:text-sm font-medium line-clamp-2">
-                                  {subtopic.description}
-                                </p>
-                              )}
-                            </div>
-
-                            {/* Action Buttons for this subtopic */}
-                            <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
-                              {/* Studovat Button (Zamčeno pro Free a hosty, pouze pro Premium) */}
-                              <Link 
-                                to={isStudyLocked ? '#' : `/study/${subtopic.id}`}
-                                onClick={handleStudyClick}
-                              >
-                                <Button
-                                  variant="outline"
-                                  className={`rounded-xl font-bold text-xs h-10 px-4 flex items-center gap-1.5 cursor-pointer bg-white ${
-                                    isStudyLocked ? 'border-amber-300 hover:border-amber-400 text-amber-900' : 'border-gray-300 hover:border-black'
+                              return (
+                                <div
+                                  key={subtopic.id}
+                                  className={`group/sub p-5 rounded-2xl border transition-all duration-300 flex flex-col md:flex-row md:items-center justify-between gap-4 ${
+                                    isLockedForGuest
+                                      ? 'bg-[#FAF7F0]/60 border-gray-200/50 opacity-85'
+                                      : `bg-[#FAF7F0] hover:bg-white border-gray-200/70 ${
+                                          isMath ? 'hover:border-emerald-500' : 'hover:border-rose-500'
+                                        } hover:shadow-md hover:-translate-y-0.5`
                                   }`}
                                 >
-                                  {isStudyLocked ? (
-                                    <Lock size={13} className="text-amber-500" />
-                                  ) : (
-                                    <BookCyanIcon size={16} />
-                                  )}
-                                  <span>Studovat</span>
-                                  {isStudyLocked && (
-                                    <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
-                                      PRO
-                                    </span>
-                                  )}
-                                </Button>
-                              </Link>
+                                  <div className="space-y-1.5 flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h4 className={`font-bold text-lg text-[#1E1B18] ${
+                                        isMath ? 'group-hover/sub:text-emerald-600' : 'group-hover/sub:text-rose-600'
+                                      } transition-colors duration-300 leading-tight`}>
+                                        {subtopic.title}
+                                      </h4>
+                                      {isFirstDemo && !user && (
+                                        <span className="flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                                          Vyzkoušet zdarma
+                                        </span>
+                                      )}
+                                      {isLockedForGuest && (
+                                        <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
+                                          <Lock size={12} /> Vyžaduje registraci
+                                        </span>
+                                      )}
+                                    </div>
+                                    {subtopic.description && (
+                                      <p className="text-gray-500 text-xs sm:text-sm font-medium line-clamp-2">
+                                        {subtopic.description}
+                                      </p>
+                                    )}
+                                  </div>
 
-                              {/* Procvičovat Button */}
-                              <Link 
-                                to={isLockedForGuest ? '#' : `/practice/session/${subtopic.id}`}
-                                onClick={handlePracticeClick}
-                              >
-                                <Button
-                                  className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-5 flex items-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
-                                >
-                                  {isLockedForGuest ? (
-                                    <Lock size={14} className="text-[#0F2942]" />
-                                  ) : (
-                                    <Play size={14} className="fill-[#0F2942] text-[#0F2942]" />
-                                  )}
-                                  <span>{isLockedForGuest ? 'Odemknout' : 'Procvičovat'}</span>
-                                </Button>
-                              </Link>
-                            </div>
+                                  {/* Action Buttons for this subtopic */}
+                                  <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                                    {/* Studovat Button (Zamčeno pro Free a hosty, pouze pro Premium) */}
+                                    <Link 
+                                      to={isStudyLocked ? '#' : `/study/${subtopic.id}`}
+                                      onClick={handleStudyClick}
+                                    >
+                                      <Button
+                                        variant="outline"
+                                        className={`rounded-xl font-bold text-xs h-10 px-4 flex items-center gap-1.5 cursor-pointer bg-white transition-all ${
+                                          isStudyLocked ? 'border-amber-300 hover:border-amber-400 text-amber-900' : 'border-gray-300 hover:border-black'
+                                        }`}
+                                      >
+                                        {isStudyLocked ? (
+                                          <Lock size={13} className="text-amber-500" />
+                                        ) : (
+                                          <BookCyanIcon size={16} />
+                                        )}
+                                        <span>Studovat</span>
+                                        {isStudyLocked && (
+                                          <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
+                                            PRO
+                                          </span>
+                                        )}
+                                      </Button>
+                                    </Link>
+
+                                    {/* Procvičovat Button */}
+                                    <Link 
+                                      to={isLockedForGuest ? '#' : `/practice/session/${subtopic.id}`}
+                                      onClick={handlePracticeClick}
+                                    >
+                                      <Button
+                                        className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-5 flex items-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
+                                      >
+                                        {isLockedForGuest ? (
+                                          <Lock size={14} className="text-[#0F2942]" />
+                                        ) : (
+                                          <Play size={14} className="fill-[#0F2942] text-[#0F2942]" />
+                                        )}
+                                        <span>{isLockedForGuest ? 'Odemknout' : 'Procvičovat'}</span>
+                                      </Button>
+                                    </Link>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              );
             })}
           </div>
         )}

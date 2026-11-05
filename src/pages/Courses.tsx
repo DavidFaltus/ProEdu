@@ -143,6 +143,7 @@ export default function Courses() {
                   initial={{ opacity: 0, y: 15 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: index * 0.05 }}
+                  whileHover={{ y: -4 }}
                   className="h-full"
                 >
                   <Link
@@ -154,12 +155,12 @@ export default function Courses() {
                     })}
                     className="block h-full group"
                   >
-                    <Card className="h-full rounded-[2.5rem] border border-gray-200/80 bg-white transition-all duration-300 relative overflow-hidden flex flex-col justify-between shadow-md hover:shadow-2xl hover:-translate-y-1 group-hover:border-indigo-400">
+                    <Card className="h-full rounded-[2.5rem] border border-gray-200/80 bg-white transition-all duration-300 relative overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-xl">
                       <div className={`h-2.5 bg-gradient-to-r ${accentColor}`} />
                       
                       <CardHeader className="p-7 pb-3 space-y-3">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="w-12 h-12 bg-indigo-50 text-indigo-700 rounded-2xl flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                          <div className="w-12 h-12 bg-indigo-50 text-indigo-700 rounded-2xl flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform duration-300">
                             <MaterialYellowIcon size={26} />
                           </div>
 
@@ -188,7 +189,7 @@ export default function Courses() {
                             )}
                           </div>
                           
-                          <h3 className="text-xl font-sans font-bold text-[#1E1B18] group-hover:text-indigo-600 transition-colors leading-snug">
+                          <h3 className="text-xl font-sans font-bold text-[#1E1B18] leading-snug">
                             {course.title}
                           </h3>
                         </div>
@@ -221,11 +222,11 @@ export default function Courses() {
                         </div>
                         
                         <div className="flex items-center justify-between pt-4 border-t border-gray-100 mt-auto">
-                          <span className="text-xs font-black uppercase tracking-wider text-indigo-950 group-hover:text-indigo-600 transition-colors">
+                          <span className="text-xs font-black uppercase tracking-wider text-[#1E1B18]">
                             {isEnrolled ? 'Vstoupit do kurzu' : 'Zobrazit detail a osnovu'}
                           </span>
 
-                          <div className="w-9 h-9 rounded-full bg-[#F5C400] text-[#1E1B18] flex items-center justify-center group-hover:scale-110 transition-transform shadow-sm">
+                          <div className="w-9 h-9 rounded-full bg-[#F5C400] text-[#1E1B18] flex items-center justify-center group-hover:scale-110 transition-transform duration-300 shadow-sm">
                             <ArrowRight size={17} />
                           </div>
                         </div>
