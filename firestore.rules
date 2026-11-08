@@ -21,6 +21,15 @@ service cloud.firestore {
       );
     }
 
+    function isPremiumOrAdmin() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        ('role' in request.auth.token && request.auth.token.role in ['premium', 'course', 'teacher']) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['premium', 'course', 'teacher'])
+      );
+    }
+
     function unchanged(field) {
       return !(field in request.resource.data) || request.resource.data[field] == resource.data[field];
     }
@@ -188,15 +197,20 @@ service cloud.firestore {
 
     function isValidTodo(data) {
       return data.studentId is string && data.studentId.size() <= 128 &&
-             data.title is string && data.title.size() <= 256 &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 256 &&
              data.type is string && (data.type == 'practice' || data.type == 'test' || data.type == 'material' || data.type == 'custom' || data.type == 'course_lesson' || data.type == 'course_material' || data.type == 'course_practice') &&
              data.completed is bool &&
              data.addedBy is string && data.addedBy.size() <= 128 &&
              data.createdAt is timestamp &&
              (!('dueDate' in data) || data.dueDate == null || data.dueDate is timestamp) &&
              (!('completedAt' in data) || data.completedAt == null || data.completedAt is timestamp) &&
-             (!('assignedTestId' in data) || data.assignedTestId == null || data.assignedTestId is string) &&
-             (!('referenceId' in data) || data.referenceId == null || data.referenceId is string);
+             (!('assignedTestId' in data) || data.assignedTestId == null || (data.assignedTestId is string && data.assignedTestId.size() <= 128)) &&
+             (!('referenceId' in data) || data.referenceId == null || (data.referenceId is string && data.referenceId.size() <= 128)) &&
+             (!('subjectId' in data) || data.subjectId == null || (data.subjectId is string && data.subjectId.size() <= 128)) &&
+             (!('topicId' in data) || data.topicId == null || (data.topicId is string && data.topicId.size() <= 128)) &&
+             (!('planId' in data) || data.planId == null || (data.planId is string && data.planId.size() <= 128)) &&
+             (!('repetitionIndex' in data) || data.repetitionIndex == null || (data.repetitionIndex is int && data.repetitionIndex >= 1 && data.repetitionIndex <= 100)) &&
+             (!('totalRepetitions' in data) || data.totalRepetitions == null || (data.totalRepetitions is int && data.totalRepetitions >= 1 && data.totalRepetitions <= 100));
     }
 
     function isValidCustomItem(data) {
@@ -391,14 +405,29 @@ service cloud.firestore {
 
     match /todos/{todoId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
-      allow create: if isAuthenticated() && (isOwner(request.resource.data.studentId) || isAdmin()) && isValidTodo(request.resource.data);
+      allow create: if isAuthenticated() &&
+        request.resource.data.addedBy == request.auth.uid &&
+        (
+          isAdmin() ||
+          (isOwner(request.resource.data.studentId) && (request.resource.data.type != 'practice' || isPremiumOrAdmin()))
+        ) &&
+        isValidTodo(request.resource.data);
       allow update: if isAuthenticated() && (
+        (isAdmin() && keepsImmutableFields() && isValidTodo(request.resource.data)) ||
         (isOwner(resource.data.studentId) &&
+          resource.data.addedBy == request.auth.uid &&
+          (resource.data.type != 'practice' || isPremiumOrAdmin()) &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'dueDate', 'completed', 'completedAt']) &&
           isValidTodo(request.resource.data)) ||
-        (isAdmin() && keepsImmutableFields() && isValidTodo(request.resource.data))
+        (isOwner(resource.data.studentId) &&
+          resource.data.addedBy != request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['completed', 'completedAt']) &&
+          isValidTodo(request.resource.data))
       );
-      allow delete: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+      allow delete: if isAuthenticated() && (
+        isAdmin() ||
+        (isOwner(resource.data.studentId) && resource.data.addedBy == request.auth.uid)
+      );
     }
 
     match /customTopics/{topicId} {

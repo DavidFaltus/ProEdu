@@ -184,7 +184,30 @@ export function useNotifications() {
         console.warn('Failed to subscribe to practice subtopics notifications', err);
       }
 
-      // If FREE, do NOT subscribe to anything else (no materials, inquiries, tests, todos, live lessons)
+      // 1b. Student Todos / Assigned Practice from Teacher (for ALL students including Free)
+      try {
+        const qTodos = query(
+          collection(db, 'todos'),
+          where('studentId', '==', uid),
+          where('completed', '==', false),
+          limit(100)
+        );
+        const unsubTodos = onSnapshot(
+          qTodos,
+          (snap) => {
+            const items = snap.docs
+              .map(doc => ({ id: doc.id, ...doc.data() }))
+              .filter((item: any) => item.addedBy && item.addedBy !== uid && !item.completed);
+            setTodosList(items);
+          },
+          (err) => console.warn('Error listening to notifications (todos):', err)
+        );
+        unsubs.push(unsubTodos);
+      } catch (err) {
+        console.warn('Failed to subscribe to todos notifications', err);
+      }
+
+      // If FREE, do NOT subscribe to anything else (no materials, inquiries, tests, live lessons)
       if (!isFree) {
         // PRO & COURSE STUDENTS:
 
@@ -226,29 +249,6 @@ export function useNotifications() {
           unsubs.push(unsubInquiries);
         } catch (err) {
           console.warn('Failed to subscribe to student inquiries notifications', err);
-        }
-
-        // 4. Student Todos (active only)
-        try {
-          const qTodos = query(
-            collection(db, 'todos'),
-            where('studentId', '==', uid),
-            where('completed', '==', false),
-            limit(20)
-          );
-          const unsubTodos = onSnapshot(
-            qTodos,
-            (snap) => {
-              const items = snap.docs
-                .map(doc => ({ id: doc.id, ...doc.data() }))
-                .filter((item: any) => item.addedBy !== uid && !item.completed);
-              setTodosList(items);
-            },
-            (err) => console.warn('Error listening to notifications (todos):', err)
-          );
-          unsubs.push(unsubTodos);
-        } catch (err) {
-          console.warn('Failed to subscribe to todos notifications', err);
         }
 
         // 5. Student Assigned Tests
@@ -321,6 +321,67 @@ export function useNotifications() {
         }
       });
 
+      // 1b. Teacher-assigned Practice & Todos (for ALL students including Free)
+      const practicePlansMap = new Map<string, any[]>();
+      const regularTodos: any[] = [];
+
+      todosList.forEach(todo => {
+        if (todo.type === 'practice') {
+          const groupKey = todo.planId || `single-${todo.id}`;
+          const existing = practicePlansMap.get(groupKey) || [];
+          existing.push(todo);
+          practicePlansMap.set(groupKey, existing);
+        } else {
+          regularTodos.push(todo);
+        }
+      });
+
+      practicePlansMap.forEach((group, groupKey) => {
+        if (group.length === 1) {
+          const todo = group[0];
+          const time = safeToDate(todo.createdAt) || new Date(0);
+          const dueStr = safeToDate(todo.dueDate)?.toLocaleDateString('cs-CZ') || '';
+          list.push({
+            id: `todo-practice-${todo.id}`,
+            type: 'practice',
+            title: todo.title || 'Přiřazené procvičování od učitele',
+            description: dueStr
+              ? `Zadáno do kalendáře • Termín: ${dueStr}`
+              : 'Učitel ti přiřadil cvičení do kalendáře',
+            timestamp: time,
+            isNew: time > lastViewed,
+            link: todo.referenceId ? `/practice/session/${todo.referenceId}` : '/',
+            tagText: 'Zadáno učitelem',
+          });
+        } else if (group.length > 1) {
+          // Seskupená notifikace pro hromadně přiřazené téma / více cvičení od učitele
+          const latestTime = group.reduce((maxDate, item) => {
+            const d = safeToDate(item.createdAt) || new Date(0);
+            return d > maxDate ? d : maxDate;
+          }, new Date(0));
+
+          const cleanTitles = group
+            .slice(0, 2)
+            .map((t: any) => (t.title || '').replace(/^Procvičování:\s*/i, ''))
+            .filter(Boolean);
+          const extraCount = group.length - cleanTitles.length;
+
+          list.push({
+            id: `todo-plan-${groupKey}`,
+            type: 'practice',
+            title: `Přiřazeno ${group.length} cvičení do kalendáře`,
+            description:
+              cleanTitles.length > 0
+                ? `${cleanTitles.join(', ')}${extraCount > 0 ? ` a další (${extraCount})` : ''}`
+                : 'Učitel ti naplánoval nová procvičování v kalendáři',
+            timestamp: latestTime,
+            isNew: latestTime > lastViewed,
+            link: '/',
+            tagText: 'Zadáno učitelem',
+          });
+        }
+      });
+
       // If FREE, no other notifications
       if (!isFree) {
         // 2. Learning sheets (Pro & Course)
@@ -340,8 +401,8 @@ export function useNotifications() {
           }
         });
 
-        // 3. Todos (Course-tagged for course students, standard for Pro)
-        todosList.forEach(todo => {
+        // 3. Regular Todos (Course-tagged for course students, standard for Pro)
+        regularTodos.forEach(todo => {
           const time = safeToDate(todo.createdAt) || new Date(0);
           const isCourseTodo = isCourseUser && (
             (typeof todo.type === 'string' && todo.type.startsWith('course_')) || 
@@ -356,7 +417,7 @@ export function useNotifications() {
               : (isCourseTodo ? 'Nový úkol z tvého kurzu' : 'Nový zadaný úkol v To-Do seznamu'),
             timestamp: time,
             isNew: time > lastViewed,
-            link: '/todo',
+            link: '/',
             tagText: isCourseTodo ? 'Úkol ke kurzu' : 'Úkol',
           });
         });

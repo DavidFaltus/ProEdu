@@ -27,6 +27,7 @@ import { useAuth } from '../context/AuthContext';
 import { 
   getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice 
 } from '../services/practiceService';
+import { completeScheduledPracticeTodo } from '../services/calendarService';
 import { submitInquiry } from '../services/inquiryService';
 import { sanitizeSvg } from '../utils/svgUtils';
 import { PracticeSubtopic, PracticeQuestion } from '../types';
@@ -316,6 +317,27 @@ export default function PracticeSession() {
           await recordPracticeSessionStreak();
         } catch (streakErr) {
           console.error('Failed to update streak:', streakErr);
+        }
+
+        try {
+          const calRes = await completeScheduledPracticeTodo(
+            user.uid,
+            subtopic.id,
+            isPremium
+          );
+          if (calRes.completedTodoId) {
+            if (calRes.quotaMetToday) {
+              toast.success('🎉 Denní kvóta splněna! Dnešní pole v kalendáři zezelenalo.');
+            } else if (calRes.totalTodayCount > 0) {
+              toast.success(
+                `✅ Cvičení splněno v kalendáři (${calRes.completedTodayCount}/${calRes.totalTodayCount} dnešní kvóty).`
+              );
+            } else {
+              toast.success('✅ Naplánované cvičení v kalendáři bylo označeno jako splněné!');
+            }
+          }
+        } catch (calErr) {
+          console.error('Failed to update scheduled practice todo:', calErr);
         }
       }
     }

@@ -19,8 +19,11 @@ import {
   ShieldCheck,
   UserCheck,
   Check,
-  Loader2
+  Loader2,
+  Plus,
+  Trash2
 } from 'lucide-react';
+import { format, isBefore, startOfDay } from 'date-fns';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -32,7 +35,7 @@ import {
   DialogFooter, 
   DialogDescription 
 } from '../ui/dialog';
-import { cn } from '../../lib/utils';
+import { cn, safeToDate } from '../../lib/utils';
 import { 
   getStudentsProgressList, 
   StudentProgressItem, 
@@ -40,9 +43,15 @@ import {
   updateStudentAccess 
 } from '../../services/studentProgressService';
 import { getAllCourses } from '../../services/courseService';
-import { Course } from '../../types';
+import {
+  getStudentPracticeTodos,
+  updateScheduledTodoDueDate,
+  deleteScheduledTodo
+} from '../../services/calendarService';
+import { Course, TodoItem } from '../../types';
 import { toast } from 'sonner';
-import { TeamBlueIcon, CorrectCyanIcon, StarYellowIcon, StarPinkIcon, CapIcon, BrainPinkIcon, BookCyanIcon } from '../common/CustomIcon';
+import { TeamBlueIcon, CorrectCyanIcon, StarYellowIcon, StarPinkIcon, CapIcon, BrainPinkIcon, BookCyanIcon, CalendarBlueIcon } from '../common/CustomIcon';
+import AssignPracticeModal from './AssignPracticeModal';
 
 export default function StudentsProgressManager() {
   const [students, setStudents] = useState<StudentProgressItem[]>([]);
@@ -61,6 +70,73 @@ export default function StudentsProgressManager() {
   const [accessRole, setAccessRole] = useState<'free' | 'premium' | 'course'>('free');
   const [accessCourseIds, setAccessCourseIds] = useState<string[]>([]);
   const [isSavingAccess, setIsSavingAccess] = useState(false);
+
+  // Přiřazování procvičování do kalendáře
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [assignPreselectedStudent, setAssignPreselectedStudent] = useState<StudentProgressItem | null>(null);
+  const [studentPracticeTodos, setStudentPracticeTodos] = useState<TodoItem[]>([]);
+  const [loadingStudentTodos, setLoadingStudentTodos] = useState(false);
+  const [updatingTodoId, setUpdatingTodoId] = useState<string | null>(null);
+
+  const loadStudentTodos = async (studentUid: string) => {
+    setLoadingStudentTodos(true);
+    try {
+      const items = await getStudentPracticeTodos(studentUid);
+      setStudentPracticeTodos(items);
+    } catch (err) {
+      console.warn('Nepodařilo se načíst naplánovaná cvičení studenta:', err);
+    } finally {
+      setLoadingStudentTodos(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedStudentId) {
+      loadStudentTodos(selectedStudentId);
+    } else {
+      setStudentPracticeTodos([]);
+    }
+  }, [selectedStudentId]);
+
+  const handleOpenAssignModal = (student: StudentProgressItem | null) => {
+    setAssignPreselectedStudent(student);
+    setIsAssignModalOpen(true);
+  };
+
+  const handleRescheduleTodo = async (todoId: string, newDateStr: string) => {
+    if (!newDateStr) return;
+    const [y, m, d] = newDateStr.split('-').map(Number);
+    if (!y || !m || !d) return;
+    const nextDate = new Date(y, m - 1, d, 16, 0, 0, 0);
+
+    setUpdatingTodoId(todoId);
+    try {
+      await updateScheduledTodoDueDate(todoId, nextDate);
+      setStudentPracticeTodos(prev =>
+        prev.map(t => (t.id === todoId ? { ...t, dueDate: nextDate } : t))
+      );
+      toast.success('Datum procvičování v kalendáři bylo změněno.');
+    } catch (err) {
+      console.error('Chyba při změně data procvičování:', err);
+      toast.error('Nepodařilo se upravit termín procvičování.');
+    } finally {
+      setUpdatingTodoId(null);
+    }
+  };
+
+  const handleDeleteScheduledTodo = async (todoId: string) => {
+    setUpdatingTodoId(todoId);
+    try {
+      await deleteScheduledTodo(todoId);
+      setStudentPracticeTodos(prev => prev.filter(t => t.id !== todoId));
+      toast.success('Přiřazené cvičení bylo odebráno z kalendáře.');
+    } catch (err) {
+      console.error('Chyba při mazání přiřazeného procvičování:', err);
+      toast.error('Nepodařilo se odebrat cvičení z kalendáře.');
+    } finally {
+      setUpdatingTodoId(null);
+    }
+  };
 
   const loadData = async (isManual = false) => {
     if (isManual) setRefreshing(true);
@@ -267,15 +343,25 @@ export default function StudentsProgressManager() {
           </p>
         </div>
 
-        <Button
-          onClick={() => loadData(true)}
-          disabled={refreshing}
-          variant="outline"
-          className="rounded-2xl border-gray-200 hover:bg-gray-50 text-gray-700 font-bold text-xs h-10 px-4 self-start md:self-center flex items-center gap-2 cursor-pointer shadow-2xs"
-        >
-          <RefreshCcw size={14} className={cn(refreshing && "animate-spin")} />
-          <span>{refreshing ? 'Aktualizace...' : 'Obnovit data'}</span>
-        </Button>
+        <div className="flex items-center gap-2.5 self-start md:self-center flex-wrap">
+          <Button
+            onClick={() => handleOpenAssignModal(selectedStudent)}
+            className="rounded-2xl bg-[#1E1B18] hover:bg-black text-white font-bold text-xs h-10 px-4 flex items-center gap-2 cursor-pointer shadow-sm"
+          >
+            <Calendar size={14} className="text-blue-400" />
+            <span>Přiřadit procvičování</span>
+          </Button>
+
+          <Button
+            onClick={() => loadData(true)}
+            disabled={refreshing}
+            variant="outline"
+            className="rounded-2xl border-gray-200 hover:bg-gray-50 text-gray-700 font-bold text-xs h-10 px-4 flex items-center gap-2 cursor-pointer shadow-2xs"
+          >
+            <RefreshCcw size={14} className={cn(refreshing && "animate-spin")} />
+            <span>{refreshing ? 'Aktualizace...' : 'Obnovit data'}</span>
+          </Button>
+        </div>
       </div>
 
       {/* KPI STAT CARDS */}
@@ -510,8 +596,17 @@ export default function StudentsProgressManager() {
                     </div>
                   </div>
 
-                  {/* Button "Spravovat přístup" napravo od jména studenta */}
-                  <div className="flex items-center shrink-0 self-start sm:self-center">
+                  {/* Tlačítka "Přiřadit procvičování" a "Spravovat přístup" napravo od jména studenta */}
+                  <div className="flex items-center gap-2 flex-wrap shrink-0 self-start sm:self-center">
+                    <Button
+                      size="sm"
+                      onClick={() => handleOpenAssignModal(selectedStudent)}
+                      className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-xs h-10 px-4 flex items-center gap-2 cursor-pointer shadow-2xs"
+                    >
+                      <Calendar size={15} className="text-[#0F2942]" />
+                      <span>Přiřadit procvičování</span>
+                    </Button>
+
                     <Button
                       variant="outline"
                       size="sm"
@@ -580,6 +675,141 @@ export default function StudentsProgressManager() {
                   </div>
                 </div>
               </Card>
+
+              {/* ASSIGNED & SCHEDULED PRACTICE IN STUDENT CALENDAR */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <h4 className="text-lg font-black text-gray-900 tracking-tight flex items-center gap-2">
+                    <CalendarBlueIcon size={19} />
+                    <span>Přiřazená a naplánovaná procvičování v kalendáři ({studentPracticeTodos.length})</span>
+                  </h4>
+
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleOpenAssignModal(selectedStudent)}
+                    className="rounded-xl border-blue-200 bg-blue-50/70 hover:bg-blue-100 text-blue-900 font-black text-xs h-8 px-3 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus size={14} />
+                    <span>Přiřadit nová cvičení</span>
+                  </Button>
+                </div>
+
+                {loadingStudentTodos ? (
+                  <Card className="rounded-3xl border border-gray-200 p-6 text-center bg-white">
+                    <Loader2 size={20} className="animate-spin text-blue-600 mx-auto mb-2" />
+                    <p className="text-xs font-bold text-gray-500">Načítání kalendáře procvičování studenta...</p>
+                  </Card>
+                ) : studentPracticeTodos.length === 0 ? (
+                  <Card className="rounded-3xl border border-dashed border-gray-200 p-6 text-center bg-white space-y-2">
+                    <p className="text-gray-700 font-bold text-sm">
+                      Žádná naplánovaná ani přiřazená procvičování v kalendáři
+                    </p>
+                    <p className="text-gray-400 text-xs">
+                      Klikněte na tlačítko „Přiřadit procvičování“ a vyberte studentovi cvičení nebo celá témata s konkrétními termíny.
+                    </p>
+                  </Card>
+                ) : (
+                  <div className="bg-white rounded-3xl border border-gray-200/80 shadow-2xs p-4 space-y-2.5 max-h-80 overflow-y-auto">
+                    {studentPracticeTodos.map((todo) => {
+                      const due = safeToDate(todo.dueDate);
+                      const dateInputValue = due ? format(due, 'yyyy-MM-dd') : '';
+                      const isOverdue = !todo.completed && due ? isBefore(startOfDay(due), startOfDay(new Date())) : false;
+                      const isAssignedByTeacher = Boolean(todo.addedBy && todo.addedBy !== selectedStudent.uid);
+
+                      return (
+                        <div
+                          key={todo.id}
+                          className={cn(
+                            'p-3 rounded-2xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-all',
+                            todo.completed
+                              ? 'bg-emerald-50/40 border-emerald-200/80'
+                              : isOverdue
+                              ? 'bg-rose-50/50 border-rose-200/80'
+                              : 'bg-[#FAF7F0]/70 border-gray-200/80 hover:border-blue-200'
+                          )}
+                        >
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isAssignedByTeacher ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-800 border border-indigo-200">
+                                  Zadáno učitelem
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600">
+                                  Vlastní plán žáka
+                                </span>
+                              )}
+
+                              {todo.subjectId && (
+                                <span
+                                  className={cn(
+                                    'px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider',
+                                    todo.subjectId === 'Matematika'
+                                      ? 'bg-emerald-50 text-emerald-800 border border-emerald-200/60'
+                                      : 'bg-rose-50 text-rose-800 border border-rose-200/60'
+                                  )}
+                                >
+                                  {todo.subjectId}
+                                </span>
+                              )}
+
+                              {todo.completed ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                                  <CheckCircle2 size={10} />
+                                  Splněno
+                                </span>
+                              ) : isOverdue ? (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 flex items-center gap-1">
+                                  <XCircle size={10} />
+                                  Po termínu
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider bg-blue-50 text-blue-700">
+                                  V plánu
+                                </span>
+                              )}
+                            </div>
+
+                            <p
+                              className={cn(
+                                'font-bold text-xs sm:text-sm text-gray-900 truncate',
+                                todo.completed && 'line-through text-gray-500'
+                              )}
+                            >
+                              {todo.title}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-xl px-2.5 py-1">
+                              <Calendar size={12} className="text-blue-600 shrink-0" />
+                              <input
+                                type="date"
+                                value={dateInputValue}
+                                disabled={updatingTodoId === todo.id}
+                                onChange={(e) => handleRescheduleTodo(todo.id, e.target.value)}
+                                className="text-[11px] font-bold text-gray-800 bg-transparent focus:outline-none cursor-pointer"
+                                title="Změnit datum v kalendáři studenta"
+                              />
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={updatingTodoId === todo.id}
+                              onClick={() => handleDeleteScheduledTodo(todo.id)}
+                              className="p-2 rounded-xl text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                              title="Odebrat cvičení z kalendáře studenta"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* PRACTICE ATTEMPTS / RESULTS LIST */}
               <div className="space-y-4">
@@ -885,6 +1115,20 @@ export default function StudentsProgressManager() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* DIALOG PRO PŘIŘAZENÍ PROCVIČOVÁNÍ DO KALENDÁŘE STUDENTA */}
+      <AssignPracticeModal
+        isOpen={isAssignModalOpen}
+        onClose={() => setIsAssignModalOpen(false)}
+        initialStudent={assignPreselectedStudent}
+        students={students}
+        courses={courses}
+        onAssignedSuccess={() => {
+          if (selectedStudentId) {
+            loadStudentTodos(selectedStudentId);
+          }
+        }}
+      />
     </div>
   );
 }

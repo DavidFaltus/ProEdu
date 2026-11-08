@@ -1,6 +1,33 @@
 import { db } from '../lib/firebase';
-import { collection, query, where, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
-import { LiveLesson } from '../types';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  addDoc,
+  updateDoc,
+  deleteDoc,
+  doc,
+  writeBatch,
+  Timestamp,
+  serverTimestamp,
+} from 'firebase/firestore';
+import {
+  addDays,
+  startOfDay,
+  setHours,
+  setMinutes,
+  getDay,
+  isSameDay,
+  isBefore,
+} from 'date-fns';
+import {
+  LiveLesson,
+  TodoItem,
+  ScheduleConfig,
+  GeneratedScheduleItem,
+} from '../types';
+import { safeToDate } from '../lib/utils';
 
 export const getGoogleAccessToken = (): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -271,3 +298,504 @@ export const createGoogleMeetCalendarEvent = async (
     meetUrl,
   };
 };
+
+/**
+ * Pure function that generates a preview/list of scheduled practice items
+ * based on user configuration (interval, repetitions, sequencing, daily quota, collision handling).
+ */
+export const generatePracticeSchedule = (
+  config: ScheduleConfig,
+  existingTodos: TodoItem[] = []
+): GeneratedScheduleItem[] => {
+  const activeSelections = (config.selections || []).filter(
+    (s) => s.repetitions > 0
+  );
+  if (activeSelections.length === 0) return [];
+
+  // 1. Build ordered queue according to sequencingMode ('blocks' vs 'interleaved')
+  const queue: Omit<GeneratedScheduleItem, 'dueDate'>[] = [];
+
+  if (config.sequencingMode === 'interleaved') {
+    const maxReps = Math.max(...activeSelections.map((s) => s.repetitions));
+    for (let rep = 1; rep <= maxReps; rep++) {
+      for (const sel of activeSelections) {
+        if (rep <= sel.repetitions) {
+          const suffix =
+            sel.repetitions > 1 ? ` (${rep}/${sel.repetitions})` : '';
+          queue.push({
+            subtopicId: sel.subtopicId,
+            subtopicTitle: sel.subtopicTitle,
+            topicId: sel.topicId,
+            subjectId: sel.subjectId,
+            title: `${sel.subtopicTitle}${suffix}`.slice(0, 250),
+            repetitionIndex: rep,
+            totalRepetitions: sel.repetitions,
+          });
+        }
+      }
+    }
+  } else {
+    // Default: 'blocks' (repeat subtopic A for its full count/week before moving to subtopic B)
+    for (const sel of activeSelections) {
+      for (let rep = 1; rep <= sel.repetitions; rep++) {
+        const suffix =
+          sel.repetitions > 1 ? ` (${rep}/${sel.repetitions})` : '';
+        queue.push({
+          subtopicId: sel.subtopicId,
+          subtopicTitle: sel.subtopicTitle,
+          topicId: sel.topicId,
+          subjectId: sel.subjectId,
+          title: `${sel.subtopicTitle}${suffix}`.slice(0, 250),
+          repetitionIndex: rep,
+          totalRepetitions: sel.repetitions,
+        });
+      }
+    }
+  }
+
+  // 2. Determine start date (considering collisionStrategy === 'append_after')
+  let cursorDate = startOfDay(config.startDate || new Date());
+
+  if (config.collisionStrategy === 'append_after' && existingTodos.length > 0) {
+    let latestDate: Date | null = null;
+    for (const todo of existingTodos) {
+      if (todo.type === 'practice' && !todo.completed && todo.dueDate) {
+        const d = safeToDate(todo.dueDate);
+        if (d && !isBefore(startOfDay(d), cursorDate)) {
+          if (!latestDate || d.getTime() > latestDate.getTime()) {
+            latestDate = d;
+          }
+        }
+      }
+    }
+    if (latestDate) {
+      cursorDate = addDays(startOfDay(latestDate), 1);
+    }
+  }
+
+  // 3. Distribute queue across calendar days
+  const result: GeneratedScheduleItem[] = [];
+  let queueIndex = 0;
+  const dailyQuota = Math.max(1, Math.min(5, config.dailyQuota || 1));
+  const preferredHour =
+    typeof config.preferredHour === 'number' &&
+    config.preferredHour >= 0 &&
+    config.preferredHour <= 23
+      ? config.preferredHour
+      : 16;
+
+  const stepDays =
+    config.intervalMode === 'daily'
+      ? 1
+      : Math.max(1, config.customIntervalDays || 2);
+
+  const validWeekdays =
+    config.selectedWeekdays && config.selectedWeekdays.length > 0
+      ? config.selectedWeekdays
+      : [1, 2, 3, 4, 5]; // fallback Mon-Fri if empty
+
+  let safetyCounter = 0;
+  while (queueIndex < queue.length && safetyCounter < 1500) {
+    safetyCounter++;
+
+    const isDayAllowed =
+      config.intervalMode !== 'weekdays' ||
+      validWeekdays.includes(getDay(cursorDate));
+
+    if (isDayAllowed) {
+      for (let q = 0; q < dailyQuota && queueIndex < queue.length; q++) {
+        const entry = queue[queueIndex++];
+        const dueDate = setMinutes(setHours(cursorDate, preferredHour), 0);
+        result.push({
+          ...entry,
+          dueDate,
+        });
+      }
+      cursorDate = addDays(
+        cursorDate,
+        config.intervalMode === 'weekdays' ? 1 : stepDays
+      );
+    } else {
+      cursorDate = addDays(cursorDate, 1);
+    }
+  }
+
+  return result;
+};
+
+/**
+ * Checks whether a schedule (if merged from startDate) collides with existing uncompleted practice todos.
+ */
+export const detectScheduleCollision = (
+  config: ScheduleConfig,
+  existingTodos: TodoItem[] = []
+): {
+  hasCollision: boolean;
+  collidingDaysCount: number;
+  latestExistingDate: Date | null;
+} => {
+  const activePracticeTodos = existingTodos.filter(
+    (t) => t.type === 'practice' && !t.completed && t.dueDate
+  );
+  if (activePracticeTodos.length === 0) {
+    return {
+      hasCollision: false,
+      collidingDaysCount: 0,
+      latestExistingDate: null,
+    };
+  }
+
+  const mergePreview = generatePracticeSchedule(
+    { ...config, collisionStrategy: 'merge' },
+    []
+  );
+
+  let latestExistingDate: Date | null = null;
+  const existingDates: Date[] = [];
+
+  for (const t of activePracticeTodos) {
+    const d = safeToDate(t.dueDate);
+    if (d) {
+      existingDates.push(d);
+      if (!latestExistingDate || d.getTime() > latestExistingDate.getTime()) {
+        latestExistingDate = d;
+      }
+    }
+  }
+
+  const collidingDayKeys = new Set<string>();
+  for (const item of mergePreview) {
+    if (existingDates.some((ed) => isSameDay(ed, item.dueDate))) {
+      collidingDayKeys.add(startOfDay(item.dueDate).toISOString());
+    }
+  }
+
+  return {
+    hasCollision: collidingDayKeys.size > 0,
+    collidingDaysCount: collidingDayKeys.size,
+    latestExistingDate,
+  };
+};
+
+/**
+ * Atomically saves generated practice schedule items into the Firestore `todos` collection.
+ */
+export const savePracticeScheduleToCalendar = async (
+  studentId: string,
+  items: GeneratedScheduleItem[]
+): Promise<{ planId: string; count: number }> => {
+  if (!studentId) {
+    throw new Error('Pro uložení rozvrhu musíte být přihlášeni.');
+  }
+  if (!items || items.length === 0) {
+    throw new Error('Rozvrh neobsahuje žádná cvičení k uložení.');
+  }
+
+  const planId = `plan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+  const CHUNK_SIZE = 450;
+
+  for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+    const chunk = items.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+
+    for (const item of chunk) {
+      const ref = doc(collection(db, 'todos'));
+      batch.set(ref, {
+        studentId,
+        title: item.title.slice(0, 256),
+        type: 'practice',
+        completed: false,
+        addedBy: studentId,
+        createdAt: serverTimestamp(),
+        dueDate: Timestamp.fromDate(item.dueDate),
+        referenceId: item.subtopicId,
+        subjectId: item.subjectId,
+        topicId: item.topicId,
+        planId,
+        repetitionIndex: item.repetitionIndex,
+        totalRepetitions: item.totalRepetitions,
+      });
+    }
+
+    await batch.commit();
+  }
+
+  return { planId, count: items.length };
+};
+
+/**
+ * Automatically marks a scheduled practice todo as completed when the student finishes a PracticeSession.
+ * Priority:
+ * 1. Uncompleted todo for this subtopic scheduled for TODAY
+ * 2. Earliest overdue uncompleted todo for this subtopic
+ * 3. Earliest upcoming uncompleted todo for this subtopic
+ */
+export const completeScheduledPracticeTodo = async (
+  studentId: string,
+  subtopicId: string,
+  isPremiumUser = true
+): Promise<{
+  completedTodoId: string | null;
+  quotaMetToday: boolean;
+  completedTodayCount: number;
+  totalTodayCount: number;
+}> => {
+  if (!studentId || !subtopicId) {
+    return {
+      completedTodoId: null,
+      quotaMetToday: false,
+      completedTodayCount: 0,
+      totalTodayCount: 0,
+    };
+  }
+
+  const q = query(collection(db, 'todos'), where('studentId', '==', studentId));
+  const snap = await getDocs(q);
+
+  const now = new Date();
+  const todayStart = startOfDay(now);
+
+  const allPracticeTodos: (TodoItem & { parsedDate: Date | null })[] =
+    snap.docs
+      .map((d) => {
+        const data = d.data() as Omit<TodoItem, 'id'>;
+        return {
+          id: d.id,
+          ...data,
+          parsedDate: safeToDate(data.dueDate),
+        };
+      })
+      .filter(
+        (t) =>
+          t.type === 'practice' &&
+          (isPremiumUser || (t.addedBy && t.addedBy !== studentId))
+      );
+
+  const uncompletedForSubtopic = allPracticeTodos.filter(
+    (t) => !t.completed && t.referenceId === subtopicId && t.parsedDate
+  );
+
+  let targetTodo: (TodoItem & { parsedDate: Date | null }) | null = null;
+
+  if (uncompletedForSubtopic.length > 0) {
+    // 1. Today's scheduled items
+    const todayCandidates = uncompletedForSubtopic
+      .filter((t) => t.parsedDate && isSameDay(t.parsedDate, now))
+      .sort(
+        (a, b) =>
+          (a.repetitionIndex || 1) - (b.repetitionIndex || 1) ||
+          (a.parsedDate?.getTime() || 0) - (b.parsedDate?.getTime() || 0)
+      );
+
+    if (todayCandidates.length > 0) {
+      targetTodo = todayCandidates[0];
+    } else {
+      // 2. Overdue items (oldest first)
+      const overdueCandidates = uncompletedForSubtopic
+        .filter((t) => t.parsedDate && isBefore(startOfDay(t.parsedDate), todayStart))
+        .sort(
+          (a, b) =>
+            (a.parsedDate?.getTime() || 0) - (b.parsedDate?.getTime() || 0)
+        );
+
+      if (overdueCandidates.length > 0) {
+        targetTodo = overdueCandidates[0];
+      } else {
+        // 3. Nearest upcoming item
+        const upcomingCandidates = uncompletedForSubtopic.sort(
+          (a, b) =>
+            (a.parsedDate?.getTime() || 0) - (b.parsedDate?.getTime() || 0)
+        );
+        targetTodo = upcomingCandidates[0] || null;
+      }
+    }
+  }
+
+  if (targetTodo) {
+    await updateDoc(doc(db, 'todos', targetTodo.id), {
+      completed: true,
+      completedAt: serverTimestamp(),
+    });
+    targetTodo.completed = true;
+  }
+
+  // Calculate today's practice quota status
+  const todayTodos = allPracticeTodos.filter(
+    (t) => t.parsedDate && isSameDay(t.parsedDate, now)
+  );
+  const totalTodayCount = todayTodos.length;
+  const completedTodayCount = todayTodos.filter((t) => t.completed).length;
+  const quotaMetToday =
+    totalTodayCount > 0 && completedTodayCount === totalTodayCount;
+
+  return {
+    completedTodoId: targetTodo ? targetTodo.id : null,
+    quotaMetToday,
+    completedTodayCount,
+    totalTodayCount,
+  };
+};
+
+/**
+ * Deletes a single scheduled todo item from the calendar.
+ */
+export const deleteScheduledTodo = async (todoId: string): Promise<void> => {
+  if (!todoId) return;
+  await deleteDoc(doc(db, 'todos', todoId));
+};
+
+/**
+ * Deletes all uncompleted practice todos belonging to a specific planId (or all uncompleted practice todos if planId omitted).
+ */
+export const deleteScheduledPracticePlan = async (
+  studentId: string,
+  planId?: string
+): Promise<number> => {
+  if (!studentId) return 0;
+
+  const q = query(collection(db, 'todos'), where('studentId', '==', studentId));
+  const snap = await getDocs(q);
+
+  const toDelete = snap.docs.filter((d) => {
+    const data = d.data();
+    if (data.type !== 'practice' || data.completed) return false;
+    if (planId && data.planId !== planId) return false;
+    return true;
+  });
+
+  if (toDelete.length === 0) return 0;
+
+  const CHUNK_SIZE = 450;
+  for (let i = 0; i < toDelete.length; i += CHUNK_SIZE) {
+    const chunk = toDelete.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const docSnap of chunk) {
+      batch.delete(docSnap.ref);
+    }
+    await batch.commit();
+  }
+
+  return toDelete.length;
+};
+
+export interface TeacherExerciseAssignmentInput {
+  subtopicId: string;
+  subtopicTitle: string;
+  topicId: string;
+  subjectId: string;
+  dueDate: Date;
+}
+
+/**
+ * Assigns selected practice exercises (or whole topics) from a teacher to one or more students,
+ * writing them directly into each student's `todos` calendar collection with `addedBy = teacherId`.
+ */
+export const assignPracticeToStudentsByTeacher = async (
+  teacherId: string,
+  studentIds: string[],
+  assignments: TeacherExerciseAssignmentInput[]
+): Promise<{ planId: string; totalCreated: number }> => {
+  if (!teacherId) {
+    throw new Error('Chybí identifikace učitele.');
+  }
+  const uniqueStudents = Array.from(new Set(studentIds.filter(Boolean)));
+  if (uniqueStudents.length === 0) {
+    throw new Error('Vyberte prosím alespoň jednoho studenta.');
+  }
+  if (!assignments || assignments.length === 0) {
+    throw new Error('Vyberte prosím alespoň jedno procvičování k přiřazení.');
+  }
+
+  const planId = `teacher-plan-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+  // Count how many times the same subtopic is assigned to compute repetitionIndex / totalRepetitions
+  const subtopicTotals = new Map<string, number>();
+  for (const a of assignments) {
+    subtopicTotals.set(a.subtopicId, (subtopicTotals.get(a.subtopicId) || 0) + 1);
+  }
+
+  const payloads: Record<string, any>[] = [];
+
+  for (const studentId of uniqueStudents) {
+    const subtopicCounters = new Map<string, number>();
+    for (const item of assignments) {
+      const totalReps = subtopicTotals.get(item.subtopicId) || 1;
+      const currentRep = (subtopicCounters.get(item.subtopicId) || 0) + 1;
+      subtopicCounters.set(item.subtopicId, currentRep);
+
+      const suffix = totalReps > 1 ? ` (${currentRep}/${totalReps})` : '';
+      const dueDateWithHour = setMinutes(setHours(startOfDay(item.dueDate), 16), 0);
+
+      payloads.push({
+        studentId,
+        title: `${item.subtopicTitle}${suffix}`.slice(0, 256),
+        type: 'practice',
+        completed: false,
+        addedBy: teacherId,
+        createdAt: serverTimestamp(),
+        dueDate: Timestamp.fromDate(dueDateWithHour),
+        referenceId: item.subtopicId,
+        subjectId: item.subjectId,
+        topicId: item.topicId || '',
+        planId,
+        repetitionIndex: currentRep,
+        totalRepetitions: totalReps,
+      });
+    }
+  }
+
+  const CHUNK_SIZE = 450;
+  for (let i = 0; i < payloads.length; i += CHUNK_SIZE) {
+    const chunk = payloads.slice(i, i + CHUNK_SIZE);
+    const batch = writeBatch(db);
+    for (const data of chunk) {
+      const ref = doc(collection(db, 'todos'));
+      batch.set(ref, data);
+    }
+    await batch.commit();
+  }
+
+  return { planId, totalCreated: payloads.length };
+};
+
+/**
+ * Fetches all scheduled practice todos for a specific student (used in Teacher's StudentsProgressManager).
+ */
+export const getStudentPracticeTodos = async (
+  studentId: string
+): Promise<TodoItem[]> => {
+  if (!studentId) return [];
+  const q = query(collection(db, 'todos'), where('studentId', '==', studentId));
+  const snap = await getDocs(q);
+
+  const items: TodoItem[] = snap.docs
+    .map((d) => ({
+      id: d.id,
+      ...(d.data() as Omit<TodoItem, 'id'>),
+    }))
+    .filter((t) => t.type === 'practice');
+
+  items.sort((a, b) => {
+    const da = safeToDate(a.dueDate)?.getTime() || 0;
+    const dbDate = safeToDate(b.dueDate)?.getTime() || 0;
+    return da - dbDate;
+  });
+
+  return items;
+};
+
+/**
+ * Updates the dueDate of a scheduled todo item (used by Teacher to reschedule an assigned exercise).
+ */
+export const updateScheduledTodoDueDate = async (
+  todoId: string,
+  newDate: Date
+): Promise<void> => {
+  if (!todoId || !newDate) return;
+  const dueDateWithHour = setMinutes(setHours(startOfDay(newDate), 16), 0);
+  await updateDoc(doc(db, 'todos', todoId), {
+    dueDate: Timestamp.fromDate(dueDateWithHour),
+  });
+};
+
+

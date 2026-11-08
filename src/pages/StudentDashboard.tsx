@@ -5,8 +5,9 @@ import { cn, safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { ArrowRight, Play, RotateCcw, Lock } from 'lucide-react';
+import { ArrowRight, Play, RotateCcw, Lock, Calendar } from 'lucide-react';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import CustomIcon, { 
   StarPinkIcon, 
   BulbYellowIcon, 
@@ -24,7 +25,7 @@ import JokerZoneSection from '../components/JokerZoneSection';
 import TeacherInquiriesOverview from '../components/admin/TeacherInquiriesOverview';
 import TeacherLessonsOverview from '../components/admin/TeacherLessonsOverview';
 import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons } from '../services/liveLessonService';
-import { LiveLesson } from '../types';
+import { LiveLesson, PracticeSubtopic } from '../types';
 import { getJoinedLessonIds, markLessonAsJoined } from '../lib/liveLessonUtils';
 import { 
   syncLiveLessonToInAppCalendar, 
@@ -93,6 +94,9 @@ export default function StudentDashboard() {
   const canViewTutorAndLessons = !isFreeOrGuest;
 
   const [isPaywallOpen, setIsPaywallOpen] = useState(false);
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleInitialSubtopics, setScheduleInitialSubtopics] = useState<PracticeSubtopic[]>([]);
+  const [scheduleInitialSubject, setScheduleInitialSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [inquiries, setInquiries] = useState<QuestionInquiry[]>([]);
   const [loadingInquiries, setLoadingInquiries] = useState(false);
   const [liveLessons, setLiveLessons] = useState<LiveLesson[]>([]);
@@ -134,7 +138,7 @@ export default function StudentDashboard() {
     const qTodos = query(
       collection(db, 'todos'),
       where('studentId', '==', user.uid),
-      limit(50)
+      limit(300)
     );
     const unsub = onSnapshot(
       qTodos,
@@ -355,7 +359,11 @@ export default function StudentDashboard() {
           <QuickCalendar 
             todos={todos} 
             liveLessons={liveLessons} 
-            onJoinLesson={handleJoinLesson} 
+            onJoinLesson={handleJoinLesson}
+            onOpenScheduleModal={() => {
+              setScheduleInitialSubtopics([]);
+              setIsScheduleModalOpen(true);
+            }}
           />
         </div>
 
@@ -526,7 +534,33 @@ export default function StudentDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto pt-1 sm:pt-0 border-t border-gray-200/40 sm:border-0 justify-end">
+                        <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto pt-1 sm:pt-0 border-t border-gray-200/40 sm:border-0 justify-end">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const mappedSub: PracticeSubtopic = {
+                                id: item.subtopicId,
+                                title: item.title,
+                                topicId: '',
+                                subjectId: item.subject,
+                              };
+                              setScheduleInitialSubject(item.subject);
+                              setScheduleInitialSubtopics([mappedSub]);
+                              setIsScheduleModalOpen(true);
+                            }}
+                            title="Přidat procvičování do kalendáře"
+                            className="rounded-xl font-bold text-xs h-9 px-2.5 flex items-center justify-center gap-1 cursor-pointer bg-white border-gray-200 hover:border-brand-blue text-gray-700"
+                          >
+                            <Calendar size={13} className="text-brand-blue" />
+                            {!isPremium && (
+                              <span className="text-[8px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.2 rounded">
+                                PRO
+                              </span>
+                            )}
+                          </Button>
+
                           {item.hasStudyMaterial && (
                             <Button
                               size="sm"
@@ -647,6 +681,15 @@ export default function StudentDashboard() {
         isOpen={isPaywallOpen}
         onClose={() => setIsPaywallOpen(false)}
         type="premium"
+      />
+
+      {/* Modal pro naplánování procvičování do kalendáře */}
+      <PracticeScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        initialSubject={scheduleInitialSubject}
+        initialSubtopics={scheduleInitialSubtopics}
+        existingTodos={todos}
       />
     </div>
   );

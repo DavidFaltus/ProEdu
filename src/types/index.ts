@@ -232,3 +232,68 @@ export interface Order {
   createdAt: any;
   updatedAt?: any;
 }
+
+export type TodoType =
+  | 'practice'
+  | 'test'
+  | 'material'
+  | 'custom'
+  | 'course_lesson'
+  | 'course_material'
+  | 'course_practice';
+
+export interface TodoItem {
+  id: string;
+  studentId: string;
+  title: string;
+  type: TodoType;
+  completed: boolean;
+  addedBy: string;
+  createdAt: any;
+  dueDate?: any;
+  completedAt?: any;
+  assignedTestId?: string;
+  referenceId?: string;
+  subjectId?: string;
+  topicId?: string;
+  planId?: string;
+  repetitionIndex?: number;
+  totalRepetitions?: number;
+}
+
+export type ScheduleIntervalMode = 'daily' | 'custom_interval' | 'weekdays';
+export type ScheduleSequencingMode = 'blocks' | 'interleaved';
+export type ScheduleCollisionStrategy = 'merge' | 'append_after';
+
+export interface ScheduleSubtopicSelection {
+  subtopicId: string;
+  subtopicTitle: string;
+  topicId: string;
+  topicTitle?: string;
+  subjectId: string;
+  repetitions: number;
+}
+
+export interface ScheduleConfig {
+  selections: ScheduleSubtopicSelection[];
+  intervalMode: ScheduleIntervalMode;
+  customIntervalDays: number; // e.g., 2 = every other day
+  selectedWeekdays: number[]; // 0 = Sun, 1 = Mon, ..., 6 = Sat
+  sequencingMode: ScheduleSequencingMode;
+  dailyQuota: number; // exercises per scheduled day (1..5)
+  startDate: Date;
+  preferredHour: number; // default 16
+  collisionStrategy: ScheduleCollisionStrategy;
+}
+
+export interface GeneratedScheduleItem {
+  subtopicId: string;
+  subtopicTitle: string;
+  topicId: string;
+  subjectId: string;
+  title: string;
+  dueDate: Date;
+  repetitionIndex: number;
+  totalRepetitions: number;
+}
+

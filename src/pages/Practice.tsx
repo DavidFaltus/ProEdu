@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Play, Plus, 
+  Play, Plus, Calendar,
   ArrowRight, ChevronRight, ChevronDown, Lock
 } from 'lucide-react';
-import { BrainPinkIcon, BrainWhiteIcon, BookCyanIcon, BookWhiteIcon } from '../components/common/CustomIcon';
+import { BrainPinkIcon, BrainWhiteIcon, BookCyanIcon, BookWhiteIcon, CalendarBlueIcon } from '../components/common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { 
@@ -15,10 +15,13 @@ import {
   getTopics, getSubtopics, getQuestionsForSubtopic, 
   PREDEFINED_SUBJECTS 
 } from '../services/practiceService';
-import { PracticeTopic, PracticeSubtopic } from '../types';
+import { PracticeTopic, PracticeSubtopic, TodoItem } from '../types';
 import { toast } from 'sonner';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import { trackPracticeSubjectChange, trackSectionClick } from '../services/analyticsService';
+import { db } from '../lib/firebase';
+import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 
 const getSubjectIcon = (id: string, isActive: boolean) => {
   if (id === 'Matematika') {
@@ -38,6 +41,48 @@ export default function Practice() {
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [selectedSubtopicForStudy, setSelectedSubtopicForStudy] = useState<PracticeSubtopic | null>(null);
   const [expandedTopics, setExpandedTopics] = useState<Record<string, boolean>>({});
+
+  // State pro plánování procvičování do kalendáře
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleInitialTopic, setScheduleInitialTopic] = useState<PracticeTopic | null>(null);
+  const [scheduleInitialSubtopics, setScheduleInitialSubtopics] = useState<PracticeSubtopic[]>([]);
+  const [studentTodos, setStudentTodos] = useState<TodoItem[]>([]);
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setStudentTodos([]);
+      return;
+    }
+    const qTodos = query(
+      collection(db, 'todos'),
+      where('studentId', '==', user.uid),
+      limit(300)
+    );
+    const unsub = onSnapshot(
+      qTodos,
+      (snap) => {
+        setStudentTodos(snap.docs.map(d => ({ id: d.id, ...(d.data() as Omit<TodoItem, 'id'>) })));
+      },
+      (err) => {
+        console.error('Error loading student todos in Practice:', err);
+      }
+    );
+    return () => unsub();
+  }, [user?.uid]);
+
+  const handleOpenScheduleForTopic = (e: React.MouseEvent, topic: PracticeTopic, topicSubtopics: PracticeSubtopic[]) => {
+    e.stopPropagation();
+    setScheduleInitialTopic(topic);
+    setScheduleInitialSubtopics(topicSubtopics);
+    setIsScheduleModalOpen(true);
+  };
+
+  const handleOpenScheduleForSubtopic = (e: React.MouseEvent, topic: PracticeTopic, subtopic: PracticeSubtopic) => {
+    e.stopPropagation();
+    setScheduleInitialTopic(topic);
+    setScheduleInitialSubtopics([subtopic]);
+    setIsScheduleModalOpen(true);
+  };
 
   const toggleTopic = (topicId: string) => {
     setExpandedTopics(prev => ({
@@ -236,7 +281,24 @@ export default function Practice() {
                       )}
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 self-center">
+                    <div className="flex items-center gap-2.5 shrink-0 self-center">
+                      {topicSubtopics.length > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleOpenScheduleForTopic(e, topic, topicSubtopics)}
+                          className="rounded-xl font-bold text-xs h-10 px-3.5 flex items-center gap-1.5 cursor-pointer bg-white border-gray-200 hover:border-brand-blue hover:bg-blue-50/40 text-gray-800 transition-all"
+                          title="Naplánovat celé téma do kalendáře"
+                        >
+                          <Calendar size={14} className="text-brand-blue" />
+                          <span className="hidden sm:inline">Naplánovat téma</span>
+                          {!isPremium && (
+                            <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded">
+                              PRO
+                            </span>
+                          )}
+                        </Button>
+                      )}
                       <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all duration-300 group-hover:scale-105 ${
                         isExpanded
                           ? isMath
@@ -347,7 +409,23 @@ export default function Practice() {
                                   </div>
 
                                   {/* Action Buttons for this subtopic */}
-                                  <div className="flex items-center gap-2.5 shrink-0 self-end md:self-center">
+                                  <div className="flex items-center gap-2 flex-wrap shrink-0 self-end md:self-center">
+                                    {/* Do kalendáře Button */}
+                                    <Button
+                                      variant="outline"
+                                      onClick={(e) => handleOpenScheduleForSubtopic(e, topic, subtopic)}
+                                      className="rounded-xl font-bold text-xs h-10 px-3.5 flex items-center gap-1.5 cursor-pointer bg-white border-gray-200 hover:border-brand-blue hover:bg-blue-50/40 text-gray-800 transition-all"
+                                      title="Přidat cvičení do kalendáře"
+                                    >
+                                      <Calendar size={14} className="text-brand-blue" />
+                                      <span>Do kalendáře</span>
+                                      {!isPremium && (
+                                        <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
+                                          PRO
+                                        </span>
+                                      )}
+                                    </Button>
+
                                     {/* Studovat Button (Zamčeno pro Free a hosty, pouze pro Premium) */}
                                     <Link 
                                       to={isStudyLocked ? '#' : `/study/${subtopic.id}`}
@@ -416,6 +494,16 @@ export default function Practice() {
             navigate(`/study/${selectedSubtopicForStudy.id}`);
           }
         }}
+      />
+
+      {/* Modal pro naplánování procvičování do kalendáře */}
+      <PracticeScheduleModal
+        isOpen={isScheduleModalOpen}
+        onClose={() => setIsScheduleModalOpen(false)}
+        initialSubject={activeSubject}
+        initialTopic={scheduleInitialTopic}
+        initialSubtopics={scheduleInitialSubtopics}
+        existingTodos={studentTodos}
       />
     </div>
   );
