@@ -49,6 +49,7 @@ import {
 
 interface QuestionAnswerState {
   userAnswer: string;
+  selectedOptionIndex?: number;
   isCorrect: boolean;
   usedHint: boolean;
   isSubmitted: boolean;
@@ -147,11 +148,16 @@ export default function PracticeSession() {
   const isAnswerSubmitted = !!currentAnswer?.isSubmitted;
   const isHintOpen = !!showHintMap[currentIndex];
 
-  // Helper for answer normalization
-  const normalize = (str: string) => str.toLowerCase().replace(/\s+/g, '').replace(/,/g, '.');
+  // U Češtiny rozlišujeme velká a malá písmena (case-sensitive)
+  const isCzechSubject = Boolean(
+    subtopic?.subjectId === 'Čeština' ||
+    currentQuestion?.subjectId === 'Čeština' ||
+    subtopic?.subjectId?.toLowerCase().includes('češ') ||
+    currentQuestion?.subjectId?.toLowerCase().includes('češ')
+  );
 
   // Immediate choice selection & check
-  const handleSelectChoice = async (option: string) => {
+  const handleSelectChoice = async (option: string, optionIndex?: number) => {
     if (!currentQuestion || isAnswerSubmitted) return;
 
     if (!isPremium && user && jokers <= 0) {
@@ -160,7 +166,9 @@ export default function PracticeSession() {
       return;
     }
 
-    const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer);
+    const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
+      caseSensitive: isCzechSubject
+    });
     const usedHint = !!showHintMap[currentIndex];
 
     trackPracticeAnswer({
@@ -175,6 +183,7 @@ export default function PracticeSession() {
       ...prev,
       [currentIndex]: {
         userAnswer: option,
+        selectedOptionIndex: optionIndex,
         isCorrect: evalResult.isCorrect,
         usedHint,
         isSubmitted: true,
@@ -208,7 +217,9 @@ export default function PracticeSession() {
       return;
     }
 
-    const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer);
+    const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer, {
+      caseSensitive: isCzechSubject
+    });
     const usedHint = !!showHintMap[currentIndex];
 
     trackPracticeAnswer({
@@ -875,12 +886,18 @@ export default function PracticeSession() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 relative z-10">
             {currentQuestion.options.map((option, idx) => {
               const letter = String.fromCharCode(65 + idx); // A, B, C, D
-              const isSelected = currentAnswer?.userAnswer === option;
+              const isSelected =
+                currentAnswer?.selectedOptionIndex !== undefined
+                  ? currentAnswer.selectedOptionIndex === idx
+                  : currentAnswer?.userAnswer === option;
+              const isCorrectOption = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
+                caseSensitive: isCzechSubject
+              }).isCorrect;
               
               let optionStyle = 'bg-[#FAF7F0] border-gray-200/80 hover:bg-gray-100 hover:border-gray-300 text-gray-800';
 
               if (isAnswerSubmitted) {
-                if (option === currentQuestion.correctAnswer) {
+                if (isCorrectOption) {
                   optionStyle = 'bg-emerald-600 text-white border-transparent shadow-md';
                 } else if (isSelected && !currentAnswer.isCorrect) {
                   optionStyle = 'bg-rose-600 text-white border-transparent shadow-md';
@@ -893,7 +910,7 @@ export default function PracticeSession() {
                 <button
                   key={idx}
                   disabled={isAnswerSubmitted}
-                  onClick={() => handleSelectChoice(option)}
+                  onClick={() => handleSelectChoice(option, idx)}
                   className={`p-5 sm:p-6 rounded-2xl border text-left font-medium text-sm sm:text-base flex items-center gap-4 transition-all cursor-pointer ${optionStyle} ${
                     isAnswerSubmitted ? 'cursor-default' : ''
                   }`}
@@ -915,8 +932,8 @@ export default function PracticeSession() {
         {/* Answer Options: Open-ended text field */}
         {currentQuestion.type === 'open' && (
           <div className="pt-2 space-y-3 relative z-10">
-            {/* Quick Math Symbols Bar for mobile/desktop typing */}
-            {!isAnswerSubmitted && (
+            {/* Quick Math Symbols Bar for mobile/desktop typing (only for Math) */}
+            {!isAnswerSubmitted && !isCzechSubject && (
               <div className="flex flex-wrap items-center gap-1.5 pb-1">
                 <span className="text-[11px] font-bold text-gray-400 mr-1 select-none">Rychlé symboly:</span>
                 {['/', '√', '²', '³', 'π', '±', '·', ',', '-'].map((sym) => (
@@ -946,7 +963,11 @@ export default function PracticeSession() {
                     handleCheckOpenAnswer();
                   }
                 }}
-                placeholder="Napiš svou odpověď sem (např. 1/2 nebo 3)..."
+                placeholder={
+                  isCzechSubject
+                    ? 'Napiš svou odpověď sem (pozor na velká a malá písmena)...'
+                    : 'Napiš svou odpověď sem (např. 1/2 nebo 3)...'
+                }
                 className="h-16 rounded-2xl border-gray-300 bg-gray-50 text-base sm:text-lg font-bold px-6 focus:bg-white flex-1"
               />
               {!isAnswerSubmitted && (

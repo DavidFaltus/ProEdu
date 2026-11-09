@@ -116,6 +116,8 @@ service cloud.firestore {
              data.subjectId is string && data.subjectId.size() <= 128 &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
              (!('order' in data) || data.order is number) &&
+             (!('isHidden' in data) || data.isHidden == null || data.isHidden is bool) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp) &&
              data.createdBy is string && data.createdBy.size() <= 128;
     }
 
@@ -133,6 +135,8 @@ service cloud.firestore {
              (!('sampleProblem' in data) || data.sampleProblem == null || data.sampleProblem is map) &&
              (!('practiceConfig' in data) || data.practiceConfig == null || data.practiceConfig is map) &&
              (!('order' in data) || data.order is number) &&
+             (!('isHidden' in data) || data.isHidden == null || data.isHidden is bool) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp) &&
              (!('createdAt' in data) || data.createdAt is timestamp) &&
              data.createdBy is string && data.createdBy.size() <= 128;
     }
@@ -214,7 +218,12 @@ service cloud.firestore {
     }
 
     function isValidCustomItem(data) {
-      return data.name is string && data.name.size() <= 256;
+      return (
+               ('name' in data && data.name is string && data.name.size() <= 256) ||
+               ('title' in data && data.title is string && data.title.size() <= 256)
+             ) &&
+             (!('isHidden' in data) || data.isHidden == null || data.isHidden is bool) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
     }
 
     function isValidStudyMaterial(data) {

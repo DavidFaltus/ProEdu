@@ -76,19 +76,19 @@ export default function TeacherDashboard() {
   const bothExist = hasInquiries && hasLessons;
 
   return (
-    <div className="w-full max-w-7xl mx-auto space-y-6 sm:space-y-8">
-      <div>
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-gray-700 tracking-tight font-playful mb-2">
+    <div className="page-container w-full max-w-7xl mx-auto space-y-6 sm:space-y-8">
+      <section className="text-center space-y-3 max-w-3xl mx-auto">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-gray-700 tracking-tight font-playful">
           Učitelský panel
         </h1>
-        <p className="text-gray-500 font-semibold text-xs sm:text-sm">
+        <p className="text-base md:text-lg text-gray-500 leading-relaxed">
           Vítejte zpět, {userProfile?.name || 'Učiteli'}. Zde můžete spravovat svůj obsah a komunikovat se studenty.
         </p>
-      </div>
+      </section>
 
       {/* Management Tabs */}
       <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList className="flex flex-nowrap overflow-x-auto gap-2 bg-transparent h-auto p-0 mb-6 sm:mb-8 w-full justify-start border-b border-gray-200 rounded-none pb-3 overscroll-x-contain scrollbar-hide">
+        <TabsList className="flex flex-nowrap overflow-x-auto gap-2 bg-transparent h-auto p-0 mb-6 sm:mb-8 w-full justify-start lg:justify-center border-b border-gray-200 rounded-none pb-3 overscroll-x-contain scrollbar-hide">
           <TabsTrigger 
             value="practices" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-[#B80053] data-[state=active]:shadow-sm data-[state=active]:border-[#B80053]/20 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"

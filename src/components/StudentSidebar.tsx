@@ -77,6 +77,13 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
       locked: !isPremium,
     },
     {
+      name: 'Statistiky',
+      path: '/statistics',
+      icon: StarYellowIcon,
+      active: location.pathname.startsWith('/statistics') || location.pathname.startsWith('/statistiky'),
+      locked: !isPremium,
+    },
+    {
       name: 'Kurzy',
       path: '/courses',
       icon: CapIcon,

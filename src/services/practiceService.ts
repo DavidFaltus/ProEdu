@@ -49,6 +49,7 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
           subjectId: data.subjectId || 'Matematika',
           description: data.description || '',
           order: typeof data.order === 'number' ? data.order : 0,
+          isHidden: Boolean(data.isHidden),
           createdAt: data.createdAt,
           createdBy: data.createdBy
         } as PracticeTopic;
@@ -85,6 +86,7 @@ export async function getTopicById(topicId: string): Promise<PracticeTopic | nul
       subjectId: data.subjectId || 'Matematika',
       description: data.description || '',
       order: typeof data.order === 'number' ? data.order : 0,
+      isHidden: Boolean(data.isHidden),
       createdAt: data.createdAt,
       createdBy: data.createdBy
     };
@@ -113,6 +115,9 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
     if (typeof topicData.order === 'number') {
       updatePayload.order = topicData.order;
     }
+    if (typeof topicData.isHidden === 'boolean') {
+      updatePayload.isHidden = topicData.isHidden;
+    }
     await updateDoc(docRef, updatePayload);
     cacheManager.invalidate('topics');
     return topicData.id;
@@ -137,17 +142,43 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
       }
     }
 
+    const isHidden = typeof topicData.isHidden === 'boolean' ? topicData.isHidden : true;
+
     const newDoc = await addDoc(collRef, {
       name: title,
       title: title,
       subjectId: subjectId,
       description: topicData.description?.trim() || '',
       order: assignedOrder,
+      isHidden,
       createdAt: now,
       createdBy: effectiveUserId
     });
     cacheManager.invalidate('topics');
     return newDoc.id;
+  }
+}
+
+export async function setTopicVisibility(
+  topicId: string,
+  isHidden: boolean,
+  subtopicIdsToUnhide?: string[],
+  userId?: string
+): Promise<void> {
+  if (!topicId) return;
+  const now = Timestamp.now();
+  const docRef = doc(db, 'customTopics', topicId);
+  await updateDoc(docRef, {
+    isHidden,
+    updatedAt: now
+  });
+  cacheManager.invalidate('topics');
+
+  if (!isHidden && Array.isArray(subtopicIdsToUnhide) && subtopicIdsToUnhide.length > 0) {
+    await Promise.all(
+      subtopicIdsToUnhide.map(subId => saveSubtopic({ id: subId, isHidden: false }, userId))
+    );
+    cacheManager.invalidate('subtopics');
   }
 }
 
@@ -259,6 +290,7 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
   const subjectId = (subtopicData.subjectId as any) || 'Matematika';
   const description = subtopicData.description?.trim() || '';
   const order = typeof subtopicData.order === 'number' ? subtopicData.order : 0;
+  const isHidden = typeof subtopicData.isHidden === 'boolean' ? subtopicData.isHidden : true;
   const studyTheory = subtopicData.studyTheory?.trim() || '';
   const studySteps = Array.isArray(subtopicData.studySteps)
     ? subtopicData.studySteps.map(cleanStudyStep)
@@ -282,6 +314,7 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     subjectId,
     description,
     order,
+    isHidden,
     hasStudyMaterial,
     svgUrl,
     svgContent: safeSvgContent,
@@ -320,6 +353,7 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     subjectId: data.subjectId || data.subject || 'Matematika',
     description: description,
     order: order,
+    isHidden: Boolean(data.isHidden),
     hasStudyMaterial: hasStudyMaterial,
     svgUrl: svgUrl,
     svgContent: svgContent,
@@ -397,6 +431,10 @@ export function buildSubtopicUpdatePayload(
     ? updates.hasStudyMaterial
     : !!(svgUrl || safeSvgContent || studyTheory || (studySteps && studySteps.length > 0) || sampleProblem);
 
+  const isHidden = typeof updates.isHidden === 'boolean'
+    ? updates.isHidden
+    : Boolean(existing.isHidden);
+
   let practiceConfig: PracticeConfig | null | undefined = existing.practiceConfig;
   if (updates.practiceConfig !== undefined) {
     practiceConfig = updates.practiceConfig ? cleanPracticeConfig(updates.practiceConfig) : null;
@@ -408,6 +446,7 @@ export function buildSubtopicUpdatePayload(
     subjectId,
     description,
     order,
+    isHidden,
     hasStudyMaterial,
     svgUrl,
     svgContent: safeSvgContent,
@@ -418,6 +457,15 @@ export function buildSubtopicUpdatePayload(
     createdBy: existing.createdBy,
     createdAt: existing.createdAt
   };
+}
+
+export async function setSubtopicVisibility(
+  subtopicId: string,
+  isHidden: boolean,
+  userId?: string
+): Promise<void> {
+  if (!subtopicId) return;
+  await saveSubtopic({ id: subtopicId, isHidden }, userId);
 }
 
 export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, userId?: string): Promise<string> {
@@ -1438,13 +1486,21 @@ export async function importPracticeQuestionsToFirestore(
   // Subtopic question duplicate cache: subtopicId -> Set of normalized questions
   const subtopicQuestionsCache = new Map<string, Set<string>>();
 
-  const normQ = (str: string) => str.toLowerCase().replace(/\s+/g, ' ').trim();
+  const normQ = (q: { question: string; options?: string[]; correctAnswer?: string; subjectId?: string; subject?: string }) => {
+    const subj = normalizeSubjectName(q.subjectId || q.subject);
+    const isCzech = subj === 'Čeština';
+    const qText = (q.question || '').replace(/\s+/g, ' ').trim();
+    const optsText = (q.options || []).map(o => (o || '').replace(/\s+/g, ' ').trim()).join('|');
+    const ansText = (q.correctAnswer || '').replace(/\s+/g, ' ').trim();
+    const combined = `${qText}__${optsText}__${ansText}`;
+    return isCzech ? combined : combined.toLowerCase();
+  };
 
   async function getExistingQuestionsForSubtopic(subId: string): Promise<Set<string>> {
     if (subtopicQuestionsCache.has(subId)) return subtopicQuestionsCache.get(subId)!;
     const questions = await getQuestionsForSubtopic(subId);
     const set = new Set<string>();
-    questions.forEach(q => set.add(normQ(q.question)));
+    questions.forEach(q => set.add(normQ(q)));
     subtopicQuestionsCache.set(subId, set);
     return set;
   }
@@ -1464,7 +1520,8 @@ export async function importPracticeQuestionsToFirestore(
     const newId = await saveTopic({
       subjectId: normSub,
       title: topicTitle.trim(),
-      description: `Téma ${topicTitle} pro předmět ${normSub}`
+      description: `Téma ${topicTitle} pro předmět ${normSub}`,
+      isHidden: true
     }, effectiveUserId);
     topicCache.set(key, newId);
     existingTopics.push({
@@ -1472,7 +1529,8 @@ export async function importPracticeQuestionsToFirestore(
       title: topicTitle.trim(),
       subjectId: normSub,
       description: `Téma ${topicTitle} pro předmět ${normSub}`,
-      order: 0
+      order: 0,
+      isHidden: true
     });
     topicsCreated++;
     return newId;
@@ -1494,7 +1552,8 @@ export async function importPracticeQuestionsToFirestore(
       subjectId: normSub,
       topicId: topicId,
       title: subtopicTitle.trim(),
-      description: `Podtéma ${subtopicTitle}`
+      description: `Podtéma ${subtopicTitle}`,
+      isHidden: true
     }, effectiveUserId);
     subtopicCache.set(key, newId);
     existingSubtopics.push({
@@ -1502,6 +1561,7 @@ export async function importPracticeQuestionsToFirestore(
       title: subtopicTitle.trim(),
       topicId: topicId,
       subjectId: normSub,
+      isHidden: true,
       hasStudyMaterial: false,
       description: `Podtéma ${subtopicTitle}`
     });
@@ -1517,7 +1577,7 @@ export async function importPracticeQuestionsToFirestore(
       const subtopicId = await ensureSubtopic(row.subject, topicId, row.subtopic);
 
       const existingSet = await getExistingQuestionsForSubtopic(subtopicId);
-      const normalizedCurrent = normQ(row.question);
+      const normalizedCurrent = normQ(row);
 
       if (existingSet.has(normalizedCurrent)) {
         skippedDuplicates++;
@@ -1831,7 +1891,8 @@ export async function importStudyStepsToFirestore(
     const newId = await saveTopic({
       subjectId: normSub,
       title: topicTitle.trim(),
-      description: `Téma ${topicTitle} pro předmět ${normSub}`
+      description: `Téma ${topicTitle} pro předmět ${normSub}`,
+      isHidden: true
     }, effectiveUserId);
     topicCache.set(key, newId);
     existingTopics.push({
@@ -1839,7 +1900,8 @@ export async function importStudyStepsToFirestore(
       title: topicTitle.trim(),
       subjectId: normSub,
       description: `Téma ${topicTitle} pro předmět ${normSub}`,
-      order: 0
+      order: 0,
+      isHidden: true
     });
     topicsCreated++;
     return newId;
@@ -1861,7 +1923,8 @@ export async function importStudyStepsToFirestore(
       subjectId: normSub,
       topicId: topicId,
       title: subtopicTitle.trim(),
-      description: `Podtéma ${subtopicTitle}`
+      description: `Podtéma ${subtopicTitle}`,
+      isHidden: true
     }, effectiveUserId);
     subtopicCache.set(key, newId);
     existingSubtopics.push({
@@ -1869,6 +1932,7 @@ export async function importStudyStepsToFirestore(
       title: subtopicTitle.trim(),
       topicId: topicId,
       subjectId: normSub,
+      isHidden: true,
       hasStudyMaterial: true,
       description: `Podtéma ${subtopicTitle}`
     });
@@ -1966,7 +2030,8 @@ export async function seedInitialPracticeData(userId?: string): Promise<void> {
     subjectId: 'Čeština',
     title: 'Pravopis a vyjmenovaná slova',
     description: 'Vyjmenovaná slova, koncovky podstatných a přídavných jmen, shoda přísudku s podmětem.',
-    order: 1
+    order: 1,
+    isHidden: false
   }, effectiveUserId);
 
   // Subtopic with SVG link to /materials/cz-shoda.svg
@@ -1976,6 +2041,7 @@ export async function seedInitialPracticeData(userId?: string): Promise<void> {
     title: 'Vyjmenovaná slova a homofony',
     description: 'Přehled vyjmenovaných slov po B, L, M, P, S, V, Z a časté chytáky u přijímaček.',
     svgUrl: '/materials/cz-shoda.svg',
+    isHidden: false,
     hasStudyMaterial: true,
     studyTheory: 'Vyjmenovaná slova jsou slova domácího původu, v jejichž kořenech se po obojetných souhláskách píše tvrdé Y/Ý. U zkoušek CERMAT se často testují tzv. homofony – slova se stejnou výslovností, ale odlišným významem.',
     studyTips: 'Vždy si prověř význam slova v kontextu celé věty (např. být x bít, mlýn x mlít, pyl x pil).',
@@ -2056,7 +2122,8 @@ export async function seedInitialPracticeData(userId?: string): Promise<void> {
     subjectId: 'Matematika',
     title: 'Rovnice a výrazy',
     description: 'Lineární rovnice s jednou neznámou, vytýkání před závorku a algebraické vzorce.',
-    order: 1
+    order: 1,
+    isHidden: false
   }, effectiveUserId);
 
   const subtopicMathId = await saveSubtopic({
@@ -2064,6 +2131,7 @@ export async function seedInitialPracticeData(userId?: string): Promise<void> {
     topicId: topicMathId,
     title: 'Lineární rovnice a ekvivalentní úpravy',
     description: 'Řešení rovnic se zlomky a závorkami, zkouška správnosti.',
+    isHidden: false,
     hasStudyMaterial: true,
     studyTheory: 'Při řešení lineárních rovnic používáme ekvivalentní úpravy: přičtení/odečtení stejného výrazu k oběma stranám a násobení/dělení obou stran nenulovým číslem. Cílem je izolovat neznámou x na jedné straně.',
     studyTips: 'Nezapomeňte při násobení rovnice společným jmenovatelem vynásobit KAŽDÝ člen včetně celých čísel!',

@@ -387,18 +387,34 @@ export default function StudentDashboard() {
                   </div>
                 </div>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    trackSectionClick('dashboard_catalog_btn', '/practice');
-                    navigate('/practice');
-                  }}
-                  className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs shrink-0 self-start sm:self-auto"
-                >
-                  <span>Katalog témat</span>
-                  <ArrowRight size={12} />
-                </Button>
+                <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      trackSectionClick('dashboard_stats_btn', '/statistics');
+                      navigate('/statistics');
+                    }}
+                    className="rounded-xl border-amber-200 hover:border-amber-300 bg-amber-50/70 hover:bg-amber-100/80 text-amber-900 font-bold text-xs h-8 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <StarPinkIcon size={13} />
+                    <span>Statistiky</span>
+                    {!isPremium && <Lock size={11} className="text-amber-700" />}
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      trackSectionClick('dashboard_catalog_btn', '/practice');
+                      navigate('/practice');
+                    }}
+                    className="rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-800 font-bold text-xs h-8 px-3 flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <span>Katalog témat</span>
+                    <ArrowRight size={12} />
+                  </Button>
+                </div>
               </div>
 
               {/* List of Recommended Topics (3 items) */}

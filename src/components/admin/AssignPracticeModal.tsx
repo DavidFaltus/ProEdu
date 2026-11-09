@@ -29,6 +29,7 @@ import {
   Sparkles,
   Loader2,
   AlertCircle,
+  EyeOff,
 } from 'lucide-react';
 import {
   Dialog,
@@ -651,9 +652,17 @@ export default function AssignPracticeModal({
                         className="p-3.5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5"
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <span className="font-bold text-xs sm:text-sm text-gray-900">
-                            {topic.title}
-                          </span>
+                          <div className="flex items-center gap-2 min-w-0 flex-wrap">
+                            <span className="font-bold text-xs sm:text-sm text-gray-900">
+                              {topic.title}
+                            </span>
+                            {topic.isHidden && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-gray-200/80 text-gray-700 border border-gray-300">
+                                <EyeOff size={10} />
+                                Skryto
+                              </span>
+                            )}
+                          </div>
                           <button
                             type="button"
                             onClick={() => handleToggleWholeTopic(topic, tSubs)}
@@ -676,6 +685,7 @@ export default function AssignPracticeModal({
                               (r) => r.subtopicId === sub.id
                             ).length;
                             const isSelected = selectedCount > 0;
+                            const isSubHidden = Boolean(sub.isHidden || topic.isHidden);
                             return (
                               <button
                                 key={sub.id}
@@ -687,7 +697,9 @@ export default function AssignPracticeModal({
                                   'px-2.5 py-1 rounded-xl text-xs font-semibold transition-all cursor-pointer border flex items-center gap-1',
                                   isSelected
                                     ? 'bg-brand-blue text-white border-brand-blue shadow-2xs'
-                                    : 'bg-white text-gray-700 border-gray-200 hover:border-brand-blue/40'
+                                    : isSubHidden
+                                      ? 'bg-gray-100/80 text-gray-600 border-dashed border-gray-300 hover:border-brand-blue/40'
+                                      : 'bg-white text-gray-700 border-gray-200 hover:border-brand-blue/40'
                                 )}
                               >
                                 {isSelected ? (
@@ -696,6 +708,20 @@ export default function AssignPracticeModal({
                                   <Plus size={12} className="text-gray-400" />
                                 )}
                                 <span>{sub.title}</span>
+                                {isSubHidden && (
+                                  <span
+                                    className={cn(
+                                      'ml-0.5 px-1.5 py-0.2 rounded text-[9px] font-black uppercase tracking-wider flex items-center gap-0.5',
+                                      isSelected
+                                        ? 'bg-white/25 text-white'
+                                        : 'bg-gray-200 text-gray-700'
+                                    )}
+                                    title="Skryto v obecném přehledu pro studenty"
+                                  >
+                                    <EyeOff size={9} />
+                                    Skryto
+                                  </span>
+                                )}
                                 {selectedCount > 1 && (
                                   <span className="ml-0.5 px-1 rounded bg-white/20 text-[10px] font-black">
                                     {selectedCount}×

@@ -105,18 +105,68 @@ export interface AnswerEvaluationResult {
   tutorFeedback?: string;
 }
 
+export interface EvaluateAnswerOptions {
+  caseSensitive?: boolean;
+}
+
+/**
+ * Normalizes text answer while preserving letter case (for Czech language / grammar checks).
+ * - strips outer whitespace
+ * - collapses multiple spaces into a single space
+ * - strips outer $ delimiters if any
+ */
+export function normalizeCaseSensitiveTextAnswer(raw: string): string {
+  if (!raw) return '';
+  return raw
+    .trim()
+    .replace(/^\$\$|\$\$$/g, '')
+    .replace(/^\$|\$$/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
  * Evaluates student answer against teacher's expected answer.
  * Handles:
- * 1. Exact string match (after case/comma/space normalization)
- * 2. Alternative answers separated by ';' or '|'
- * 3. Numerical fraction vs decimal equivalence (e.g. 1/2 vs 0.5 vs 0,5)
- * 4. CERMAT irreducible fraction rule (e.g. 2/4 vs 1/2 gives specific feedback)
+ * 1. Case-sensitive exact comparison when `options.caseSensitive` is true (e.g. Czech language)
+ * 2. Exact string match (after case/comma/space normalization for Math)
+ * 3. Alternative answers separated by ';' or '|'
+ * 4. Numerical fraction vs decimal equivalence (e.g. 1/2 vs 0.5 vs 0,5)
+ * 5. CERMAT irreducible fraction rule (e.g. 2/4 vs 1/2 gives specific feedback)
  */
 export function evaluateStudentAnswer(
   studentInput: string,
-  expectedAnswer: string
+  expectedAnswer: string,
+  options?: EvaluateAnswerOptions
 ): AnswerEvaluationResult {
+  if (options?.caseSensitive) {
+    const normStudentCase = normalizeCaseSensitiveTextAnswer(studentInput);
+    if (!normStudentCase) {
+      return { isCorrect: false, isExact: false, isSimplified: false };
+    }
+
+    const expectedVariantsCase = (expectedAnswer || '')
+      .split(/[;|]/)
+      .map(v => normalizeCaseSensitiveTextAnswer(v))
+      .filter(Boolean);
+
+    for (const variant of expectedVariantsCase) {
+      if (normStudentCase === variant) {
+        return {
+          isCorrect: true,
+          isExact: true,
+          isSimplified: true
+        };
+      }
+    }
+
+    return {
+      isCorrect: false,
+      isExact: false,
+      isSimplified: false
+    };
+  }
+
   const normStudent = normalizeMathAnswer(studentInput);
   if (!normStudent) {
     return { isCorrect: false, isExact: false, isSimplified: false };

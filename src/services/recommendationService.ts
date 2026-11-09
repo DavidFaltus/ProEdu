@@ -1,7 +1,7 @@
 import { collection, getDocs, query, where, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { PracticeSubtopic } from '../types';
-import { getSubtopics } from './practiceService';
+import { getTopics, getSubtopics } from './practiceService';
 
 export interface RecommendedPracticeItem {
   subtopicId: string;
@@ -163,9 +163,25 @@ export async function getPersonalizedRecommendations(
   userFocusAreas: string[] = []
 ): Promise<RecommendedPracticeItem[]> {
   try {
-    // 1. Načteme všechna dostupná podtémata v aplikaci
-    const allSubtopics = await getSubtopics();
-    if (!allSubtopics || allSubtopics.length === 0) {
+    // 1. Načteme všechna dostupná viditelná témata a podtémata v aplikaci
+    const [allTopics, rawSubtopics] = await Promise.all([
+      getTopics(),
+      getSubtopics()
+    ]);
+
+    const hiddenTopicKeys = new Set<string>();
+    allTopics.forEach(t => {
+      if (t.isHidden) {
+        hiddenTopicKeys.add(t.id);
+        if (t.title) hiddenTopicKeys.add(t.title);
+      }
+    });
+
+    const allSubtopics = (rawSubtopics || []).filter(
+      s => !s.isHidden && !hiddenTopicKeys.has(s.topicId)
+    );
+
+    if (allSubtopics.length === 0) {
       return FALLBACK_TOPICS;
     }
 

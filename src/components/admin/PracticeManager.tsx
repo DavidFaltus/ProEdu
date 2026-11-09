@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { 
   Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
-  Image as ImageIcon, Eye, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical,
+  Image as ImageIcon, Eye, EyeOff, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical,
   GripVertical, ArrowUp, ArrowDown, RotateCcw, Check
 } from 'lucide-react';
 import { Button } from '../ui/button';
@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { 
   getTopics, getSubtopics, getQuestionsForSubtopic, getAllQuestionsGroupedBySubtopic,
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
+  setTopicVisibility, setSubtopicVisibility,
   saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
   updateTopicsOrder,
   ExistingMaterialItem, cleanStudyStep,
@@ -253,11 +254,46 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     if (!editingTopic?.title?.trim()) return;
 
     try {
+      const isCreating = !editingTopic.id;
+      const targetHidden =
+        typeof editingTopic.isHidden === 'boolean'
+          ? editingTopic.isHidden
+          : isCreating
+            ? true
+            : false;
+
+      const existingTopic = editingTopic.id
+        ? topics.find(t => t.id === editingTopic.id)
+        : undefined;
+
       const savedId = await saveTopic({
         ...editingTopic,
+        isHidden: targetHidden,
         subjectId: activeSubject
       }, effectiveUserId);
-      toast.success(editingTopic.id ? 'Téma upraveno' : 'Téma vytvořeno');
+
+      // Pokud se existující skryté téma odemyká a všechna jeho podtémata jsou skrytá, zviditelníme i podtémata
+      if (editingTopic.id && existingTopic?.isHidden && !targetHidden) {
+        const topicSubs = subtopics.filter(
+          s => s.topicId === editingTopic.id || s.topicId === existingTopic.title
+        );
+        if (topicSubs.length > 0 && topicSubs.every(s => s.isHidden)) {
+          await setTopicVisibility(
+            editingTopic.id,
+            false,
+            topicSubs.map(s => s.id),
+            effectiveUserId
+          );
+        }
+      }
+
+      toast.success(
+        isCreating
+          ? targetHidden
+            ? 'Téma vytvořeno (výchozí stav: skryté)'
+            : 'Téma vytvořeno a zviditelněno'
+          : 'Téma upraveno'
+      );
       setIsTopicModalOpen(false);
       setEditingTopic(null);
       await loadData();
@@ -266,6 +302,67 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       }
     } catch (err: any) {
       toast.error('Chyba při ukládání: ' + err.message);
+    }
+  };
+
+  const handleToggleTopicVisibility = async (topic: PracticeTopic) => {
+    const nextHidden = !topic.isHidden;
+    const topicSubs = subtopics.filter(
+      s => s.topicId === topic.id || s.topicId === topic.title
+    );
+    const shouldUnhideAllSubs =
+      !nextHidden && topicSubs.length > 0 && topicSubs.every(s => s.isHidden);
+    const subIdsToUnhide = shouldUnhideAllSubs ? topicSubs.map(s => s.id) : [];
+
+    // Optimistic UI update
+    setTopics(prev =>
+      prev.map(t => (t.id === topic.id ? { ...t, isHidden: nextHidden } : t))
+    );
+    setOriginalTopics(prev =>
+      prev.map(t => (t.id === topic.id ? { ...t, isHidden: nextHidden } : t))
+    );
+    if (shouldUnhideAllSubs) {
+      const subIdSet = new Set(subIdsToUnhide);
+      setSubtopics(prev =>
+        prev.map(s => (subIdSet.has(s.id) ? { ...s, isHidden: false } : s))
+      );
+    }
+
+    try {
+      await setTopicVisibility(topic.id, nextHidden, subIdsToUnhide, effectiveUserId);
+      if (nextHidden) {
+        toast.success(`Téma „${topic.title}“ bylo skryto před studenty`);
+      } else if (shouldUnhideAllSubs) {
+        toast.success(
+          `Téma „${topic.title}“ a všechna jeho podtémata (${subIdsToUnhide.length}) jsou nyní viditelná pro studenty`
+        );
+      } else {
+        toast.success(`Téma „${topic.title}“ je nyní viditelné pro studenty`);
+      }
+    } catch (err: any) {
+      toast.error('Chyba při změně viditelnosti tématu: ' + err.message);
+      await loadData();
+    }
+  };
+
+  const handleToggleSubtopicVisibility = async (sub: PracticeSubtopic) => {
+    const nextHidden = !sub.isHidden;
+
+    // Optimistic UI update
+    setSubtopics(prev =>
+      prev.map(s => (s.id === sub.id ? { ...s, isHidden: nextHidden } : s))
+    );
+
+    try {
+      await setSubtopicVisibility(sub.id, nextHidden, effectiveUserId);
+      toast.success(
+        nextHidden
+          ? `Procvičování „${sub.title}“ bylo skryto před studenty`
+          : `Procvičování „${sub.title}“ je nyní viditelné pro studenty`
+      );
+    } catch (err: any) {
+      toast.error('Chyba při změně viditelnosti podtématu: ' + err.message);
+      await loadData();
     }
   };
 
@@ -318,7 +415,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       title: '',
       description: '',
       topicId: topicId,
-      subjectId: activeSubject
+      subjectId: activeSubject,
+      isHidden: true
     });
     setIsSubtopicModalOpen(true);
   };
@@ -330,7 +428,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       title: sub.title,
       description: sub.description || '',
       topicId: sub.topicId,
-      subjectId: sub.subjectId
+      subjectId: sub.subjectId,
+      isHidden: Boolean(sub.isHidden)
     });
     setIsSubtopicModalOpen(true);
   };
@@ -343,14 +442,29 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
 
     try {
+      const isCreating = !editingSubtopic.id;
+      const targetHidden =
+        typeof editingSubtopic.isHidden === 'boolean'
+          ? editingSubtopic.isHidden
+          : isCreating
+            ? true
+            : false;
+
       await saveSubtopic({
         id: editingSubtopic.id,
         title: editingSubtopic.title.trim(),
         description: editingSubtopic.description?.trim() || '',
         topicId: subtopicParentTopicId,
-        subjectId: activeSubject
+        subjectId: activeSubject,
+        isHidden: targetHidden
       }, effectiveUserId);
-      toast.success(editingSubtopic.id ? 'Podtéma bylo úspěšně upraveno' : 'Podtéma bylo úspěšně vytvořeno');
+      toast.success(
+        editingSubtopic.id
+          ? 'Podtéma bylo úspěšně upraveno'
+          : targetHidden
+            ? 'Podtéma bylo vytvořeno (výchozí stav: skryté)'
+            : 'Podtéma bylo vytvořeno a zviditelněno'
+      );
       setIsSubtopicModalOpen(false);
       setEditingSubtopic(null);
       await loadData();
@@ -1384,7 +1498,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         <div className="flex flex-wrap gap-2">
           <Button
             onClick={() => {
-              setEditingTopic({ title: '', description: '', subjectId: activeSubject });
+              setEditingTopic({ title: '', description: '', subjectId: activeSubject, isHidden: true });
               setIsTopicModalOpen(true);
             }}
             className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold h-10 px-4 flex items-center gap-2 cursor-pointer shadow-sm text-xs"
@@ -1441,7 +1555,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           <div className="flex justify-center gap-3 pt-2">
             <Button
               onClick={() => {
-                setEditingTopic({ title: '', description: '', subjectId: activeSubject });
+                setEditingTopic({ title: '', description: '', subjectId: activeSubject, isHidden: true });
                 setIsTopicModalOpen(true);
               }}
               className="rounded-xl bg-[#1E1B18] text-white font-bold h-10 px-5 text-xs"
@@ -1525,14 +1639,20 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           {topics.map((topic, index) => {
             const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
             const isExpanded = !!expandedTopics[topic.id];
+            const visibleSubtopicsCount = topicSubtopics.filter(s => !s.isHidden).length;
+            const isTopicEffectivelyHidden = Boolean(topic.isHidden || visibleSubtopicsCount === 0);
 
             return (
               <div 
                 key={topic.id}
                 onDragOver={(e) => handleDragOver(e, topic.id)}
                 onDrop={(e) => handleDrop(e, topic.id)}
-                className={`bg-white rounded-3xl p-5 sm:p-6 border transition-all ${
-                  dragOverTopicId === topic.id ? 'border-amber-500 ring-2 ring-amber-300 bg-amber-50/20' : 'border-gray-100 shadow-sm'
+                className={`rounded-3xl p-5 sm:p-6 border transition-all ${
+                  dragOverTopicId === topic.id
+                    ? 'border-amber-500 ring-2 ring-amber-300 bg-amber-50/20'
+                    : topic.isHidden
+                      ? 'bg-gray-50/70 border-dashed border-gray-300 shadow-2xs'
+                      : 'bg-white border-gray-100 shadow-sm'
                 } ${draggedTopicId === topic.id ? 'opacity-40' : ''}`}
               >
                 {/* Topic Header: Clickable to expand/collapse (except action buttons & drag handle) */}
@@ -1561,7 +1681,30 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <span className="text-[11px] font-bold text-gray-500 bg-gray-50 px-2.5 py-0.5 rounded-md border border-gray-100">
                           {topicSubtopics.length} {topicSubtopics.length === 1 ? 'podtéma' : topicSubtopics.length < 5 ? 'podtémata' : 'podtémat'}
                         </span>
-                        <h3 className="text-xl sm:text-2xl font-black text-[#1E1B18] group-hover:text-amber-800 transition-colors">
+                        {topic.isHidden ? (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-gray-200/90 text-gray-700 border border-gray-300 px-2 py-0.5 rounded-md">
+                            <EyeOff size={11} />
+                            <span>Skryto</span>
+                          </span>
+                        ) : visibleSubtopicsCount === 0 ? (
+                          <span
+                            className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-md"
+                            title="Hlavní téma je odemčené, ale nemá žádné viditelné podtéma – studentům se prázdná karta nezobrazí."
+                          >
+                            <EyeOff size={11} />
+                            <span>Skryto (0 viditelných podtémat)</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md">
+                            <Eye size={11} />
+                            <span>Viditelné ({visibleSubtopicsCount}/{topicSubtopics.length})</span>
+                          </span>
+                        )}
+                        <h3 className={`text-xl sm:text-2xl font-black transition-colors ${
+                           isTopicEffectivelyHidden
+                             ? 'text-gray-500 group-hover:text-gray-800'
+                             : 'text-[#1E1B18] group-hover:text-amber-800'
+                        }`}>
                           {topic.title}
                         </h3>
                       </div>
@@ -1573,7 +1716,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
                   <div 
                     onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t border-gray-100 sm:border-0"
+                    className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end pt-2 sm:pt-0 border-t border-gray-100 sm:border-0 flex-wrap"
                   >
                     {/* Move Up / Down Buttons */}
                     <div className="flex items-center gap-0.5 bg-gray-50 p-1 rounded-xl border border-gray-200/60 shrink-0">
@@ -1600,6 +1743,36 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <ArrowDown size={14} />
                       </Button>
                     </div>
+
+                    {/* Toggle Topic Visibility Button */}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleToggleTopicVisibility(topic)}
+                      className={`rounded-xl font-bold text-xs h-9 px-3 flex items-center gap-1.5 cursor-pointer transition-colors ${
+                        topic.isHidden
+                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                          : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-200'
+                      }`}
+                      title={
+                        topic.isHidden
+                          ? 'Zviditelnit téma pro studenty (pokud jsou všechna jeho podtémata skrytá, zviditelní se také)'
+                          : 'Skrýt celé téma před studenty'
+                      }
+                    >
+                      {topic.isHidden ? (
+                        <>
+                          <Eye size={14} className="text-emerald-700" />
+                          <span>Zobrazit téma</span>
+                        </>
+                      ) : (
+                        <>
+                          <EyeOff size={14} className="text-gray-500" />
+                          <span>Skrýt téma</span>
+                        </>
+                      )}
+                    </Button>
 
                     <Button
                       onClick={() => handleOpenNewSubtopic(topic.id)}
@@ -1666,18 +1839,44 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                       return (
                         <div 
                           key={sub.id}
-                          className="rounded-2xl border border-gray-200/80 bg-[#FAF7F0] p-4 sm:p-5 space-y-4 transition-all"
+                          className={`rounded-2xl border p-4 sm:p-5 space-y-4 transition-all ${
+                            sub.isHidden
+                              ? 'border-dashed border-gray-300 bg-gray-100/60'
+                              : 'border-gray-200/80 bg-[#FAF7F0]'
+                          }`}
                         >
                           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                             <div className="space-y-1 flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <button
                                   onClick={() => toggleSubtopic(sub.id)}
-                                  className="font-bold text-base text-gray-900 hover:text-brand-blue flex items-center gap-1.5 cursor-pointer text-left"
+                                  className={`font-bold text-base hover:text-brand-blue flex items-center gap-1.5 cursor-pointer text-left ${
+                                    sub.isHidden ? 'text-gray-500' : 'text-gray-900'
+                                  }`}
                                 >
                                   {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
                                   <span>{sub.title}</span>
                                 </button>
+
+                                {sub.isHidden ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-gray-200/90 text-gray-700 border border-gray-300 px-2 py-0.5 rounded-md">
+                                    <EyeOff size={10} />
+                                    <span>Skryto</span>
+                                  </span>
+                                ) : topic.isHidden ? (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-gray-100 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-md"
+                                    title="Toto podtéma je zapnuté, ale nadřazené hlavní téma je momentálně skryté."
+                                  >
+                                    <EyeOff size={10} />
+                                    <span>Skryto tématem</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                    <Eye size={10} />
+                                    <span>Viditelné</span>
+                                  </span>
+                                )}
 
                                 <span className="text-[11px] font-bold text-gray-500 bg-white px-2.5 py-0.5 rounded-md border border-gray-200">
                                   {questions.length} {questions.length === 1 ? 'otázka' : questions.length < 5 ? 'otázky' : 'otázek'}
@@ -1699,7 +1898,32 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                             </div>
 
                             {/* Desktop Subtopic Action Buttons */}
-                            <div className="hidden md:flex items-center gap-2 shrink-0 self-center">
+                            <div className="hidden md:flex items-center gap-2 shrink-0 self-center flex-wrap">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleToggleSubtopicVisibility(sub)}
+                                className={`rounded-xl font-bold text-xs h-8 px-2.5 flex items-center gap-1 cursor-pointer transition-colors ${
+                                  sub.isHidden
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border-emerald-300'
+                                    : 'bg-white hover:bg-gray-100 text-gray-700 border-gray-200'
+                                }`}
+                                title={sub.isHidden ? 'Zviditelnit procvičování pro studenty' : 'Skrýt procvičování před studenty'}
+                              >
+                                {sub.isHidden ? (
+                                  <>
+                                    <Eye size={13} className="text-emerald-700" />
+                                    <span>Zobrazit</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <EyeOff size={13} className="text-gray-500" />
+                                    <span>Skrýt</span>
+                                  </>
+                                )}
+                              </Button>
+
                               <Button
                                 onClick={() => handleOpenNewQuestion(sub)}
                                 size="sm"
@@ -1808,6 +2032,22 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                     <DropdownMenuLabel className="text-[10px] font-black uppercase tracking-wider text-gray-400 px-2 py-1">
                                       Správa podtématu
                                     </DropdownMenuLabel>
+                                    <DropdownMenuItem
+                                      onClick={() => handleToggleSubtopicVisibility(sub)}
+                                      className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-gray-100 cursor-pointer transition-colors"
+                                    >
+                                      {sub.isHidden ? (
+                                        <>
+                                          <Eye size={14} className="text-emerald-600" />
+                                          <span>Zviditelnit pro studenty</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <EyeOff size={14} className="text-gray-500" />
+                                          <span>Skrýt před studenty</span>
+                                        </>
+                                      )}
+                                    </DropdownMenuItem>
                                     <DropdownMenuItem
                                       onClick={() => window.open(`/study/${sub.id}`, '_blank', 'noopener,noreferrer')}
                                       className="flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-bold text-gray-800 hover:bg-gray-100 cursor-pointer transition-colors"
@@ -2050,6 +2290,37 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               />
             </div>
 
+            <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200/80 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  {(editingTopic?.isHidden ?? !editingTopic?.id) ? (
+                    <EyeOff size={14} className="text-gray-600" />
+                  ) : (
+                    <Eye size={14} className="text-emerald-600" />
+                  )}
+                  {(editingTopic?.isHidden ?? !editingTopic?.id)
+                    ? 'Skryté před studenty'
+                    : 'Viditelné pro studenty'}
+                </span>
+                <p className="text-[11px] text-gray-500 font-medium">
+                  {!editingTopic?.id
+                    ? 'Nové téma je ve výchozím stavu skryté, dokud jej nezviditelníte.'
+                    : 'Určuje, zda se toto hlavní téma zobrazuje studentům v přehledu.'}
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none shrink-0">
+                <input
+                  type="checkbox"
+                  checked={Boolean(editingTopic?.isHidden ?? !editingTopic?.id)}
+                  onChange={e =>
+                    setEditingTopic(prev => ({ ...prev, isHidden: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded border-gray-300 text-[#1E1B18] focus:ring-[#1E1B18] accent-[#1E1B18] cursor-pointer"
+                />
+                <span className="text-xs font-bold text-gray-700">Skrýt téma</span>
+              </label>
+            </div>
+
             <DialogFooter className="pt-2">
               <Button type="button" variant="outline" onClick={() => setIsTopicModalOpen(false)} className="rounded-xl">
                 Zrušit
@@ -2118,6 +2389,37 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 placeholder="Krátké vysvětlení, co se zde student naučí..."
                 className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium"
               />
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-gray-50 border border-gray-200/80 flex items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                  {(editingSubtopic?.isHidden ?? !editingSubtopic?.id) ? (
+                    <EyeOff size={14} className="text-gray-600" />
+                  ) : (
+                    <Eye size={14} className="text-emerald-600" />
+                  )}
+                  {(editingSubtopic?.isHidden ?? !editingSubtopic?.id)
+                    ? 'Skryté před studenty'
+                    : 'Viditelné pro studenty'}
+                </span>
+                <p className="text-[11px] text-gray-500 font-medium">
+                  {!editingSubtopic?.id
+                    ? 'Nové podtéma vzniká jako skryté, abyste v klidu doplnili otázky a studium.'
+                    : 'Určuje, zda je toto procvičování a studium viditelné v přehledu témat.'}
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none shrink-0">
+                <input
+                  type="checkbox"
+                  checked={Boolean(editingSubtopic?.isHidden ?? !editingSubtopic?.id)}
+                  onChange={e =>
+                    setEditingSubtopic(prev => ({ ...prev, isHidden: e.target.checked }))
+                  }
+                  className="w-4 h-4 rounded border-gray-300 text-[#1E1B18] focus:ring-[#1E1B18] accent-[#1E1B18] cursor-pointer"
+                />
+                <span className="text-xs font-bold text-gray-700">Skrýt cvičení</span>
+              </label>
             </div>
 
             <DialogFooter className="pt-2">

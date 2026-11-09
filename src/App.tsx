@@ -10,7 +10,7 @@ import FloatingTimer from './components/FloatingTimer';
 import LiveLessonNotificationWatcher from './components/LiveLessonNotificationWatcher';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Menu, X, LayoutDashboard, Bell, Lock, LogIn, ShieldCheck } from 'lucide-react';
-import { BrainPinkIcon, MaterialYellowIcon, BookCyanIcon, CapIcon } from './components/common/CustomIcon';
+import { BrainPinkIcon, MaterialYellowIcon, BookCyanIcon, CapIcon, StarYellowIcon } from './components/common/CustomIcon';
 import { useNotifications } from './hooks/useNotifications';
 import NotificationPopover from './components/NotificationPopover';
 import { cn } from './lib/utils';
@@ -25,6 +25,7 @@ const TeacherDashboard = React.lazy(() => import('./pages/TeacherDashboard'));
 const TestTaker = React.lazy(() => import('./pages/TestTaker'));
 const TestReview = React.lazy(() => import('./pages/TestReview'));
 const LearningSheets = React.lazy(() => import('./pages/LearningSheets'));
+const Statistics = React.lazy(() => import('./pages/Statistics'));
 const Practice = React.lazy(() => import('./pages/Practice'));
 const Contact = React.lazy(() => import('./pages/Contact'));
 const Courses = React.lazy(() => import('./pages/Courses'));
@@ -134,6 +135,13 @@ function AppContent() {
       path: '/learning',
       icon: location.pathname.startsWith('/learning') ? BookCyanIcon : MaterialYellowIcon,
       active: location.pathname.startsWith('/learning'),
+      locked: !isPremium
+    },
+    {
+      label: 'Statistiky',
+      path: '/statistics',
+      icon: StarYellowIcon,
+      active: location.pathname.startsWith('/statistics') || location.pathname.startsWith('/statistiky'),
       locked: !isPremium
     },
     {
@@ -282,6 +290,8 @@ function AppContent() {
               <Route path="/practice" element={<Practice />} />
               <Route path="/practice/session/:subtopicId" element={<PracticeSession />} />
               <Route path="/learning" element={<LearningSheets />} />
+              <Route path="/statistics" element={<Statistics />} />
+              <Route path="/statistiky" element={<Navigate to="/statistics" replace />} />
               <Route path="/courses" element={<Courses />} />
               <Route path="/courses/:id" element={<CourseDetail />} />
               <Route path="/garden" element={<PrivateRoute role="student"><Garden /></PrivateRoute>} />

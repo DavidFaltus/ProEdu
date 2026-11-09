@@ -99,6 +99,7 @@ export interface PracticeSubtopic {
   title: string;
   description?: string;
   order?: number;
+  isHidden?: boolean;
   hasStudyMaterial?: boolean;
   svgUrl?: string; // např. '/materials/cz-shoda.svg' nebo externí link
   svgContent?: string; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
@@ -118,6 +119,7 @@ export interface PracticeTopic {
   title: string;
   description?: string;
   order?: number;
+  isHidden?: boolean;
   subtopicCount?: number;
   createdAt?: any;
   createdBy?: string;

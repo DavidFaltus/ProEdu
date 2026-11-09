@@ -93,16 +93,31 @@ export default function Practice() {
 
   const isTeacher = profile?.role === 'teacher';
 
+  const visibleSubtopics = React.useMemo(
+    () => subtopics.filter(s => !s.isHidden),
+    [subtopics]
+  );
+
+  const visibleTopics = React.useMemo(
+    () =>
+      topics.filter(
+        t =>
+          !t.isHidden &&
+          visibleSubtopics.some(s => s.topicId === t.id || s.topicId === t.title)
+      ),
+    [topics, visibleSubtopics]
+  );
+
   // Najdeme první reálně zobrazené podtéma v daném předmětu (pro neregistrovaného)
   const firstVisibleSubtopicId = React.useMemo(() => {
-    for (const topic of topics) {
-      const matching = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+    for (const topic of visibleTopics) {
+      const matching = visibleSubtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
       if (matching.length > 0) {
         return matching[0].id;
       }
     }
     return null;
-  }, [topics, subtopics]);
+  }, [visibleTopics, visibleSubtopics]);
 
   const loadData = async () => {
     setLoading(true);
@@ -206,7 +221,7 @@ export default function Practice() {
             <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
             <p className="text-gray-500 font-bold text-sm">Načítání témat pro předmět {activeSubject}...</p>
           </div>
-        ) : topics.length === 0 ? (
+        ) : visibleTopics.length === 0 ? (
           <div className="text-center py-16 bg-white/80 rounded-[2.5rem] border border-dashed border-gray-200 shadow-sm space-y-4 p-8">
             <BookCyanIcon size={48} className="mx-auto" />
             <div className="space-y-1">
@@ -214,7 +229,7 @@ export default function Practice() {
                 Žádná témata pro {activeSubject}
               </h4>
               <p className="text-gray-400 font-medium text-sm max-w-md mx-auto">
-                Pro tento předmět zatím nebyla vytvořena témata.
+                Pro tento předmět zatím nejsou zpřístupněna žádná témata.
               </p>
             </div>
 
@@ -230,8 +245,8 @@ export default function Practice() {
           </div>
         ) : (
           <div className="space-y-6">
-            {topics.map((topic, index) => {
-              const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+            {visibleTopics.map((topic, index) => {
+              const topicSubtopics = visibleSubtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
               const isExpanded = !!expandedTopics[topic.id];
               const isMath = activeSubject === 'Matematika';
 

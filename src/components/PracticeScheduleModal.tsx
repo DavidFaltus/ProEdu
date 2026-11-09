@@ -125,12 +125,13 @@ export default function PracticeScheduleModal({
   useEffect(() => {
     if (!isOpen) return;
 
-    const defaultReps = initialSubtopics.length > 1 ? 3 : 5;
+    const visibleInitialSubtopics = (initialSubtopics || []).filter(sub => !sub.isHidden);
+    const defaultReps = visibleInitialSubtopics.length > 1 ? 3 : 5;
     setGlobalRepetitions(defaultReps);
 
-    if (initialSubtopics && initialSubtopics.length > 0) {
+    if (visibleInitialSubtopics.length > 0 && !initialTopic?.isHidden) {
       setSelections(
-        initialSubtopics.map((sub) => ({
+        visibleInitialSubtopics.map((sub) => ({
           subtopicId: sub.id,
           subtopicTitle: sub.title,
           topicId: sub.topicId,
@@ -163,8 +164,14 @@ export default function PracticeScheduleModal({
           getSubtopics(undefined, catalogSubject),
         ]);
         if (active) {
-          setCatalogTopics(fetchedTopics);
-          setCatalogSubtopics(fetchedSubtopics);
+          const visibleSubs = fetchedSubtopics.filter((s) => !s.isHidden);
+          const visibleTopics = fetchedTopics.filter(
+            (t) =>
+              !t.isHidden &&
+              visibleSubs.some((s) => s.topicId === t.id || s.topicId === t.title)
+          );
+          setCatalogTopics(visibleTopics);
+          setCatalogSubtopics(visibleSubs);
         }
       } catch (err) {
         console.error('Failed to load catalog for schedule modal:', err);
