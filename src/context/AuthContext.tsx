@@ -4,6 +4,7 @@ import {
   User, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword,
+  signInWithCustomToken,
   signInWithPopup,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
@@ -53,6 +54,9 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
+  initRegistration: (email: string, pass: string, name: string, confirmPassword?: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
+  resendRegistrationOtp: (email: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
+  confirmRegistration: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
   signOut: () => Promise<void>;
   updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
   updateUserPassword: (newPassword: string) => Promise<void>;
@@ -82,6 +86,9 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
+  initRegistration: async () => ({ success: false }),
+  resendRegistrationOtp: async () => ({ success: false }),
+  confirmRegistration: async () => ({ success: false }),
   signOut: async () => {},
   updateProfileData: async () => {},
   updateUserPassword: async () => {},
@@ -399,48 +406,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await signInWithEmailAndPassword(auth, email, pass);
   };
 
-  const signUpWithEmail = async (email: string, pass: string, name: string) => {
-    const { user } = await createUserWithEmailAndPassword(auth, email, pass);
-    const docRef = doc(db, 'users', user.uid);
-    const today = getTodayDateString();
-    const refCode = user.uid.slice(0, 8).toUpperCase();
-    const newProfile: UserProfile = {
-      uid: user.uid,
-      email: email,
-      name: name,
-      role: 'student',
-      jokers: BASE_JOKER_CAP,
-      streak: 0,
-      referralCode: refCode,
-      referralsCount: 0,
-      lastDailyGrantDate: today,
-      lastJokerResetDate: today,
-      dailyVideosWatched: 0,
-      createdAt: Timestamp.now(),
-    };
-    await setDoc(docRef, newProfile);
-    setProfileAndCache(newProfile);
-
-    // Automatické uplatnění referral odkazu pro nového uživatele
-    if (typeof window !== 'undefined') {
-      const pendingRef = localStorage.getItem('proedu_pending_referral');
-      if (pendingRef) {
-        try {
-          const token = await user.getIdToken();
-          const res = await claimReferralCodeApi(pendingRef, token);
-          if (res.success) {
-            newProfile.jokers = res.newJokers;
-            newProfile.referredBy = pendingRef;
-            setProfileAndCache({ ...newProfile });
-            localStorage.removeItem('proedu_pending_referral');
-            toast.success(`Uplatněn bonus za doporučení od ${res.referrerName}! +${res.reward} žolíků připsáno.`);
-          }
-        } catch (claimErr) {
-          console.warn('Auto referral claim info:', claimErr);
-          localStorage.removeItem('proedu_pending_referral');
-        }
-      }
+  const initRegistration = async (email: string, pass: string, name: string, confirmPassword?: string) => {
+    const res = await fetch('/api/auth/register-init', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass, confirmPassword, name })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Nepodařilo se zahájit registraci.');
     }
+    return data;
+  };
+
+  const resendRegistrationOtp = async (email: string) => {
+    const res = await fetch('/api/auth/register-resend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Nepodařilo se znovu odeslat kód.');
+    }
+    return data;
+  };
+
+  const confirmRegistration = async (email: string, code: string) => {
+    const res = await fetch('/api/auth/register-confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error || 'Nepodařilo se ověřit kód.');
+    }
+    if (data.customToken) {
+      await signInWithCustomToken(auth, data.customToken);
+    } else if (data.tempPassword) {
+      await signInWithEmailAndPassword(auth, email, data.tempPassword);
+    }
+    return data;
+  };
+
+  const signUpWithEmail = async (email: string, pass: string, name: string) => {
+    // Pro zpětnou kompatibilitu: inicializuje registraci s kódem
+    await initRegistration(email, pass, name);
   };
 
   const signOut = async () => {
@@ -692,6 +704,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signInWithGoogle, 
     signInWithEmail, 
     signUpWithEmail, 
+    initRegistration,
+    resendRegistrationOtp,
+    confirmRegistration,
     signOut,
     updateProfileData,
     updateUserPassword,

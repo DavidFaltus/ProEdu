@@ -42,6 +42,8 @@ export interface UserProfile {
   subscriptionCancelReason?: string | null; // Důvod zrušení předplatného
   preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate' | 'qr_bank_transfer')
   billingDetails?: BillingDetails; // Uložené fakturační údaje pro iÚčto
+  emailVerified?: boolean; // Zda byl e-mail ověřen 6místným kódem
+  initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
   premiumSince?: string;
 }
 

@@ -94,6 +94,7 @@ export default function UnifiedPaywallModal({
   const [paymentMethod, setPaymentMethod] = useState<'qr_bank_transfer' | 'comgate'>('qr_bank_transfer');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [newsletterConsent, setNewsletterConsent] = useState(false);
+  const [recurringConsent, setRecurringConsent] = useState(true);
 
   // Výsledek po odeslání objednávky
   const [orderResult, setOrderResult] = useState<CreateOrderResult | null>(null);
@@ -213,6 +214,11 @@ export default function UnifiedPaywallModal({
 
     if (!termsAccepted) {
       toast.error('Pro odeslání objednávky musíte souhlasit s obchodními podmínkami.');
+      return;
+    }
+
+    if (paymentMethod === 'comgate' && !recurringConsent) {
+      toast.error('Pro platbu kartou online je vyžadován souhlas se zřízením opakované platby.');
       return;
     }
 
@@ -621,6 +627,21 @@ export default function UnifiedPaywallModal({
 
                 {/* 4. Řádek: Souhlasy */}
                 <div className="space-y-1.5 pt-0.5 text-xs sm:text-sm">
+                  {paymentMethod === 'comgate' && (
+                    <label className="flex items-start gap-2 cursor-pointer select-none bg-blue-50/80 p-2.5 rounded-xl border border-blue-200">
+                      <input
+                        type="checkbox"
+                        required
+                        checked={recurringConsent}
+                        onChange={e => setRecurringConsent(e.target.checked)}
+                        className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                      />
+                      <span className="text-[#0F2942] text-xs leading-normal">
+                        <strong>Souhlasím se zřízením opakované platby (předplatného)</strong> ve výši 99 Kč měsíčně. Platba se automaticky obnovuje každých 30 dní. Předplatné lze kdykoliv bezplatně ukončit v nastavení účtu. *
+                      </span>
+                    </label>
+                  )}
+
                   <label className="flex items-start gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -928,22 +949,43 @@ export default function UnifiedPaywallModal({
                     </div>
                   </div>
 
+                  <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 text-blue-900 text-xs text-left flex items-start gap-2.5">
+                    <ShieldCheck size={18} className="shrink-0 mt-0.5 text-blue-600" />
+                    <span>
+                      <strong>Opakované předplatné Comgate:</strong> Iniciační platba ve výši 99 Kč autorizuje automatické prodlužování balíčku každých 30 dní. Po každém úspěšném stržení vám zašleme e-mailové potvrzení. Předplatné lze kdykoliv zrušit v nastavení účtu.
+                    </span>
+                  </div>
+
                   <div className="text-xs text-gray-600 leading-relaxed">
-                    Kliknutím na tlačítko níže otestuješ okamžité schválení platby na dummy platební bráně a přepnutí účtu na <strong>ProEducator Premium</strong>.
+                    {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive
+                      ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                      : 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na dummy platební bráně a přepnutí účtu na ProEducator Premium.'}
                   </div>
                 </div>
 
                 {/* Tlačítka */}
                 <div className="flex flex-col sm:flex-row gap-3">
-                  <Button
-                    type="button"
-                    onClick={handleSandboxSimulate}
-                    disabled={isSimulatingPayment}
-                    className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                  >
-                    <Check size={18} />
-                    <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Zaplatit 99 Kč (Dummy platební brána)'}</span>
-                  </Button>
+                  {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive ? (
+                    <a
+                      href={orderResult.comgate.redirectUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                    >
+                      <CreditCard size={18} />
+                      <span>Přejít na bránu Comgate k autorizaci</span>
+                    </a>
+                  ) : (
+                    <Button
+                      type="button"
+                      onClick={handleSandboxSimulate}
+                      disabled={isSimulatingPayment}
+                      className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                    >
+                      <Check size={18} />
+                      <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Zaplatit 99 Kč (Testovací autorizace)'}</span>
+                    </Button>
+                  )}
 
                   <Button
                     type="button"

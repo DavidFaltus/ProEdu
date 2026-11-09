@@ -414,22 +414,6 @@ export default function QuickCalendar({
             </div>
 
             <div className="flex items-center gap-1.5">
-              {onOpenScheduleModal && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={onOpenScheduleModal}
-                  className="h-8 rounded-xl px-2.5 text-xs font-black border-blue-200 bg-blue-50/60 hover:bg-blue-100/80 text-brand-blue flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus size={13} />
-                  <span>Naplánovat</span>
-                  {!isPremium && (
-                    <span className="text-[9px] font-black uppercase bg-amber-200/90 text-amber-900 px-1 py-0.2 rounded">
-                      PRO
-                    </span>
-                  )}
-                </Button>
-              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -1228,29 +1212,8 @@ export default function QuickCalendar({
                   Žádné naplánované události
                 </p>
                 <p className="text-gray-400 text-xs mt-1 max-w-[220px]">
-                  {isPremium
-                    ? 'Naplánuj si procvičování témat a plň svou denní kvótu!'
-                    : 'Sestav si vlastní rozvrh procvičování do kalendáře s funkcí PRO.'}
+                  Na tento den nemáš v rozvrhu žádné naplánované aktivity.
                 </p>
-                {onOpenScheduleModal && (
-                  <Button
-                    size="sm"
-                    onClick={onOpenScheduleModal}
-                    className="mt-4 rounded-xl bg-[#1E1B18] hover:bg-black text-white text-xs font-black h-9 px-4 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    {!isPremium ? (
-                      <Lock size={12} className="text-amber-400" />
-                    ) : (
-                      <Plus size={13} />
-                    )}
-                    <span>Naplánovat procvičování</span>
-                    {!isPremium && (
-                      <span className="text-[9px] font-black uppercase bg-amber-400 text-black px-1 py-0.2 rounded">
-                        PRO
-                      </span>
-                    )}
-                  </Button>
-                )}
               </motion.div>
             )}
           </AnimatePresence>

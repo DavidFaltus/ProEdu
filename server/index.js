@@ -2,12 +2,20 @@ import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
 import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { 
+  sendOtpEmail, 
+  sendOrderQrEmail, 
+  sendPaymentConfirmedEmail, 
+  sendRecurringChargeSuccessEmail, 
+  sendRecurringChargeFailedEmail 
+} from './services/emailService.js';
 
 console.log('--- SERVER STARTING ---');
 
@@ -36,8 +44,9 @@ const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ?
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Read Firebase config to get the exact bucket name
+// Read Firebase config to get the exact bucket name and API key
 let configBucket = 'gen-lang-client-0972842509.firebasestorage.app';
+let firebaseApiKey = '';
 try {
   const configPath = path.join(__dirname, '..', 'firebase-applet-config.json');
   if (fs.existsSync(configPath)) {
@@ -45,6 +54,9 @@ try {
     if (config.storageBucket) {
       configBucket = config.storageBucket;
       console.log('--- FOUND BUCKET IN CONFIG:', configBucket);
+    }
+    if (config.apiKey) {
+      firebaseApiKey = config.apiKey;
     }
   }
 } catch (err) {
@@ -257,6 +269,477 @@ function requireTeacher(req, res, next) {
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+// =========================================================================
+// --- REGISTRACE S 6MÍSTNÝM OTP KÓDEM (PRE-AUTH OVĚŘENÍ) ---
+// =========================================================================
+
+const REGISTRATION_ENCRYPTION_SECRET = process.env.REGISTRATION_ENCRYPTION_SECRET || process.env.COMGATE_SECRET || 'proedu-otp-registration-secret-2026';
+const pendingRegistrationsMem = new Map(); // emailKey -> pendingData
+
+function hashEmailKey(email) {
+  return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
+}
+
+function hashOtpCode(code, salt) {
+  return crypto.createHash('sha256').update(`${String(code).trim()}:${salt}`).digest('hex');
+}
+
+function encryptPassword(password) {
+  const iv = crypto.randomBytes(12);
+  const key = crypto.createHash('sha256').update(REGISTRATION_ENCRYPTION_SECRET).digest();
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  let encrypted = cipher.update(password, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const authTag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${authTag}:${encrypted}`;
+}
+
+function decryptPassword(payload) {
+  const [ivHex, authTagHex, encrypted] = payload.split(':');
+  const iv = Buffer.from(ivHex, 'hex');
+  const authTag = Buffer.from(authTagHex, 'hex');
+  const key = crypto.createHash('sha256').update(REGISTRATION_ENCRYPTION_SECRET).digest();
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAuthTag(authTag);
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+async function checkAuthUserExists(email, password = null) {
+  // 1. Zkusíme Admin SDK
+  try {
+    const existing = await auth.getUserByEmail(email);
+    if (existing) return true;
+  } catch (err) {
+    if (err.code === 'auth/user-not-found' || err.message?.includes('no user record')) {
+      return false;
+    }
+  }
+
+  // 2. Kontrola v databázi Firestore (kolekce users)
+  try {
+    const { clientDb, collection: cCol, query: cQuery, where: cWhere, getDocs: cGetDocs } = await getDevDb();
+    const snap = await cGetDocs(cQuery(cCol(clientDb, 'users'), cWhere('email', '==', email.toLowerCase().trim())));
+    if (!snap.empty) {
+      return true;
+    }
+  } catch (e) {
+    console.warn('[checkAuthUserExists firestore check warning]:', e?.message || e);
+  }
+
+  // 3. Fallback přes Firebase Identity Toolkit REST API
+  if (firebaseApiKey && password) {
+    try {
+      const signInRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: false
+        })
+      });
+      const signInData = await signInRes.json();
+      if (signInRes.ok && signInData.localId) {
+        return true;
+      }
+    } catch (e) {}
+  }
+  return false;
+}
+
+async function createAuthUser({ email, password, displayName }) {
+  // 1. Zkusíme Admin SDK (v produkci se Service Accountem)
+  try {
+    const rec = await auth.createUser({
+      email,
+      password,
+      displayName,
+      emailVerified: true
+    });
+    return {
+      uid: rec.uid,
+      email: rec.email,
+      displayName: rec.displayName || displayName
+    };
+  } catch (adminErr) {
+    if (adminErr.code === 'auth/email-already-exists') {
+      if (firebaseApiKey) {
+        try {
+          const signInRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email, password, returnSecureToken: true })
+          });
+          const signInData = await signInRes.json();
+          if (signInRes.ok && signInData.localId) {
+            console.log(`[createAuthUser Admin SDK fallback] Účet ${email} již existoval se shodným heslem - navazuji (UID: ${signInData.localId})`);
+            return {
+              uid: signInData.localId,
+              email: signInData.email,
+              displayName: displayName || '',
+              idToken: signInData.idToken
+            };
+          }
+        } catch (e) {}
+      }
+      throw adminErr;
+    }
+    console.warn('[createAuthUser Admin SDK fallback to REST]:', adminErr?.message || adminErr);
+  }
+
+  // 2. Dev fallback přes Firebase Identity Toolkit REST API
+  if (!firebaseApiKey) {
+    throw new Error('Chybí Firebase API klíč pro založení uživatele.');
+  }
+
+  const signUpRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${firebaseApiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      password,
+      returnSecureToken: true
+    })
+  });
+
+  const data = await signUpRes.json();
+  if (!signUpRes.ok) {
+    if (data.error?.message === 'EMAIL_EXISTS') {
+      // Zkusíme, zda zadané heslo odpovídá existujícímu účtu (např. předchozí přerušený pokus)
+      const signInRes = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email,
+          password,
+          returnSecureToken: true
+        })
+      });
+      const signInData = await signInRes.json();
+      if (signInRes.ok && signInData.localId) {
+        console.log(`[createAuthUser REST] Účet ${email} již existoval v Auth se shodným heslem - úspěšně navázáno (UID: ${signInData.localId})`);
+        return {
+          uid: signInData.localId,
+          email: signInData.email,
+          displayName: displayName || '',
+          idToken: signInData.idToken
+        };
+      }
+
+      const existsErr = new Error('Účet s tímto e-mailem již existuje. Přihlaste se prosím svým heslem.');
+      existsErr.code = 'auth/email-already-exists';
+      throw existsErr;
+    }
+    throw new Error(data.error?.message || 'Chyba při zakládání uživatele ve Firebase.');
+  }
+
+  if (displayName && data.idToken) {
+    try {
+      await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:update?key=${firebaseApiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          idToken: data.idToken,
+          displayName,
+          returnSecureToken: false
+        })
+      });
+    } catch (e) {}
+  }
+
+  return {
+    uid: data.localId,
+    email: data.email,
+    displayName: displayName || '',
+    idToken: data.idToken
+  };
+}
+
+// 1. Zahájení registrace: validace údajů, vygenerování 6místného kódu a odeslání e-mailu
+app.post('/api/auth/register-init', async (req, res) => {
+  try {
+    const { email, password, confirmPassword, name } = req.body || {};
+    const safeEmail = String(email || '').toLowerCase().trim();
+    const safeName = String(name || '').trim();
+    const safePassword = String(password || '');
+    const safeConfirmPassword = confirmPassword !== undefined ? String(confirmPassword || '') : null;
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!safeEmail || !emailRegex.test(safeEmail) || safeEmail.length > 256) {
+      return res.status(400).json({ error: 'Zadejte prosím platnou e-mailovou adresu.' });
+    }
+    if (!safeName || safeName.length < 2 || safeName.length > 128) {
+      return res.status(400).json({ error: 'Zadejte prosím své jméno a příjmení (alespoň 2 znaky).' });
+    }
+    if (!safePassword || safePassword.length < 6 || safePassword.length > 128) {
+      return res.status(400).json({ error: 'Heslo musí mít alespoň 6 znaků.' });
+    }
+    if (safeConfirmPassword !== null && safePassword !== safeConfirmPassword) {
+      return res.status(400).json({ error: 'Zadaná hesla se neshodují. Zkontrolujte prosím obě hesla.' });
+    }
+
+    // Ověříme, zda uživatel již neexistuje v databázi nebo ve Firebase Auth PŘED odesláním kódu
+    const isAlreadyRegistered = await checkAuthUserExists(safeEmail, safePassword);
+    if (isAlreadyRegistered) {
+      return res.status(409).json({ error: 'Účet s tímto e-mailem již existuje. Přihlaste se prosím.' });
+    }
+
+    const otpCode = crypto.randomInt(100000, 1000000).toString();
+    const salt = crypto.randomBytes(16).toString('hex');
+    const codeHash = hashOtpCode(otpCode, salt);
+    const encryptedPassword = encryptPassword(safePassword);
+    const emailKey = hashEmailKey(safeEmail);
+    const now = Date.now();
+    const expiresAt = now + 15 * 60 * 1000; // 15 minut platnost
+
+    const pendingData = {
+      email: safeEmail,
+      name: safeName,
+      encryptedPassword,
+      codeHash,
+      salt,
+      attempts: 0,
+      createdAt: now,
+      lastSentAt: now,
+      expiresAt
+    };
+
+    pendingRegistrationsMem.set(emailKey, pendingData);
+
+    try {
+      await db.collection('pendingRegistrations').doc(emailKey).set(pendingData);
+    } catch (dbErr) {
+      try {
+        const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+        await cSetDoc(cDoc(clientDb, 'pendingRegistrations', emailKey), pendingData);
+      } catch (devErr) {
+        console.warn('[Pending Registrations save warning]:', devErr?.message || devErr);
+      }
+    }
+
+    const emailRes = await sendOtpEmail({
+      to: safeEmail,
+      name: safeName,
+      code: otpCode
+    });
+
+    console.log(`[Register Init] Vygenerován 6místný OTP kód pro ${safeEmail}. Kód: ${otpCode}`);
+
+    return res.json({
+      success: true,
+      email: safeEmail,
+      expiresInMinutes: 15,
+      simulated: emailRes.simulated || false,
+      message: 'Ověřovací kód byl úspěšně odeslán na váš e-mail.'
+    });
+  } catch (err) {
+    console.error('Chyba při zahájení registrace:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se zahájit registraci.' });
+  }
+});
+
+// 2. Znovuzaslání ověřovacího kódu (s 60s cooldownem)
+app.post('/api/auth/register-resend', async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const safeEmail = String(email || '').toLowerCase().trim();
+    if (!safeEmail) {
+      return res.status(400).json({ error: 'Chybí e-mailová adresa.' });
+    }
+
+    const emailKey = hashEmailKey(safeEmail);
+    let pending = pendingRegistrationsMem.get(emailKey);
+
+    if (!pending) {
+      try {
+        const docSnap = await db.collection('pendingRegistrations').doc(emailKey).get();
+        if (docSnap.exists) {
+          pending = docSnap.data();
+        }
+      } catch (dbErr) {
+        const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+        const cSnap = await cGetDoc(cDoc(clientDb, 'pendingRegistrations', emailKey));
+        if (cSnap.exists()) {
+          pending = cSnap.data();
+        }
+      }
+    }
+
+    if (!pending || pending.expiresAt < Date.now()) {
+      return res.status(400).json({ error: 'Platnost žádosti vypršela nebo nebyla nalezena. Zaregistrujte se prosím znovu.' });
+    }
+
+    const elapsed = Date.now() - (pending.lastSentAt || 0);
+    if (elapsed < 60000) {
+      const waitSeconds = Math.ceil((60000 - elapsed) / 1000);
+      return res.status(429).json({ error: `Nový kód lze odeslat za ${waitSeconds} sekund.` });
+    }
+
+    const newCode = crypto.randomInt(100000, 1000000).toString();
+    const newSalt = crypto.randomBytes(16).toString('hex');
+    pending.codeHash = hashOtpCode(newCode, newSalt);
+    pending.salt = newSalt;
+    pending.lastSentAt = Date.now();
+    pending.expiresAt = Date.now() + 15 * 60 * 1000;
+
+    pendingRegistrationsMem.set(emailKey, pending);
+    try {
+      await db.collection('pendingRegistrations').doc(emailKey).set(pending);
+    } catch (e) {}
+
+    const emailRes = await sendOtpEmail({
+      to: safeEmail,
+      name: pending.name,
+      code: newCode
+    });
+
+    console.log(`[Register Resend] Znovu odeslán OTP kód pro ${safeEmail}: ${newCode}`);
+
+    return res.json({
+      success: true,
+      message: 'Nový ověřovací kód byl odeslán na váš e-mail.',
+      simulated: emailRes.simulated || false
+    });
+  } catch (err) {
+    console.error('Chyba při znovuzaslání kódu:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se znovu odeslat kód.' });
+  }
+});
+
+// 3. Dokončení registrace: ověření 6místného kódu a založení účtu ve Firebase Auth
+app.post('/api/auth/register-confirm', async (req, res) => {
+  try {
+    const { email, code } = req.body || {};
+    const safeEmail = String(email || '').toLowerCase().trim();
+    const safeCode = String(code || '').trim();
+
+    if (!safeEmail || !safeCode) {
+      return res.status(400).json({ error: 'Zadejte e-mail a ověřovací kód.' });
+    }
+
+    const emailKey = hashEmailKey(safeEmail);
+    let pending = pendingRegistrationsMem.get(emailKey);
+
+    if (!pending) {
+      try {
+        const docSnap = await db.collection('pendingRegistrations').doc(emailKey).get();
+        if (docSnap.exists) {
+          pending = docSnap.data();
+        }
+      } catch (dbErr) {
+        const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+        const cSnap = await cGetDoc(cDoc(clientDb, 'pendingRegistrations', emailKey));
+        if (cSnap.exists()) {
+          pending = cSnap.data();
+        }
+      }
+    }
+
+    if (!pending || pending.expiresAt < Date.now()) {
+      return res.status(400).json({ error: 'Platnost ověřovacího kódu vypršela nebo registrace nebyla nalezena. Zaregistrujte se prosím znovu.' });
+    }
+
+    if ((pending.attempts || 0) >= 5) {
+      pendingRegistrationsMem.delete(emailKey);
+      try { await db.collection('pendingRegistrations').doc(emailKey).delete(); } catch (e) {}
+      return res.status(429).json({ error: 'Byl překročen maximální počet neúspěšných pokusů (5). Zaregistrujte se prosím znovu od začátku.' });
+    }
+
+    const computedHash = hashOtpCode(safeCode, pending.salt);
+    if (computedHash !== pending.codeHash) {
+      pending.attempts = (pending.attempts || 0) + 1;
+      pendingRegistrationsMem.set(emailKey, pending);
+      try { await db.collection('pendingRegistrations').doc(emailKey).set(pending); } catch (e) {}
+      const attemptsLeft = 5 - pending.attempts;
+      return res.status(400).json({ 
+        error: `Zadaný kód není správný. Zbývá ${attemptsLeft} ${attemptsLeft === 1 ? 'pokus' : 'pokusy'}.`,
+        attemptsLeft 
+      });
+    }
+
+    // Kód je v pořádku -> dešifrujeme heslo a vytvoříme uživatele ve Firebase Auth
+    const originalPassword = decryptPassword(pending.encryptedPassword);
+
+    let userRecord;
+    try {
+      userRecord = await createAuthUser({
+        email: pending.email,
+        password: originalPassword,
+        displayName: pending.name
+      });
+    } catch (createErr) {
+      if (createErr.code === 'auth/email-already-exists') {
+        return res.status(409).json({ error: 'Tento e-mail již byl mezitím zaregistrován. Přihlaste se prosím.' });
+      }
+      throw createErr;
+    }
+
+    // Vytvoříme dokument uživatele v users/{uid}
+    const today = new Date().toISOString().slice(0, 10);
+    const refCode = userRecord.uid.slice(0, 8).toUpperCase();
+    const newProfile = {
+      uid: userRecord.uid,
+      email: pending.email,
+      name: pending.name,
+      role: 'student',
+      jokers: 20,
+      streak: 0,
+      referralCode: refCode,
+      referralsCount: 0,
+      lastDailyGrantDate: today,
+      lastJokerResetDate: today,
+      dailyVideosWatched: 0,
+      emailVerified: true,
+      createdAt: Timestamp.now()
+    };
+
+    try {
+      await db.collection('users').doc(userRecord.uid).set(newProfile);
+    } catch (adminSetErr) {
+      try {
+        const { clientDb, doc: cDoc, setDoc: cSetDoc, serverTimestamp: cServerTimestamp } = await getDevDb();
+        await cSetDoc(cDoc(clientDb, 'users', userRecord.uid), {
+          ...newProfile,
+          createdAt: cServerTimestamp()
+        });
+      } catch (devErr) {
+        console.warn('[register-confirm user profile fallback warning - will be created on client login]:', devErr?.message || devErr);
+      }
+    }
+
+    // Vygenerujeme Custom Token pro okamžité automatické přihlášení na frontendu (pokud Admin SDK podporuje)
+    let customToken = null;
+    try {
+      customToken = await auth.createCustomToken(userRecord.uid);
+    } catch (tokErr) {
+      console.warn('[createCustomToken warning]:', tokErr?.message || tokErr);
+    }
+
+    // Úklid dočasného záznamu
+    pendingRegistrationsMem.delete(emailKey);
+    try {
+      await db.collection('pendingRegistrations').doc(emailKey).delete();
+    } catch (delErr) {}
+
+    console.log(`[Register Confirm] Uživatel ${pending.email} úspěšně ověřen a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
+
+    return res.json({
+      success: true,
+      message: 'Registrace byla úspěšně ověřena a dokončena!',
+      customToken,
+      tempPassword: originalPassword, // Dev fallback pro přihlášení
+      uid: userRecord.uid,
+      email: pending.email,
+      name: pending.name
+    });
+  } catch (err) {
+    console.error('Chyba při ověření registrace kódem:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se dokončit registraci.' });
+  }
 });
 
 // Dev endpoint pro synchronizaci role a stavu předplatného do Firestore databáze
@@ -763,7 +1246,7 @@ async function getOrderDoc(orderId) {
   return null;
 }
 
-async function activatePremiumForUser(userId) {
+async function activatePremiumForUser(userId, options = {}) {
   const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   const updateData = {
     role: 'premium',
@@ -773,6 +1256,11 @@ async function activatePremiumForUser(userId) {
     subscriptionCancelledAt: null,
     subscriptionCancelReason: null
   };
+
+  if (options.initRecurringTransId) {
+    updateData.initRecurringTransId = options.initRecurringTransId;
+  }
+
   try {
     const userRef = db.collection('users').doc(userId);
     await Promise.race([
@@ -883,6 +1371,7 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
             email: invoiceEmail.trim(),
             method: 'ALL',
             prepareOnly: 'true',
+            initRecurring: 'true',
             secret: COMGATE_SECRET,
             test: COMGATE_TEST_MODE ? 'true' : 'false',
             country: 'CZ',
@@ -924,6 +1413,21 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
     }
 
     await saveOrderDoc(orderId, orderData);
+
+    // Pokud zákazník zvolil bankovní převod, odešleme mu e-mail s platebními údaji a QR kódem
+    if (paymentMethod === 'qr_bank_transfer' && invoiceEmail) {
+      sendOrderQrEmail({
+        to: invoiceEmail.trim(),
+        name: clientName || 'zákazníku',
+        orderId,
+        amount,
+        variableSymbol,
+        bankAccount: BANK_ACCOUNT_NUMBER,
+        bankCode: BANK_CODE,
+        bankName: BANK_NAME,
+        qrImageUrl
+      }).catch(err => console.warn('[Order QR Email Error]:', err?.message || err));
+    }
 
     return res.json({
       success: true,
@@ -980,8 +1484,20 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
       });
 
       if (order.userId) {
-        await activatePremiumForUser(order.userId);
+        await activatePremiumForUser(order.userId, { initRecurringTransId: transId || null });
       }
+
+      if (order.invoiceEmail) {
+        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        sendPaymentConfirmedEmail({
+          to: order.invoiceEmail,
+          name: order.clientName || 'zákazníku',
+          orderId: refId,
+          amount: order.amount || 99,
+          periodEnd
+        }).catch(err => console.warn('[Payment Confirmed Email Error]:', err?.message || err));
+      }
+
       console.log(`[Comgate Webhook] Objednávka ${refId} označena jako ZAPLACENÁ.`);
     } else if (status === 'CANCELLED') {
       await updateOrderDoc(refId, {
@@ -1174,6 +1690,134 @@ app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
   }
 });
 
+// 5c. Zpracování opakované platby Comgate (Subsequent Recurring Charge dle https://help.comgate.eu/docs/opakovane-platby)
+app.post('/api/payments/comgate/charge-recurring', requireAuth, async (req, res) => {
+  try {
+    const targetUserId = req.body?.userId || req.user.uid;
+    const isSelf = req.user.uid === targetUserId;
+    const isTeacherUser = req.user.role === 'teacher' || req.user.role === 'admin';
+
+    if (!isSelf && !isTeacherUser) {
+      return res.status(403).json({ error: 'Nemáte oprávnění iniciovat opakovanou platbu pro jiného uživatele.' });
+    }
+
+    let userDoc = null;
+    try {
+      const snap = await db.collection('users').doc(targetUserId).get();
+      if (snap.exists) userDoc = snap.data();
+    } catch (e) {
+      const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+      const snap = await cGetDoc(cDoc(clientDb, 'users', targetUserId));
+      if (snap.exists()) userDoc = snap.data();
+    }
+
+    if (!userDoc) {
+      return res.status(404).json({ error: 'Uživatelský profil nenalezen.' });
+    }
+
+    if (!userDoc.initRecurringTransId) {
+      return res.status(400).json({ error: 'Uživatel nemá zaznamenanou žádnou iniciační platbu (initRecurringTransId). Nejprve je nutné provést první platbu kartou s povolením opakování.' });
+    }
+
+    if (userDoc.subscriptionStatus === 'cancelled_at_period_end' || userDoc.subscriptionStatus === 'inactive') {
+      return res.status(400).json({ error: 'Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.' });
+    }
+
+    const newOrderId = `ORD_REC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+    const amount = 99;
+    let recurringSuccess = false;
+    let comgateTransId = null;
+
+    if (COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE) {
+      const recurringPayload = new URLSearchParams({
+        merchant: COMGATE_MERCHANT_ID,
+        secret: COMGATE_SECRET,
+        initTransId: userDoc.initRecurringTransId,
+        price: String(Math.round(amount * 100)),
+        curr: 'CZK',
+        label: 'ProEdu Premium (obnovení předplatného)',
+        refId: newOrderId,
+        test: 'false'
+      });
+
+      const response = await fetch('https://webpay.comgate.cz/v1.0/recurring', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: recurringPayload.toString()
+      });
+
+      const responseText = await response.text();
+      const parsed = new URLSearchParams(responseText);
+      const code = parsed.get('code');
+      comgateTransId = parsed.get('transId');
+
+      if (code === '0') {
+        recurringSuccess = true;
+      } else {
+        console.warn('[Comgate Recurring Charge Failed]:', responseText);
+        if (userDoc.email) {
+          sendRecurringChargeFailedEmail({
+            to: userDoc.email,
+            name: userDoc.name,
+            amount,
+            reason: parsed.get('message') || 'Platba byla zamítnuta vydavatelem karty'
+          }).catch(console.warn);
+        }
+        return res.status(400).json({
+          error: 'Opakovaná platba byla platební bránou zamítnuta.',
+          details: parsed.get('message') || responseText
+        });
+      }
+    } else {
+      // Testovací / Sandbox režim
+      recurringSuccess = true;
+      comgateTransId = `SANDBOX_REC_${Date.now()}`;
+      console.log(`[Comgate Recurring Simulation] Provedeno testovací opakované stržení 99 Kč pro uživatele ${targetUserId}`);
+    }
+
+    const nextPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await activatePremiumForUser(targetUserId, { initRecurringTransId: userDoc.initRecurringTransId });
+
+    const recOrderData = {
+      id: newOrderId,
+      userId: targetUserId,
+      amount,
+      currency: 'CZK',
+      planTitle: 'ProEducator Premium (opakované předplatné)',
+      paymentMethod: 'comgate',
+      status: 'paid',
+      paidAt: new Date().toISOString(),
+      comgateTransId,
+      invoiceEmail: userDoc.email,
+      clientName: userDoc.name,
+      isRecurringRenewal: true,
+      createdAt: new Date().toISOString()
+    };
+    await saveOrderDoc(newOrderId, recOrderData);
+
+    // Dle pravidel karetních asociací odešleme potvrzovací e-mail o stržení opakované platby
+    if (userDoc.email) {
+      sendRecurringChargeSuccessEmail({
+        to: userDoc.email,
+        name: userDoc.name,
+        orderId: newOrderId,
+        amount,
+        nextPeriodEnd
+      }).catch(console.warn);
+    }
+
+    return res.json({
+      success: true,
+      orderId: newOrderId,
+      subscriptionPeriodEnd: nextPeriodEnd,
+      message: 'Opakovaná platba byla úspěšně zpracována a předplatné bylo prodlouženo.'
+    });
+  } catch (err) {
+    console.error('Chyba při zpracování opakované platby:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se zpracovat opakovanou platbu.' });
+  }
+});
+
 // 5d. Uložení fakturačních údajů (pro iÚčto) a preferované platební metody (Comgate / QR)
 app.put('/api/subscription/billing', requireAuth, async (req, res) => {
   try {
@@ -1239,6 +1883,17 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
 
     if (order.userId) {
       await activatePremiumForUser(order.userId);
+    }
+
+    if (order.invoiceEmail) {
+      const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      sendPaymentConfirmedEmail({
+        to: order.invoiceEmail,
+        name: order.clientName || 'zákazníku',
+        orderId,
+        amount: order.amount || 99,
+        periodEnd
+      }).catch(err => console.warn('[Payment Confirmed Email Error]:', err?.message || err));
     }
 
     return res.json({ success: true, message: 'Platba byla potvrzena a Premium bylo studentovi aktivováno.' });

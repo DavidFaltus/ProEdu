@@ -79,6 +79,8 @@ service cloud.firestore {
              (!('subscriptionCancelReason' in data) || data.subscriptionCancelReason == null || (data.subscriptionCancelReason is string && data.subscriptionCancelReason.size() <= 500)) &&
              (!('preferredPaymentMethod' in data) || data.preferredPaymentMethod == null || (data.preferredPaymentMethod is string && (data.preferredPaymentMethod == 'comgate' || data.preferredPaymentMethod == 'qr_bank_transfer'))) &&
              (!('billingDetails' in data) || data.billingDetails == null || data.billingDetails is map) &&
+             (!('emailVerified' in data) || data.emailVerified == null || data.emailVerified is bool) &&
+             (!('initRecurringTransId' in data) || data.initRecurringTransId == null || (data.initRecurringTransId is string && data.initRecurringTransId.size() <= 128)) &&
              (!('premiumSince' in data) || data.premiumSince == null || (data.premiumSince is string && data.premiumSince.size() <= 64));
     }
 
@@ -334,7 +336,7 @@ service cloud.firestore {
     match /users/{uid} {
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
       allow create: if isAuthenticated() &&
-        isOwner(uid) &&
+        (isOwner(uid) || isAdmin()) &&
         (request.resource.data.role == 'student' || request.resource.data.role == 'free' || (request.auth.token.email == 'ucitel@ucitel.cz' && request.resource.data.role == 'teacher')) &&
         isValidUser(request.resource.data);
       allow update: if isAuthenticated() &&
@@ -517,6 +519,17 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated() && (isAdmin() || request.resource.data.userId == request.auth.uid);
       allow update, delete: if isAdmin();
+    }
+
+    // Dočasná registrace s 6místným OTP kódem - správa přes backend / admina
+    match /pendingRegistrations/{regId} {
+      allow read, write: if isAdmin();
+    }
+
+    // Auditní log odeslaných e-mailů - čtení pouze učitel/admin, zápis pouze backend
+    match /emailLogs/{logId} {
+      allow read: if isAdmin();
+      allow write: if false;
     }
   }
 }
