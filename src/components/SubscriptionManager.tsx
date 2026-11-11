@@ -71,7 +71,6 @@ export default function SubscriptionManager() {
   const isPremium = profile?.role === 'premium';
   const isCourse = profile?.role === 'course';
   const isTeacher = profile?.role === 'teacher';
-  const isCancelledAtPeriodEnd = isPremium && profile?.subscriptionStatus === 'cancelled_at_period_end';
 
   // Výpočet data konce období
   const periodEndDate = React.useMemo(() => {
@@ -81,6 +80,12 @@ export default function SubscriptionManager() {
     }
     return new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
   }, [profile?.subscriptionPeriodEnd]);
+
+  const isPeriodExpired = React.useMemo(() => {
+    return periodEndDate.getTime() <= Date.now();
+  }, [periodEndDate]);
+
+  const isCancelledAtPeriodEnd = isPremium && profile?.subscriptionStatus === 'cancelled_at_period_end' && !isPeriodExpired;
 
   const formattedPeriodEnd = periodEndDate.toLocaleDateString('cs-CZ', {
     day: 'numeric',
@@ -165,7 +170,7 @@ export default function SubscriptionManager() {
     }
   };
 
-  const handleConfirmCancel = async (immediate: boolean = true) => {
+  const handleConfirmCancel = async (immediate: boolean = false) => {
     const finalReason =
       selectedReason === 'Jiný důvod' && customReason.trim()
         ? `Jiný důvod: ${customReason.trim()}`
@@ -755,30 +760,30 @@ export default function SubscriptionManager() {
       <Dialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
         <DialogContent className="sm:max-w-lg rounded-[2rem] p-6 sm:p-8 bg-white border border-gray-100 shadow-2xl space-y-6">
           <div className="space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mb-2">
-              <XCircle size={26} />
+            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mb-2">
+              <Clock size={26} />
             </div>
             <DialogTitle className="text-2xl font-sans font-black text-gray-900">
-              Opravdu chceš zrušit ProEducator Premium?
+              Zrušení obnovování předplatného
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-600 leading-relaxed">
-              Po zrušení předplatného přijdeš o tyto klíčové výhody pro přípravu na přijímačky:
+              Předplatné ti neskončí ihned. Tvoje prémiové výhody zůstanou plně aktivní až do konce již zaplaceného období (<strong className="text-gray-900">{formattedPeriodEnd}</strong>).
             </DialogDescription>
           </div>
 
-          {/* Přehled výhod, o které uživatel přijde */}
+          {/* Informační box o zachování výhod a zrušení plateb */}
           <div className="bg-[#FAF7F0] rounded-2xl p-4 space-y-2.5 border border-[#E6E0D4]">
             <div className="flex items-center gap-2.5 text-xs font-bold text-gray-800">
-              <AlertTriangle size={15} className="text-amber-600 shrink-0" />
-              <span>Neomezené procvičování všech témat bez denního limitu žolíků</span>
+              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+              <span>Až do {formattedPeriodEnd} můžeš Premium neomezeně využívat</span>
             </div>
             <div className="flex items-center gap-2.5 text-xs font-bold text-gray-800">
-              <AlertTriangle size={15} className="text-amber-600 shrink-0" />
-              <span>Přístup ke všem studijním materiálům, tahákům a vzorovým úlohám</span>
+              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+              <span>Žádná další platba (99 Kč) se z tvé karty již nestrhne</span>
             </div>
             <div className="flex items-center gap-2.5 text-xs font-bold text-gray-800">
-              <AlertTriangle size={15} className="text-amber-600 shrink-0" />
-              <span>Podrobné krokové vysvětlení u každého příkladu</span>
+              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+              <span>Předplatné můžeš kdykoliv před vypršením znovu obnovit</span>
             </div>
           </div>
 
@@ -835,10 +840,10 @@ export default function SubscriptionManager() {
               type="button"
               variant="outline"
               disabled={isProcessingCancel}
-              onClick={() => handleConfirmCancel(true)}
+              onClick={() => handleConfirmCancel(false)}
               className="flex-1 rounded-xl h-11 border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs cursor-pointer"
             >
-              {isProcessingCancel ? 'Ověřuji v databázi...' : 'Potvrdit zrušení předplatného'}
+              {isProcessingCancel ? 'Ukládám v databázi...' : `Zrušit k ${formattedPeriodEnd}`}
             </Button>
           </div>
         </DialogContent>

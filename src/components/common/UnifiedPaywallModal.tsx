@@ -18,6 +18,7 @@ import { trackPaywallImpression, trackPaywallCtaClick } from '../../services/ana
 import { createOrder, simulateComgatePayment, buildOrderResultFromOrder, CreateOrderResult } from '../../services/orderService';
 import { Order } from '../../types';
 import { Link } from 'react-router-dom';
+import { PaymentLogosBar } from './PaymentLogos';
 
 export type PaywallType = 'premium' | 'course';
 
@@ -65,6 +66,7 @@ export interface UnifiedPaywallModalProps {
   description?: string;
   onSuccess?: () => void;
   initialOrder?: Order | null;
+  defaultCourseId?: string;
 }
 
 type ModalStep = 'plan_overview' | 'order_form' | 'order_result';
@@ -76,11 +78,12 @@ export default function UnifiedPaywallModal({
   title,
   description,
   onSuccess,
-  initialOrder
+  initialOrder,
+  defaultCourseId
 }: UnifiedPaywallModalProps) {
   const { user, profile, updateProfileData, openAuthModal } = useAuth();
   const [currentStep, setCurrentStep] = useState<ModalStep>('plan_overview');
-  const [selectedCourseId, setSelectedCourseId] = useState<string>('course-combo');
+  const [selectedCourseId, setSelectedCourseId] = useState<string>(defaultCourseId || 'course-combo');
   const [availableCourses, setAvailableCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSimulatingPayment, setIsSimulatingPayment] = useState(false);
@@ -165,6 +168,12 @@ export default function UnifiedPaywallModal({
     setCurrentStep('order_form');
   };
 
+  useEffect(() => {
+    if (defaultCourseId) {
+      setSelectedCourseId(defaultCourseId);
+    }
+  }, [defaultCourseId, isOpen]);
+
   const handleCourseActivate = async () => {
     trackPaywallCtaClick('activate', selectedCourseId);
     if (!user) {
@@ -177,7 +186,15 @@ export default function UnifiedPaywallModal({
     setIsSubmitting(true);
     try {
       const selected = availableCourses.find(c => c.id === selectedCourseId) || availableCourses[0];
-      await updateProfileData({ role: 'course' });
+      const existingCourses = Array.isArray(profile?.enrolledCourseIds) ? profile.enrolledCourseIds : [];
+      const nextCourses = Array.from(new Set([...existingCourses, selectedCourseId]));
+
+      await updateProfileData({ 
+        role: 'course',
+        courseId: selectedCourseId,
+        enrolledCourseIds: nextCourses
+      });
+
       toast.success(`🎉 Gratulujeme! Byl jsi úspěšně zapsán do kurzu "${selected.title}".`);
       onClose();
       if (onSuccess) onSuccess();
@@ -262,9 +279,11 @@ export default function UnifiedPaywallModal({
         console.warn('[Billing Profile Sync]:', profileErr);
       });
 
-      // Pokud Comgate vrátila přímou URL v živém režimu, přesměrovat
+      // Pokud Comgate vrátila přímou URL v živém režimu, okamžitě přesměrovat
       if (paymentMethod === 'comgate' && result.comgate?.redirectUrl && result.comgate.isLive) {
+        toast.loading('Přesměrovávám na zabezpečenou platební bránu Comgate...');
         window.location.href = result.comgate.redirectUrl;
+        return;
       }
     } catch (err: any) {
       console.error('Chyba při odesílání objednávky:', err);
@@ -623,6 +642,13 @@ export default function UnifiedPaywallModal({
                       <span className="text-xs sm:text-sm">Kartou online</span>
                     </button>
                   </div>
+
+                  {paymentMethod === 'comgate' && (
+                    <div className="pt-2 flex items-center justify-between flex-wrap gap-2 text-[11px] text-gray-500 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200">
+                      <span className="font-semibold text-gray-700">Podporované metody:</span>
+                      <PaymentLogosBar />
+                    </div>
+                  )}
                 </div>
 
                 {/* 4. Řádek: Souhlasy */}

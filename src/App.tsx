@@ -38,6 +38,7 @@ const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
 const Terms = React.lazy(() => import('./pages/Terms'));
 const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
 
+import Footer from './components/common/Footer';
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
 
 function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 'student' | 'teacher' }) {
@@ -347,6 +348,12 @@ function AppContent() {
             </Routes>
           </React.Suspense>
         </div>
+
+        {!location.pathname.startsWith('/practice/session') && (
+          <div className="pb-16 md:pb-0">
+            <Footer />
+          </div>
+        )}
       </main>
 
       {/* Mobile Bottom Navigation Bar */}

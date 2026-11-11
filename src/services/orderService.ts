@@ -470,32 +470,65 @@ export async function cancelSubscription(params: {
 
   const safeReason = (params.reason || 'Bez udání důvodu').trim().slice(0, 500);
   const nowIso = new Date().toISOString();
-  const periodEnd = params.currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let finalPeriodEnd = params.currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let finalMessage = params.immediate
+    ? 'Předplatné bylo okamžitě ukončeno a účet byl přepnut na tarif Free.'
+    : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.';
+
+  // 1. Synchronizace se serverem (primární zdroj pravdy: určí přesný konec období a zruší Comgate rekurentní obnovu)
+  try {
+    const token = await currentUser.getIdToken();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+    const res = await fetch('/api/subscription/cancel', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token
+      },
+      body: JSON.stringify({ reason: safeReason, immediate: Boolean(params.immediate) }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.subscriptionPeriodEnd) {
+        finalPeriodEnd = data.subscriptionPeriodEnd;
+      }
+      if (data.message) {
+        finalMessage = data.message;
+      }
+    }
+  } catch (apiErr) {
+    console.warn('[Cancel Subscription API Notice]:', apiErr);
+  }
 
   const updatePayload: Record<string, any> = params.immediate
     ? {
         role: 'free',
         subscriptionStatus: 'inactive',
         subscriptionCancelledAt: nowIso,
-        subscriptionCancelReason: safeReason
+        subscriptionCancelReason: safeReason,
+        subscriptionExpiredAt: nowIso
       }
     : {
+        role: 'premium',
         subscriptionStatus: 'cancelled_at_period_end',
         subscriptionCancelledAt: nowIso,
         subscriptionCancelReason: safeReason,
-        subscriptionPeriodEnd: periodEnd
+        subscriptionPeriodEnd: finalPeriodEnd
       };
 
   const userDocRef = doc(db, 'users', currentUser.uid);
 
-  // 1. Pokus o přímý zápis do dokumentu uživatele ve Firestore
+  // 2. Pokus o zápis do klientského Firestore
   try {
     await updateDoc(userDocRef, updatePayload);
   } catch (clientWriteErr) {
-    console.warn('[Cancel Subscription Client Write Fallback]: Používám serverové API:', clientWriteErr);
+    console.warn('[Cancel Subscription Client Write Fallback]:', clientWriteErr);
   }
 
-  // 2. Zápis přes serverový dev endpoint (využívá oprávnění učitele/admina v databázi)
+  // 3. Zápis přes serverový dev endpoint (pro dev prostředí bez cloud functions)
   try {
     await fetch('/api/dev/set-role', {
       method: 'POST',
@@ -510,62 +543,31 @@ export async function cancelSubscription(params: {
     console.warn('[Cancel Subscription Dev Set-Role Notice]:', devErr);
   }
 
-  // 3. Synchronizace se serverem (Comgate hook + invalidace serverové cache)
-  try {
-    const token = await currentUser.getIdToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
-    await fetch('/api/subscription/cancel', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify({ reason: safeReason, immediate: Boolean(params.immediate) }),
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-  } catch {
-    // Tichý fallback
-  }
-
-  // 4. Počkáme na potvrzení přímo z databáze Firestore, že změna je propisována
-  for (let attempt = 0; attempt < 5; attempt++) {
-    try {
-      const snap = await getDoc(userDocRef);
-      if (snap.exists()) {
-        const dbData = snap.data();
-        const confirmed = params.immediate
-          ? dbData.role === 'free'
-          : dbData.subscriptionStatus === 'cancelled_at_period_end';
-        if (confirmed) {
-          if (typeof window !== 'undefined') {
-            if (params.immediate) {
-              localStorage.setItem('proedu_dev_role_override', 'free');
-            }
-            localStorage.setItem('proedu_cached_profile', JSON.stringify({ ...dbData, ...updatePayload }));
-          }
-          break;
-        }
+  // 4. Aktualizace lokálního úložiště
+  if (typeof window !== 'undefined') {
+    if (params.immediate) {
+      localStorage.setItem('proedu_dev_role_override', 'free');
+    } else {
+      if (localStorage.getItem('proedu_dev_role_override') === 'free') {
+        localStorage.removeItem('proedu_dev_role_override');
       }
-    } catch {
-      // Ignorujeme dílčí chybu čtení při ověřování
     }
-    await new Promise(resolve => setTimeout(resolve, 250));
-  }
-
-  if (typeof window !== 'undefined' && params.immediate) {
-    localStorage.setItem('proedu_dev_role_override', 'free');
+    const cachedStr = localStorage.getItem('proedu_cached_profile');
+    if (cachedStr) {
+      try {
+        const cached = JSON.parse(cachedStr);
+        Object.assign(cached, updatePayload);
+        localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
+      } catch {}
+    }
   }
 
   return {
     success: true,
     immediate: Boolean(params.immediate),
     subscriptionStatus: params.immediate ? 'inactive' : 'cancelled_at_period_end',
-    subscriptionPeriodEnd: params.immediate ? null : periodEnd,
-    message: params.immediate
-      ? 'Předplatné bylo zrušeno a tvůj účet byl přepnut na tarif Free.'
-      : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.'
+    subscriptionPeriodEnd: params.immediate ? null : finalPeriodEnd,
+    message: finalMessage
   };
 }
 
@@ -583,12 +585,37 @@ export async function reactivateSubscription(currentPeriodEnd?: string): Promise
     throw new Error('Pro obnovení předplatného se prosím přihlas.');
   }
 
-  const periodEnd = currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let finalPeriodEnd = currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  let finalMessage = 'Předplatné ProEducator Premium bylo úspěšně obnoveno!';
+
+  try {
+    const token = await currentUser.getIdToken();
+    const res = await fetch('/api/subscription/reactivate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.subscriptionPeriodEnd) {
+        finalPeriodEnd = data.subscriptionPeriodEnd;
+      }
+      if (data.message) {
+        finalMessage = data.message;
+      }
+    }
+  } catch (err) {
+    console.warn('[reactivateSubscription API notice]:', err);
+  }
+
   const updatePayload = {
     role: 'premium',
     subscriptionStatus: 'active',
     subscriptionCancelledAt: null,
-    subscriptionPeriodEnd: periodEnd
+    subscriptionCancelReason: null,
+    subscriptionPeriodEnd: finalPeriodEnd
   };
 
   try {
@@ -603,33 +630,73 @@ export async function reactivateSubscription(currentPeriodEnd?: string): Promise
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ uid: currentUser.uid, ...updatePayload })
     });
-  } catch {
-    // Tichý fallback
-  }
-
-  try {
-    const token = await currentUser.getIdToken();
-    fetch('/api/subscription/reactivate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      }
-    }).catch(() => {});
-  } catch {
-    // Tichý fallback
-  }
+  } catch {}
 
   if (typeof window !== 'undefined') {
-    localStorage.setItem('proedu_dev_role_override', 'premium');
+    localStorage.removeItem('proedu_dev_role_override');
+    const cachedStr = localStorage.getItem('proedu_cached_profile');
+    if (cachedStr) {
+      try {
+        const cached = JSON.parse(cachedStr);
+        Object.assign(cached, updatePayload);
+        localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
+      } catch {}
+    }
   }
 
   return {
     success: true,
     subscriptionStatus: 'active',
-    subscriptionPeriodEnd: periodEnd,
-    message: 'Automatické prodlužování předplatného bylo obnoveno!'
+    subscriptionPeriodEnd: finalPeriodEnd,
+    message: finalMessage
   };
+}
+
+/**
+ * Ověří na serveru, zda placené období předplatného již neuplynulo.
+ * Pokud uplynulo, server a databáze automaticky přepnou účet na Free.
+ */
+export async function checkSubscriptionExpiry(): Promise<{
+  expired: boolean;
+  role: string;
+  subscriptionStatus: string;
+  message?: string;
+}> {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    return { expired: false, role: 'free', subscriptionStatus: 'inactive' };
+  }
+
+  try {
+    const token = await currentUser.getIdToken();
+    const res = await fetch('/api/subscription/check-expiry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer ' + token
+      }
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.expired && typeof window !== 'undefined') {
+        localStorage.removeItem('proedu_dev_role_override');
+        const cachedStr = localStorage.getItem('proedu_cached_profile');
+        if (cachedStr) {
+          try {
+            const cached = JSON.parse(cachedStr);
+            cached.role = 'free';
+            cached.subscriptionStatus = 'inactive';
+            localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
+          } catch {}
+        }
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('[checkSubscriptionExpiry error]:', err);
+  }
+
+  return { expired: false, role: 'free', subscriptionStatus: 'inactive' };
 }
 
 /**

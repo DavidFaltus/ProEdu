@@ -40,7 +40,8 @@ import {
   getStudentsProgressList, 
   StudentProgressItem, 
   StudentPracticeAttempt,
-  updateStudentAccess 
+  updateStudentAccess,
+  deleteStudentByAdmin 
 } from '../../services/studentProgressService';
 import { getAllCourses } from '../../services/courseService';
 import {
@@ -70,6 +71,37 @@ export default function StudentsProgressManager() {
   const [accessRole, setAccessRole] = useState<'free' | 'premium' | 'course'>('free');
   const [accessCourseIds, setAccessCourseIds] = useState<string[]>([]);
   const [isSavingAccess, setIsSavingAccess] = useState(false);
+
+  // Trvalé smazání studenta
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [studentToDelete, setStudentToDelete] = useState<StudentProgressItem | null>(null);
+  const [isDeletingStudent, setIsDeletingStudent] = useState(false);
+
+  const handleOpenDeleteDialog = (student: StudentProgressItem, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setStudentToDelete(student);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleConfirmDeleteStudent = async () => {
+    if (!studentToDelete) return;
+    setIsDeletingStudent(true);
+    try {
+      await deleteStudentByAdmin(studentToDelete.uid);
+      toast.success(`Student ${studentToDelete.name} byl úspěšně trvale smazán.`);
+      setStudents(prev => prev.filter(s => s.uid !== studentToDelete.uid));
+      if (selectedStudentId === studentToDelete.uid) {
+        setSelectedStudentId(null);
+      }
+      setIsDeleteDialogOpen(false);
+      setStudentToDelete(null);
+    } catch (err: any) {
+      console.error('Chyba při mazání studenta:', err);
+      toast.error(err.message || 'Nepodařilo se smazat studenta.');
+    } finally {
+      setIsDeletingStudent(false);
+    }
+  };
 
   // Přiřazování procvičování do kalendáře
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
@@ -186,6 +218,8 @@ export default function StudentsProgressManager() {
       const next = exists ? prev.filter(id => id !== courseId) : [...prev, courseId];
       if (!exists && next.length > 0) {
         setAccessRole('course');
+      } else if (next.length === 0 && accessRole === 'course') {
+        setAccessRole('free');
       }
       return next;
     });
@@ -615,6 +649,17 @@ export default function StudentsProgressManager() {
                     >
                       <ShieldCheck size={16} className="text-blue-600" />
                       <span>Spravovat přístup</span>
+                    </Button>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleOpenDeleteDialog(selectedStudent)}
+                      className="rounded-xl border-rose-200 hover:border-rose-400 hover:bg-rose-50 text-rose-600 font-bold text-xs h-10 px-3.5 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Trvale smazat studenta z databáze i přihlašování"
+                    >
+                      <Trash2 size={15} className="text-rose-600" />
+                      <span>Smazat studenta</span>
                     </Button>
                   </div>
                 </div>
@@ -1111,6 +1156,49 @@ export default function StudentsProgressManager() {
             >
               {isSavingAccess ? <Loader2 size={14} className="animate-spin mr-1.5" /> : null}
               Uložit změny
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DIALOG PRO TRVALÉ SMAZÁNÍ STUDENTA */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent className="rounded-3xl p-6 sm:p-8 w-full sm:max-w-md bg-white shadow-2xl">
+          <DialogHeader className="space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mb-1">
+              <Trash2 size={24} />
+            </div>
+            <DialogTitle className="text-xl font-black text-gray-900 font-sans">
+              Trvale smazat studenta?
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm text-gray-500 font-medium leading-relaxed">
+              Opravdu si přejete smazat účet studenta <strong className="text-gray-900">{studentToDelete?.name}</strong> (<span className="text-gray-700">{studentToDelete?.email}</span>)?
+              <br /><br />
+              Tato akce <strong>trvale odstraní jeho přihlašovací účet z Firebase Authentication</strong> i profil a historii výsledků z databáze. Tuto akci <strong>nelze vrátit zpět</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <DialogFooter className="flex flex-col-reverse sm:flex-row gap-2 pt-4 border-t border-gray-100">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsDeleteDialogOpen(false);
+                setStudentToDelete(null);
+              }}
+              disabled={isDeletingStudent}
+              className="rounded-xl font-bold text-xs h-10 px-4 cursor-pointer"
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={handleConfirmDeleteStudent}
+              disabled={isDeletingStudent}
+              className="rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs h-10 px-5 shadow-sm cursor-pointer"
+            >
+              {isDeletingStudent ? <Loader2 size={14} className="animate-spin mr-1.5" /> : <Trash2 size={14} className="mr-1.5" />}
+              {isDeletingStudent ? 'Mazání...' : 'Trvale smazat studenta'}
             </Button>
           </DialogFooter>
         </DialogContent>

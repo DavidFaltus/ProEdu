@@ -1031,6 +1031,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       hint: '',
       explanation: '',
       difficulty: 'Střední',
+      caseSensitive: false,
       subtopicId: sub.id,
       topicId: sub.topicId,
       subjectId: sub.subjectId
@@ -1068,7 +1069,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         difficulty: editingQuestion.difficulty || 'Střední',
         subtopicId: questionParentSubtopic?.id || editingQuestion.subtopicId,
         topicId: questionParentSubtopic?.topicId || editingQuestion.topicId,
-        subjectId: activeSubject
+        subjectId: activeSubject,
+        caseSensitive: Boolean(editingQuestion.caseSensitive)
       }, effectiveUserId);
 
       toast.success(editingQuestion.id ? 'Otázka upravena' : 'Otázka vytvořena');
@@ -2191,6 +2193,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                                   <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200 flex items-center gap-1 shrink-0" title={q.svgContent ? 'Otázka má vložené vektorové SVG zadání' : 'Otázka má přiložený obrázek'}>
                                                     <ImageIcon size={10} />
                                                     <span>{q.svgContent ? 'SVG' : 'Obrázek'}</span>
+                                                  </span>
+                                                )}
+                                                {q.caseSensitive && (
+                                                  <span 
+                                                    className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-violet-50 text-violet-700 border border-violet-200 flex items-center gap-1 shrink-0" 
+                                                    title="Otázka rozlišuje velká a malá písmena (case-sensitive)"
+                                                  >
+                                                    <span>Aa</span>
+                                                    <span>Case-sensitive</span>
                                                   </span>
                                                 )}
                                                 <span className="font-bold text-gray-800 truncate">
@@ -3479,6 +3490,27 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 )}
               </div>
             )}
+
+            {/* Case-sensitive switch */}
+            <div className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/70 hover:bg-gray-50 transition-colors">
+              <label className="flex items-start gap-3 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={Boolean(editingQuestion?.caseSensitive)}
+                  onChange={e => setEditingQuestion(prev => prev ? ({ ...prev, caseSensitive: e.target.checked }) : null)}
+                  className="mt-0.5 w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600 cursor-pointer shrink-0"
+                />
+                <div className="space-y-0.5">
+                  <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                    <span>Rozlišovat velká a malá písmena (Case-sensitive)</span>
+                    <span className="px-1.5 py-0.2 rounded font-black text-[9px] bg-violet-100 text-violet-800 border border-violet-200">Aa</span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 leading-relaxed">
+                    Při zapnutí musí student zadat přesnou shodu velkých a malých písmen (např. u vlastních jmen nebo pravopisu). Ve výchozím stavu je kontrola volná bez ohledu na velikost písmen.
+                  </p>
+                </div>
+              </label>
+            </div>
 
             {/* Student hint (takes full width, difficulty removed) */}
             <div className="space-y-1">

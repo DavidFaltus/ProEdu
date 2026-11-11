@@ -45,6 +45,7 @@ export interface UserProfile {
   emailVerified?: boolean; // Zda byl e-mail ověřen 6místným kódem
   initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
   premiumSince?: string;
+  subscriptionExpiredAt?: string | null;
 }
 
 export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď
@@ -66,6 +67,7 @@ export interface PracticeQuestion {
   createdBy?: string;
   imageUrl?: string;
   svgContent?: string;
+  caseSensitive?: boolean;
 }
 
 export interface StudyStep {

@@ -23,7 +23,7 @@ import { getCourseById } from '../services/courseService';
 
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
-  const { user, profile, isCourseUser, isTeacher } = useAuth();
+  const { user, profile, isTeacher, hasCourseAccess } = useAuth();
   const navigate = useNavigate();
 
   const [course, setCourse] = useState<Course | null>(null);
@@ -72,7 +72,8 @@ export default function CourseDetail() {
     );
   }
 
-  const hasAccess = isCourseUser || isTeacher;
+  // Granulární kontrola přístupu: Pouze student s ID tohoto kurzu v enrolledCourseIds (nebo lektor)
+  const hasAccess = hasCourseAccess(course?.id || id);
 
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-20">
@@ -375,11 +376,12 @@ export default function CourseDetail() {
         isOpen={isPaywallOpen}
         onClose={() => setIsPaywallOpen(false)}
         type="course"
+        defaultCourseId={course.id}
         title={`Zápis do kurzu: ${course.title}`}
         description="Potvrď výběr kurzu a získej okamžitý přístup k živým lekcím, materiálům a záznamům."
         onSuccess={() => {
           setIsPaywallOpen(false);
-          // Obnovit stav, uživatel má nyní roli course
+          // Obnovit stav, uživatel má nyní kurz přiřazen
           window.location.reload();
         }}
       />

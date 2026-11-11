@@ -124,103 +124,149 @@ export default function Terms() {
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
           <h2 className="text-xl font-bold text-gray-900">5. Cena a platební podmínky</h2>
           <p>
-            <strong>5.1.</strong> Cena za služby je stanovena dle aktuálního ceníku kurzu. Poskytovatel není plátcem DPH.
+            <strong>5.1.</strong> Cena za služby a digitální obsah je stanovena dle aktuálního ceníku na webových stránkách. Ceny jsou konečné. Poskytovatel není plátcem DPH.
           </p>
           <p>
-            <strong>5.2. Způsob platby:</strong> Cena kurzu je splatná před zahájením výuky na základě platebních instrukcí či zálohové faktury. Přístup k výuce je umožněn až po úplném zaplacení.
+            <strong>5.2. Způsoby platby:</strong> Zákazník může platbu provést:
           </p>
+          <ul className="list-disc list-inside space-y-1 pl-2 text-gray-600">
+            <li><strong>Online platební kartou, Apple Pay, Google Pay nebo rychlým bankovním převodem</strong> prostřednictvím zabezpečené platební brány Comgate poskytované společností Comgate a.s. (licencovaná platební instituce pod dohledem ČNB, <a href="https://www.comgate.cz/cz/platebni-brana" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">www.comgate.eu</a>).</li>
+            <li><strong>Bankovním převodem s QR kódem</strong> na bankovní účet poskytovatele na základě vystavených platebních instrukcí.</li>
+          </ul>
           <p>
-            <strong>5.3. Nezúčastnění se lekce:</strong> Pokud se zákazník nezúčastní domluvené lekce a neomluví se včas (v souladu s pravidly omlouvání, viz bod 7.4.), uhrazená cena za tuto lekci propadá bez náhrady.
+            <strong>5.3. Okamžik zaplacení:</strong> Závazek zákazníka uhradit cenu je splněn okamžikem připsání částky na účet poskytovatele nebo potvrzením úspěšné autorizace platební bránou.
           </p>
         </section>
 
-        {/* 6. Autorská práva a ochrana obsahu */}
+        {/* 6. Digitální předplatné ProEdu Premium a podmínky opakovaných plateb (Subscription) */}
+        <section id="predplatne" className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-4">
+          <div className="flex items-center gap-2">
+            <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-black text-sm">
+              ★
+            </span>
+            <h2 className="text-xl font-bold text-gray-900">
+              6. Digitální předplatné ProEdu Premium a podmínky opakovaných plateb (Subscription)
+            </h2>
+          </div>
+          
+          <p>
+            <strong>6.1. Charakteristika služby:</strong> Služba ProEdu Premium představuje časově omezený přístup k prémiovému digitálnímu obsahu (neomezené procvičování CERMAT testů, podrobná vysvětlení krok za krokem, studijní karty a analytika).
+          </p>
+
+          <p>
+            <strong>6.2. Cena a frekvence opakovaných plateb:</strong> Cena předplatného ProEdu Premium činí <strong>99 Kč včetně všech daní a poplatků za každých 30 kalendářních dnů</strong>.
+          </p>
+
+          <p>
+            <strong>6.3. Mechanismus opakované platby (Recurring):</strong>
+          </p>
+          <ul className="list-disc list-inside space-y-1.5 pl-2 text-gray-600">
+            <li>Při první (iniciační) platbě platební kartou přes bránu Comgate zákazník výslovně uděluje souhlas s uložením údajů o platební kartě na straně zabezpečené platební brány a s automatickým strháváním pravidelného měsíčního poplatku ve výši 99 Kč každých 30 dní.</li>
+            <li>Následné platby jsou strhávány automaticky bez nutnosti opětovného zadávání údajů o kartě.</li>
+            <li>O každém úspěšném i neúspěšném stržení částky je zákazník informován potvrzujícím e-mailem s daňovým dokladem / potvrzením o platbě.</li>
+          </ul>
+
+          <p>
+            <strong>6.4. Okamžité dodání digitálního obsahu:</strong> Zákazník odesláním objednávky výslovně žádá a souhlasí se započetím poskytování digitálního obsahu ihned po dokončení platby před uplynutím zákonné lhůty pro odstoupení od smlouvy.
+          </p>
+
+          <p>
+            <strong>6.5. Zrušení předplatného zákazníkem:</strong>
+          </p>
+          <ul className="list-disc list-inside space-y-1.5 pl-2 text-gray-600">
+            <li>Zákazník je oprávněn opakované předplatné <strong>kdykoliv a bez udání důvodu zrušit</strong>.</li>
+            <li>Zrušení lze provést jednoduše v uživatelském rozhraní aplikace v sekci <strong>Nastavení &rarr; Předplatné</strong> kliknutím na tlačítko <em>„Zrušit předplatné“</em>, případně zasláním e-mailu na adresu <a href="mailto:info@pro-edu.cz" className="text-amber-700 underline font-bold">info@pro-edu.cz</a>.</li>
+            <li>Po zrušení zůstává prémiový přístup aktivní až do konce již uhrazeného 30denního období. Po jeho skončení se účet automaticky přepne na bezplatný režim (Free) a žádné další poplatky se již nestrhnou. Poskytovatel neúčtuje žádné storno poplatky.</li>
+          </ul>
+        </section>
+
+        {/* 7. Autorská práva a ochrana obsahu */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <ShieldCheck size={20} className="text-amber-600" />
-            <span>6. Autorská práva a ochrana obsahu</span>
+            <span>7. Autorská práva a ochrana obsahu</span>
           </h2>
           <p>
-            <strong>6.1.</strong> Veškeré studijní materiály, nahrávky lekcí, testy a postupy poskytnuté v rámci výuky jsou autorským dílem poskytovatele nebo lektora.
+            <strong>7.1.</strong> Veškeré studijní materiály, nahrávky lekcí, testy a postupy poskytnuté v rámci výuky jsou autorským dílem poskytovatele nebo lektora.
           </p>
           <p>
-            <strong>6.2. Zákaz sdílení:</strong> Zákazník je oprávněn využívat materiály výhradně pro svou osobní potřebu (nebo potřebu studenta, pro kterého službu objednal). Je přísně zakázáno materiály bez písemného souhlasu poskytovatele dále šířit, kopírovat, nahrávat či zpřístupňovat třetím osobám.
+            <strong>7.2. Zákaz sdílení:</strong> Zákazník je oprávněn využívat materiály výhradně pro svou osobní potřebu (nebo potřebu studenta, pro kterého službu objednal). Je přísně zakázáno materiály bez písemného souhlasu poskytovatele dále šířit, kopírovat, nahrávat či zpřístupňovat třetím osobám.
           </p>
           <p>
-            <strong>6.3. Účast třetích osob:</strong> Lekce je určena výhradně pro registrovaného zákazníka (studenta). Účast dalších osob (např. kamarádů) na lekci bez předchozí domluvy a doplatku je považována za podstatné porušení smlouvy.
+            <strong>7.3. Účast třetích osob:</strong> Lekce je určena výhradně pro registrovaného zákazníka (studenta). Účast dalších osob (např. kamarádů) na lekci bez předchozí domluvy a doplatku je považována za podstatné porušení smlouvy.
           </p>
           <p>
             <strong>6.4. Pořizování a zpřístupnění záznamů:</strong> Zákazník bere na vědomí a souhlasí s tím, že průběh skupinových lekcí může být poskytovatelem nahráván za účelem vyhotovení záznamu pro účely studijní podpory a kompenzace absencí účastníků kurzu. Pokud si student nepřeje být na záznamu zachycen (obrazem či hlasem), je povinen mít po dobu konání lekce vypnutou kameru i mikrofon a dotazy pokládat výhradně prostřednictvím textového chatu.
           </p>
           <p>
-            <strong>6.5. Zákaz pořizování vlastních nahrávek:</strong> Zákazníkovi ani studentovi není dovoleno pořizovat vlastní audio či video nahrávky z lekcí bez předchozího písemného souhlasu poskytovatele. Zpřístupněný videozáznam od poskytovatele je určen výhradně pro osobní studijní potřebu studenta. Jeho stahování, dalším šíření, sdílení s třetími osobami nebo zveřejňování je přísně zakázáno a zakládá právo poskytovatele na okamžité odstoupení od smlouvy a náhradu škody.
+            <strong>7.5. Zákaz pořizování vlastních nahrávek:</strong> Zákazníkovi ani studentovi není dovoleno pořizovat vlastní audio či video nahrávky z lekcí bez předchozího písemného souhlasu poskytovatele. Zpřístupněný videozáznam od poskytovatele je určen výhradně pro osobní studijní potřebu studenta. Jeho stahování, dalším šíření, sdílení s třetími osobami nebo zveřejňování je přísně zakázáno a zakládá právo poskytovatele na okamžité odstoupení od smlouvy a náhradu škody.
           </p>
         </section>
 
-        {/* 7. Technické požadavky a organizace výuky */}
+        {/* 8. Technické požadavky a organizace výuky */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900">7. Technické požadavky a organizace výuky</h2>
+          <h2 className="text-xl font-bold text-gray-900">8. Technické požadavky a organizace výuky</h2>
           <p>
-            <strong>7.1.</strong> Zákazník je povinen zajistit si stabilní internetové připojení a funkční technické vybavení (mikrofon, kamera).
+            <strong>8.1.</strong> Zákazník je povinen zajistit si stabilní internetové připojení a funkční technické vybavení (mikrofon, kamera).
           </p>
           <p>
-            <strong>7.2.</strong> Poskytovatel neodpovídá za výpadky výuky způsobené technickou chybou na straně zákazníka.
+            <strong>8.2.</strong> Poskytovatel neodpovídá za výpadky výuky způsobené technickou chybou na straně zákazníka.
           </p>
           <p>
-            <strong>7.3. Zrušení lekce lektorem:</strong> Pokud se lekce nemůže uskutečnit z důvodů na straně poskytovatele (např. náhlé onemocnění lektora) nebo v důsledku zásahu vyšší moci (tj. mimořádné, neovlivnitelné a nepřevídatelné události, jako jsou plošné výpadky internetové či elektrické sítě, rozsáhlé výpadky komunikačních platforem apod.), je poskytovatel povinen o tom zákazníka bez zbytečného odkladu informovat. Zákazníkovi bude v takovém případě nabídnut náhradní živý termín lekce, případně bude lekce kompenzována dodatečným záznamem či poměrným prodloužením kurzu. Smluvní strany neodpovídají za nesplnění povinností nebo prodlení způsobené vyšší mocí a zákazníkovi z tohoto důvodu nevzniká nárok na náhradu škody.
+            <strong>8.3. Zrušení lekce lektorem:</strong> Pokud se lekce nemůže uskutečnit z důvodů na straně poskytovatele (např. náhlé onemocnění lektora) nebo v důsledku zásahu vyšší moci (tj. mimořádné, neovlivnitelné a nepřevídatelné události, jako jsou plošné výpadky internetové či elektrické sítě, rozsáhlé výpadky komunikačních platforem apod.), je poskytovatel povinen o tom zákazníka bez zbytečného odkladu informovat. Zákazníkovi bude v takovém případě nabídnut náhradní živý termín lekce, případně bude lekce kompenzována dodatečným záznamem či poměrným prodloužením kurzu. Smluvní strany neodpovídají za nesplnění povinností nebo prodlení způsobené vyšší mocí a zákazníkovi z tohoto důvodu nevzniká nárok na náhradu škody.
           </p>
           <p>
-            <strong>7.4. Zrušení lekce zákazníkem:</strong> Výuka probíhá ve skupinách v předem stanovených pevný dnech a časech podle harmonogramu kurzu. Vzhledem ke skupinovému charakteru výuky není možné termíny jednotlivých lekce ze strany zákazníka měnit, posouvat ani individuálně nahrazovat. Poskytovatel si však vyhrazuje právo v odůvodněných případech (např. ze zdravotních důvodů) posoudit situaci zákazníka individuálně a dohodnout se na alternativním řešení; na takové individuální řešení však nevzniká právní nárok.
+            <strong>8.4. Zrušení lekce zákazníkem:</strong> Výuka probíhá ve skupinách v předem stanovených pevný dnech a časech podle harmonogramu kurzu. Vzhledem ke skupinovému charakteru výuky není možné termíny jednotlivých lekce ze strany zákazníka měnit, posouvat ani individuálně nahrazovat. Poskytovatel si však vyhrazuje právo v odůvodněných případech (např. ze zdravotních důvodů) posoudit situaci zákazníka individuálně a dohodnout se na alternativním řešení; na takové individuální řešení však nevzniká právní nárok.
           </p>
           <p>
-            <strong>7.5. Absence a kompenzace formou záznamu:</strong> Neúčast zákazníka (studenta) na jakékoliv lekci nezakládá nárok na vrácení ceny lekce ani na poskytnutí náhradního živého termínu. Jako standardní kompenzaci za neúčast poskytne poskytovatel zákazníkovi přístup k videozáznamu proběhlé lekce, a to po dobu 30 dnů od jejího konání.
+            <strong>8.5. Absence a kompenzace formou záznamu:</strong> Neúčast zákazníka (studenta) na jakékoliv lekci nezakládá nárok na vrácení ceny lekce ani na poskytnutí náhradního živého termínu. Jako standardní kompenzaci za neúčast poskytne poskytovatel zákazníkovi přístup k videozáznamu proběhlé lekce, a to po dobu 30 dnů od jejího konání.
           </p>
           <p>
-            <strong>7.6. Pravidla chování při výuce:</strong> Zákazník (student) je povinen se při výuce chovat v souladu s dobrými mravy a nenarušovat průběh lekce. V případě opakovaného nebo hrubého porušování pravidel výuky (např. nevhodné či vulgární chování vůči lektorovi nebo ostatním účastníkům) je poskytovatel oprávněn studenta z lekce nebo celého kurzu vyloučit bez nároku na vrácení zaplacené ceny.
+            <strong>8.6. Pravidla chování při výuce:</strong> Zákazník (student) je povinen se při výuce chovat v souladu s dobrými mravy a nenarušovat průběh lekce. V případě opakovaného nebo hrubého porušování pravidel výuky (např. nevhodné či vulgární chování vůči lektorovi nebo ostatním účastníkům) je poskytovatel oprávněn studenta z lekce nebo celého kurzu vyloučit bez nároku na vrácení zaplacené ceny.
           </p>
         </section>
 
-        {/* 8. Odstoupení od smlouvy */}
+        {/* 9. Odstoupení od smlouvy */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900">8. Odstoupení od smlouvy (Informace pro spotřebitele)</h2>
+          <h2 className="text-xl font-bold text-gray-900">9. Odstoupení od smlouvy (Informace pro spotřebitele)</h2>
           <p>
-            <strong>8.1. Lhůta 14 dnů:</strong> Jako spotřebitel máte právo odstoupit od smlouvy do 14 dnů od jejího uzavření.
+            <strong>9.1. Lhůta 14 dnů:</strong> Jako spotřebitel máte právo odstoupit od smlouvy do 14 dnů od jejího uzavření.
           </p>
           <p>
-            <strong>8.2. Souhlas s dřívějším plněním:</strong> Pokud zákazník požádá o zahájení výuky před uplynutím této lhůty a služba je v této době plně poskytnuta (např. jednorázový kurz), právo na odstoupení zaniká. Pokud byla služba poskytnuta jen zčásti, hradí zákazník poměrnou část ceny za již proběhlé lekce.
+            <strong>9.2. Souhlas s dřívějším plněním:</strong> Pokud zákazník požádá o zahájení výuky před uplynutím této lhůty a služba je v této době plně poskytnuta (např. jednorázový kurz), právo na odstoupení zaniká. Pokud byla služba poskytnuta jen zčásti, hradí zákazník poměrnou část ceny za již proběhlé lekce.
           </p>
         </section>
 
-        {/* 9. Reklamace a mimosoudní řešení sporů */}
+        {/* 10. Reklamace a mimosoudní řešení sporů */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
           <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Scale size={20} className="text-amber-600" />
-            <span>9. Reklamace a mimosoudní řešení sporů</span>
+            <span>10. Reklamace a mimosoudní řešení sporů</span>
           </h2>
           <p>
-            <strong>9.1.</strong> Reklamace (např. neuskutečnění lekce vinou lektora) uplatní zákazník na e-mail: <a href="mailto:info@pro-edu.eu" className="text-amber-700 font-bold hover:underline">info@pro-edu.eu</a>.
+            <strong>10.1.</strong> Reklamace (např. neuskutečnění lekce vinou lektora) uplatní zákazník na e-mail: <a href="mailto:info@pro-edu.eu" className="text-amber-700 font-bold hover:underline">info@pro-edu.eu</a>.
           </p>
           <p>
-            <strong>9.2.</strong> V případě sporu má spotřebitel právo na mimosoudní řešení u České obchodní inspekce (<a href="https://www.coi.cz" target="_blank" rel="noopener noreferrer" className="text-amber-700 font-bold hover:underline">www.coi.cz</a>).
-          </p>
-        </section>
-
-        {/* 10. Ochrana osobních údajů */}
-        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900">10. Ochrana osobních údajů</h2>
-          <p>
-            <strong>10.1.</strong> Ochrana osobních údajů probíhá v souladu s nařízením GDPR. Podrobné informace jsou uvedeny v samostatném dokumentu <Link to="/gdpr" className="text-amber-700 font-bold hover:underline">Zpracování osobních dat (GDPR)</Link> na webu poskytovatele.
+            <strong>10.2.</strong> V případě sporu má spotřebitel právo na mimosoudní řešení u České obchodní inspekce (<a href="https://www.coi.cz" target="_blank" rel="noopener noreferrer" className="text-amber-700 font-bold hover:underline">www.coi.cz</a>).
           </p>
         </section>
 
-        {/* 11. Závěrečná ustanovení */}
+        {/* 11. Ochrana osobních údajů */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900">11. Závěrečná ustanovení</h2>
+          <h2 className="text-xl font-bold text-gray-900">11. Ochrana osobních údajů</h2>
           <p>
-            <strong>11.1.</strong> Tyto OP jsou platné a účinné od 13. srpna 2026.
+            <strong>11.1.</strong> Ochrana osobních údajů probíhá v souladu s nařízením GDPR. Podrobné informace jsou uvedeny v samostatném dokumentu <Link to="/gdpr" className="text-amber-700 font-bold hover:underline">Zpracování osobních dat (GDPR)</Link> na webu poskytovatele.
+          </p>
+        </section>
+
+        {/* 12. Závěrečná ustanovení */}
+        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
+          <h2 className="text-xl font-bold text-gray-900">12. Závěrečná ustanovení</h2>
+          <p>
+            <strong>12.1.</strong> Tyto OP jsou platné a účinné od 13. srpna 2026.
           </p>
           <p>
-            <strong>11.2.</strong> Poskytovatel si vyhrazuje právo na změnu OP. Pro zákazníka je rozhodné znění účinné v okamžiku uzavření smlouvy.
+            <strong>12.2.</strong> Poskytovatel si vyhrazuje právo na změnu OP. Pro zákazníka je rozhodné znění účinné v okamžiku uzavření smlouvy.
           </p>
           <div className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-gray-500 gap-2">
             <span>V Praze dne 13. 8. 2026 | ProEdu, s.r.o.</span>

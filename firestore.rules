@@ -81,7 +81,8 @@ service cloud.firestore {
              (!('billingDetails' in data) || data.billingDetails == null || data.billingDetails is map) &&
              (!('emailVerified' in data) || data.emailVerified == null || data.emailVerified is bool) &&
              (!('initRecurringTransId' in data) || data.initRecurringTransId == null || (data.initRecurringTransId is string && data.initRecurringTransId.size() <= 128)) &&
-             (!('premiumSince' in data) || data.premiumSince == null || (data.premiumSince is string && data.premiumSince.size() <= 64));
+             (!('premiumSince' in data) || data.premiumSince == null || (data.premiumSince is string && data.premiumSince.size() <= 64)) &&
+             (!('subscriptionExpiredAt' in data) || data.subscriptionExpiredAt == null || (data.subscriptionExpiredAt is string && data.subscriptionExpiredAt.size() <= 64));
     }
 
     function isValidTest(data) {
@@ -110,6 +111,7 @@ service cloud.firestore {
              (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
              (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 600000)) &&
              (!('svgContent' in data) || data.svgContent == null || (data.svgContent is string && data.svgContent.size() <= 500000)) &&
+             (!('caseSensitive' in data) || data.caseSensitive == null || data.caseSensitive is bool) &&
              data.createdBy is string && data.createdBy.size() <= 128;
     }
 

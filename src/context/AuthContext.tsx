@@ -34,6 +34,7 @@ import {
   trackRewardedVideoComplete 
 } from '../services/analyticsService';
 import { toast } from 'sonner';
+import { checkSubscriptionExpiry } from '../services/orderService';
 
 interface AuthContextType {
   user: User | null;
@@ -43,6 +44,8 @@ interface AuthContextType {
   isTeacher: boolean;
   isPremium: boolean;
   isCourseUser: boolean;
+  enrolledCourseIds: string[];
+  hasCourseAccess: (courseId: string | undefined) => boolean;
   jokers: number;
   streak: number;
   maxJokersCap: number;
@@ -75,6 +78,8 @@ const AuthContext = createContext<AuthContextType>({
   isTeacher: false,
   isPremium: false,
   isCourseUser: false,
+  enrolledCourseIds: [],
+  hasCourseAccess: () => false,
   jokers: BASE_JOKER_CAP,
   streak: 0,
   maxJokersCap: BASE_JOKER_CAP,
@@ -247,6 +252,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updateDoc(docRef, { lastViewedActivityAt: nowTimestamp }).catch(console.warn);
         }
 
+        // Kontrola, zda předplatné zrušené ke konci období již nevypršelo
+        if (
+          freshProfile.role === 'premium' &&
+          freshProfile.subscriptionStatus === 'cancelled_at_period_end' &&
+          freshProfile.subscriptionPeriodEnd
+        ) {
+          const endMs = new Date(freshProfile.subscriptionPeriodEnd).getTime();
+          if (!isNaN(endMs) && Date.now() > endMs) {
+            console.log('[AuthContext] Placené období předplatného vypršelo. Přepínám účet na Free.');
+            freshProfile.role = 'free';
+            freshProfile.subscriptionStatus = 'inactive';
+            const nowIso = new Date().toISOString();
+            updateDoc(docRef, {
+              role: 'free',
+              subscriptionStatus: 'inactive',
+              subscriptionExpiredAt: nowIso
+            }).catch(console.warn);
+            checkSubscriptionExpiry().catch(console.warn);
+          }
+        }
+
         const override = getDevRoleOverride();
         if (override) {
           freshProfile.role = override;
@@ -390,12 +416,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Synchronizace uživatelských vlastností a role do Google Analytics
   useEffect(() => {
     if (isAuthReady) {
+      const isExpired = Boolean(
+        profile?.role === 'premium' &&
+        profile?.subscriptionStatus === 'cancelled_at_period_end' &&
+        profile?.subscriptionPeriodEnd &&
+        !isNaN(new Date(profile.subscriptionPeriodEnd).getTime()) &&
+        Date.now() > new Date(profile.subscriptionPeriodEnd).getTime()
+      );
       setAnalyticsUser(user ? user.uid : null, {
-        role: profile?.role || 'guest',
-        isPremium: profile?.role === 'premium' || profile?.role === 'course' || profile?.role === 'teacher',
+        role: isExpired ? 'free' : (profile?.role || 'guest'),
+        isPremium: !isExpired && (profile?.role === 'premium' || profile?.role === 'course' || profile?.role === 'teacher'),
       });
     }
-  }, [user?.uid, profile?.role, isAuthReady]);
+  }, [user?.uid, profile?.role, profile?.subscriptionStatus, profile?.subscriptionPeriodEnd, isAuthReady]);
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
@@ -406,42 +439,65 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await signInWithEmailAndPassword(auth, email, pass);
   };
 
-  const initRegistration = async (email: string, pass: string, name: string, confirmPassword?: string) => {
-    const res = await fetch('/api/auth/register-init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password: pass, confirmPassword, name })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Nepodařilo se zahájit registraci.');
+  const parseSafeJsonResponse = async (res: Response, defaultError: string) => {
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
     }
-    return data;
+    try {
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || defaultError);
+      }
+      return data;
+    } catch (err: any) {
+      if (err.message && !err.message.includes('JSON')) {
+        throw err;
+      }
+      throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
+    }
+  };
+
+  const initRegistration = async (email: string, pass: string, name: string, confirmPassword?: string) => {
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/register-init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password: pass, confirmPassword, name })
+      });
+    } catch {
+      throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
+    }
+    return await parseSafeJsonResponse(res, 'Nepodařilo se zahájit registraci.');
   };
 
   const resendRegistrationOtp = async (email: string) => {
-    const res = await fetch('/api/auth/register-resend', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Nepodařilo se znovu odeslat kód.');
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/register-resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email })
+      });
+    } catch {
+      throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
     }
-    return data;
+    return await parseSafeJsonResponse(res, 'Nepodařilo se znovu odeslat kód.');
   };
 
   const confirmRegistration = async (email: string, code: string) => {
-    const res = await fetch('/api/auth/register-confirm', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, code })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Nepodařilo se ověřit kód.');
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/register-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, code })
+      });
+    } catch {
+      throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
     }
+    const data = await parseSafeJsonResponse(res, 'Nepodařilo se ověřit kód.');
     if (data.customToken) {
       await signInWithCustomToken(auth, data.customToken);
     } else if (data.tempPassword) {
@@ -476,13 +532,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (typeof window !== 'undefined') {
         localStorage.setItem('proedu_dev_role_override', role);
       }
-      // V dev režimu synchronizujeme změnu role do Firestore přes serverový backend, aby prošla pravidla v databázi
-      if (isDevModeActive && user?.uid) {
+      // V dev režimu synchronizujeme změnu role do Firestore přes serverový backend, pokud se role skutečně liší nebo měníme kurzy
+      if (isDevModeActive && user?.uid && (profile?.role !== role || safeData.enrolledCourseIds !== undefined)) {
         try {
           await fetch('/api/dev/set-role', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uid: user.uid, role })
+            body: JSON.stringify({ 
+              uid: user.uid, 
+              role,
+              enrolledCourseIds: safeData.enrolledCourseIds,
+              courseId: safeData.courseId
+            })
           });
         } catch (apiErr) {
           console.warn('Backend dev set-role sync failed:', apiErr);
@@ -538,9 +599,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfileAndCache(prev => prev ? { ...prev, ...safeData } : null);
   };
 
+  const isCancelledExpired = Boolean(
+    profile?.role === 'premium' &&
+    profile?.subscriptionStatus === 'cancelled_at_period_end' &&
+    profile?.subscriptionPeriodEnd &&
+    !isNaN(new Date(profile.subscriptionPeriodEnd).getTime()) &&
+    Date.now() > new Date(profile.subscriptionPeriodEnd).getTime()
+  );
+
   const isTeacher = profile?.role === 'teacher';
-  const isPremium = profile?.role === 'premium' || profile?.role === 'course' || profile?.role === 'teacher';
-  const isCourseUser = profile?.role === 'course' || profile?.role === 'teacher';
+
+  const enrolledCourseIds = React.useMemo(() => {
+    const list: string[] = [];
+    if (profile?.enrolledCourseIds && Array.isArray(profile.enrolledCourseIds)) {
+      list.push(...profile.enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0));
+    }
+    if (profile?.courseId && !list.includes(profile.courseId)) {
+      list.push(profile.courseId);
+    }
+    return list;
+  }, [profile?.enrolledCourseIds, profile?.courseId]);
+
+  // Student má kurzové výhody, pokud je učitel, má roli 'course' nebo má přiřazen alespoň jeden kurz
+  const isCourseUser = isTeacher || enrolledCourseIds.length > 0 || profile?.role === 'course';
+  // Všichni kurzoví studenti mají automaticky v ceně kurzu i všechny Premium funkce (neomezené procvičování atd.)
+  const isPremium = !isCancelledExpired && (profile?.role === 'premium' || isCourseUser || isTeacher);
+
+  // Granulární přístup k jednotlivým kurzům:
+  // Do konkrétního kurzu se dostane pouze student, který ho má v enrolledCourseIds (nebo lektor/učitel)
+  const hasCourseAccess = React.useCallback((courseId: string | undefined): boolean => {
+    if (!courseId) return false;
+    if (isTeacher) return true;
+    return enrolledCourseIds.includes(courseId);
+  }, [isTeacher, enrolledCourseIds]);
   const jokers = profile?.jokers ?? BASE_JOKER_CAP;
   const streak = profile?.streak ?? 0;
   const maxJokersCap = calculateMaxJokersCap(streak);
@@ -693,6 +784,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isTeacher,
     isPremium,
     isCourseUser,
+    enrolledCourseIds,
+    hasCourseAccess,
     jokers,
     streak,
     maxJokersCap,
@@ -723,6 +816,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     isTeacher, 
     isPremium, 
     isCourseUser, 
+    enrolledCourseIds,
+    hasCourseAccess,
     jokers, 
     streak,
     maxJokersCap,

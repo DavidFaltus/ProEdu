@@ -940,6 +940,7 @@ function mapDocToQuestion(d: any): PracticeQuestion {
     subtopicId: data.subtopicId || '',
     imageUrl: data.imageUrl || '',
     svgContent: data.svgContent || '',
+    caseSensitive: Boolean(data.caseSensitive),
     createdAt: data.createdAt,
     createdBy: data.createdBy
   } as PracticeQuestion;
@@ -1023,7 +1024,8 @@ export async function saveQuestion(questionData: Partial<PracticeQuestion>, user
     topic: questionData.topicId || '', // backwards compatibility
     subtopicId: questionData.subtopicId || '',
     imageUrl: questionData.imageUrl ? String(questionData.imageUrl).trim() : null,
-    svgContent: questionData.svgContent ? String(questionData.svgContent).trim() : null
+    svgContent: questionData.svgContent ? String(questionData.svgContent).trim() : null,
+    caseSensitive: Boolean(questionData.caseSensitive)
   };
 
   if (questionData.id) {

@@ -245,3 +245,32 @@ export async function updateStudentAccess(
     courseId: primaryCourseId
   };
 }
+
+/**
+ * Trvale smaže studenta učitelem/adminem (z Firebase Auth i z Firestore)
+ */
+export async function deleteStudentByAdmin(studentId: string): Promise<{ success: boolean; message: string }> {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) {
+    throw new Error('Pro smazání studenta musíte být přihlášen jako učitel.');
+  }
+
+  const res = await fetch(`/api/students/${studentId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  const contentType = res.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error('Server pro správu studentů je dočasně nedostupný.');
+  }
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Nepodařilo se smazat studenta.');
+  }
+
+  return data;
+}

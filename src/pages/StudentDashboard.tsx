@@ -5,7 +5,8 @@ import { cn, safeToDate } from '../lib/utils';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
-import { ArrowRight, Play, RotateCcw, Lock, Calendar } from 'lucide-react';
+import { ArrowRight, Play, RotateCcw, Lock, Calendar, Sparkles, CheckCircle2 } from 'lucide-react';
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import CustomIcon, { 
@@ -16,7 +17,7 @@ import CustomIcon, {
   CorrectCyanIcon, 
   CustomIconName 
 } from '../components/common/CustomIcon';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import QuickCalendar from '../components/QuickCalendar';
 import { getStudentInquiries, getAllInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
 import StudentInquiriesSection from '../components/StudentInquiriesSection';
@@ -86,6 +87,27 @@ const TEACHER_HEADLINE_TEMPLATES = [
 export default function StudentDashboard() {
   const { user, profile, isPremium, openAuthModal } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [isPaymentSuccessModalOpen, setIsPaymentSuccessModalOpen] = useState(false);
+
+  // Zpracování návratu z platební brány Comgate
+  useEffect(() => {
+    const paymentStatus = searchParams.get('payment');
+    if (paymentStatus === 'success') {
+      setIsPaymentSuccessModalOpen(true);
+      toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('payment');
+      nextParams.delete('orderId');
+      setSearchParams(nextParams, { replace: true });
+    } else if (paymentStatus === 'cancelled') {
+      toast.info('Platba na bráně byla zrušena. Můžete ji zopakovat kdykoliv.');
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('payment');
+      nextParams.delete('orderId');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
@@ -707,6 +729,43 @@ export default function StudentDashboard() {
         initialSubtopics={scheduleInitialSubtopics}
         existingTodos={todos}
       />
+
+      {/* Oslavný dialog po úspěšném návratu z platební brány Comgate */}
+      <Dialog open={isPaymentSuccessModalOpen} onOpenChange={setIsPaymentSuccessModalOpen}>
+        <DialogContent className="max-w-md p-6 sm:p-8 rounded-3xl text-center space-y-5 bg-white border border-amber-200 shadow-2xl">
+          <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner border border-emerald-100">
+            <Sparkles size={32} className="text-amber-500 animate-pulse" />
+          </div>
+
+          <div className="space-y-2">
+            <DialogTitle className="text-2xl font-black text-gray-800 tracking-tight">
+              Vítej v ProEdu Premium! 🎉
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-600 leading-relaxed">
+              Tvá platba proběhla úspěšně a předplatné bylo aktivováno. Nyní máš neomezený přístup ke všem CERMAT testům, podrobným vysvětlením a chytrému plánování.
+            </DialogDescription>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-amber-200/80 text-left text-xs space-y-1.5 text-gray-700">
+            <div className="flex items-center gap-2 font-bold text-gray-900">
+              <CheckCircle2 size={15} className="text-emerald-600" />
+              <span>Aktivní balíček: ProEdu Premium (99 Kč / měsíc)</span>
+            </div>
+            <p className="text-[11px] text-gray-500 pl-6">
+              Potvrzení o platbě a daňový doklad jsme odeslali na tvůj e-mail. Předplatné můžeš kdykoliv spravovat v Nastavení profilu.
+            </p>
+          </div>
+
+          <DialogFooter className="pt-2 sm:justify-center">
+            <Button
+              onClick={() => setIsPaymentSuccessModalOpen(false)}
+              className="w-full sm:w-auto h-12 px-8 rounded-2xl bg-[#1E1B18] text-white font-bold hover:bg-black cursor-pointer shadow-md"
+            >
+              Pustit se do procvičování 🚀
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

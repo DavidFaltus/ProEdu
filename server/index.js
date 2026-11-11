@@ -4,6 +4,8 @@ import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { onRequest } from 'firebase-functions/v2/https';
+import { user as authUserTrigger } from 'firebase-functions/v1/auth';
 import { GoogleGenAI, Type } from '@google/genai';
 import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -48,9 +50,13 @@ const __dirname = path.dirname(__filename);
 let configBucket = 'gen-lang-client-0972842509.firebasestorage.app';
 let firebaseApiKey = '';
 try {
-  const configPath = path.join(__dirname, '..', 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const configCandidatePaths = [
+    path.join(__dirname, 'firebase-applet-config.json'),
+    path.join(__dirname, '..', 'firebase-applet-config.json')
+  ];
+  const foundConfigPath = configCandidatePaths.find(p => fs.existsSync(p));
+  if (foundConfigPath) {
+    const config = JSON.parse(fs.readFileSync(foundConfigPath, 'utf8'));
     if (config.storageBucket) {
       configBucket = config.storageBucket;
       console.log('--- FOUND BUCKET IN CONFIG:', configBucket);
@@ -63,26 +69,53 @@ try {
   console.error('Failed to read firebase-applet-config.json:', err);
 }
 
+let hasAdminCredentials = false;
+
 function initializeFirebaseAdmin() {
   if (getApps().length > 0) {
+    hasAdminCredentials = Boolean(
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      process.env.K_SERVICE ||
+      process.env.FUNCTION_NAME
+    );
     return;
   }
 
   const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
 
   if (serviceAccountJson) {
-    initializeApp({
-      credential: cert(JSON.parse(serviceAccountJson)),
-      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
-    });
-    return;
+    try {
+      initializeApp({
+        credential: cert(JSON.parse(serviceAccountJson)),
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
+      });
+      hasAdminCredentials = true;
+      return;
+    } catch (err) {
+      console.warn('Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:', err);
+    }
+  }
+
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS || process.env.K_SERVICE || process.env.FUNCTION_NAME) {
+    try {
+      initializeApp({
+        credential: applicationDefault(),
+        projectId: 'gen-lang-client-0972842509',
+        storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
+      });
+      hasAdminCredentials = true;
+      return;
+    } catch (err) {
+      console.warn('Failed to initialize Admin with applicationDefault:', err);
+    }
   }
 
   initializeApp({
-    credential: applicationDefault(),
     projectId: 'gen-lang-client-0972842509',
     storageBucket: process.env.FIREBASE_STORAGE_BUCKET || configBucket
   });
+  hasAdminCredentials = false;
 }
 
 initializeFirebaseAdmin();
@@ -113,8 +146,12 @@ async function getDevDb() {
       addDoc, 
       serverTimestamp 
     } = await import('firebase/firestore');
-    const configPath = path.join(__dirname, '..', 'firebase-applet-config.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const configCandidatePaths = [
+      path.join(__dirname, 'firebase-applet-config.json'),
+      path.join(__dirname, '..', 'firebase-applet-config.json')
+    ];
+    const foundConfigPath = configCandidatePaths.find(p => fs.existsSync(p));
+    const config = foundConfigPath ? JSON.parse(fs.readFileSync(foundConfigPath, 'utf8')) : {};
     const clientApp = initClientApp(config, 'dev-role-manager-app');
     const clientAuth = getClientAuth(clientApp);
     const clientDb = initClientFirestore(clientApp, {}, config.firestoreDatabaseId);
@@ -141,12 +178,24 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+  // Normalizace URL pro Cloud Functions (pokud požadavek přijde bez prefixu /api)
+  app.use((req, res, next) => {
+    if (!req.url.startsWith('/api') && req.url !== '/health') {
+      req.url = '/api' + req.url;
+    }
+    next();
+  });
+
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
   const uploadsMaterialsDir = path.join(uploadsDir, 'materials');
-  if (!fs.existsSync(uploadsMaterialsDir)) {
-    fs.mkdirSync(uploadsMaterialsDir, { recursive: true });
+  try {
+    if (!fs.existsSync(uploadsMaterialsDir)) {
+      fs.mkdirSync(uploadsMaterialsDir, { recursive: true });
+    }
+    app.use('/uploads', express.static(uploadsDir));
+  } catch (fsErr) {
+    console.warn('[Uploads Directory Notice]: Read-only filesystem or skipped uploads dir creation.');
   }
-  app.use('/uploads', express.static(uploadsDir));
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
@@ -181,7 +230,17 @@ async function resolveUserRole(uid, email, tokenRole) {
       new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
     ]);
     if (uSnap.exists && uSnap.data()?.role) {
-      role = uSnap.data().role;
+      const uData = uSnap.data();
+      if (uData.role === 'premium' && uData.subscriptionStatus === 'cancelled_at_period_end' && uData.subscriptionPeriodEnd) {
+        const endMs = new Date(uData.subscriptionPeriodEnd).getTime();
+        if (!isNaN(endMs) && Date.now() > endMs) {
+          role = 'free';
+          db.collection('users').doc(uid).set({ role: 'free', subscriptionStatus: 'inactive', subscriptionExpiredAt: new Date().toISOString() }, { merge: true }).catch(console.warn);
+          userRoleCache.set(uid, { role: 'free', expiresAt: Date.now() + 60000 });
+          return 'free';
+        }
+      }
+      role = uData.role;
       userRoleCache.set(uid, { role, expiresAt: Date.now() + 60000 });
       return role;
     }
@@ -196,6 +255,14 @@ async function resolveUserRole(uid, email, tokenRole) {
     if (cSnap.exists()) {
       const data = cSnap.data();
       if (data?.role) {
+        if (data.role === 'premium' && data.subscriptionStatus === 'cancelled_at_period_end' && data.subscriptionPeriodEnd) {
+          const endMs = new Date(data.subscriptionPeriodEnd).getTime();
+          if (!isNaN(endMs) && Date.now() > endMs) {
+            role = 'free';
+            userRoleCache.set(uid, { role: 'free', expiresAt: Date.now() + 60000 });
+            return 'free';
+          }
+        }
         role = data.role;
         userRoleCache.set(uid, { role, expiresAt: Date.now() + 60000 });
         return role;
@@ -309,25 +376,35 @@ function decryptPassword(payload) {
 }
 
 async function checkAuthUserExists(email, password = null) {
-  // 1. Zkusíme Admin SDK
+  const normalizedEmail = String(email || '').toLowerCase().trim();
+  if (!normalizedEmail) return false;
+
+  // 1. Kontrola ve Firebase Authentication přes Admin SDK
   try {
-    const existing = await auth.getUserByEmail(email);
+    const existing = await auth.getUserByEmail(normalizedEmail);
     if (existing) return true;
   } catch (err) {
-    if (err.code === 'auth/user-not-found' || err.message?.includes('no user record')) {
-      return false;
+    if (err.code !== 'auth/user-not-found' && !err.message?.includes('no user record')) {
+      console.warn('[checkAuthUserExists Auth notice]:', err?.message || err);
     }
   }
 
   // 2. Kontrola v databázi Firestore (kolekce users)
   try {
-    const { clientDb, collection: cCol, query: cQuery, where: cWhere, getDocs: cGetDocs } = await getDevDb();
-    const snap = await cGetDocs(cQuery(cCol(clientDb, 'users'), cWhere('email', '==', email.toLowerCase().trim())));
+    const snap = await db.collection('users').where('email', '==', normalizedEmail).limit(1).get();
     if (!snap.empty) {
       return true;
     }
-  } catch (e) {
-    console.warn('[checkAuthUserExists firestore check warning]:', e?.message || e);
+  } catch (dbErr) {
+    try {
+      const { clientDb, collection: cCol, query: cQuery, where: cWhere, getDocs: cGetDocs } = await getDevDb();
+      const snap = await cGetDocs(cQuery(cCol(clientDb, 'users'), cWhere('email', '==', normalizedEmail)));
+      if (!snap.empty) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('[checkAuthUserExists firestore check warning]:', e?.message || e);
+    }
   }
 
   // 3. Fallback přes Firebase Identity Toolkit REST API
@@ -337,7 +414,7 @@ async function checkAuthUserExists(email, password = null) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email,
+          email: normalizedEmail,
           password,
           returnSecureToken: false
         })
@@ -743,6 +820,8 @@ app.post('/api/auth/register-confirm', async (req, res) => {
 });
 
 // Dev endpoint pro synchronizaci role a stavu předplatného do Firestore databáze
+const recentSetRoleCalls = new Map(); // uid -> { key, timestamp }
+
 app.post('/api/dev/set-role', async (req, res) => {
   try {
     const {
@@ -752,7 +831,9 @@ app.post('/api/dev/set-role', async (req, res) => {
       subscriptionPeriodEnd,
       subscriptionCancelledAt,
       subscriptionCancelReason,
-      premiumSince
+      premiumSince,
+      enrolledCourseIds,
+      courseId
     } = req.body || {};
     if (!uid || !role) {
       return res.status(400).json({ error: 'Chybí uid nebo role.' });
@@ -763,30 +844,46 @@ app.post('/api/dev/set-role', async (req, res) => {
       return res.status(400).json({ error: 'Neplatná role.' });
     }
 
+    // Server-side debouncing: Zabrání zdvojeným hláškám a opakovaným zápisům,
+    // pokud z frontendu přijdou identické požadavky v rozmezí 2 sekund.
+    const dedupKey = `${uid}:${role}:${subscriptionStatus || ''}:${subscriptionPeriodEnd || ''}:${Array.isArray(enrolledCourseIds) ? enrolledCourseIds.join(',') : ''}`;
+    const lastCall = recentSetRoleCalls.get(uid);
+    if (lastCall && lastCall.key === dedupKey && (Date.now() - lastCall.timestamp) < 2000) {
+      return res.json({ success: true, uid, role, deduplicated: true });
+    }
+    recentSetRoleCalls.set(uid, { key: dedupKey, timestamp: Date.now() });
+
     const updatePayload = { role };
     if (subscriptionStatus !== undefined) updatePayload.subscriptionStatus = subscriptionStatus;
     if (subscriptionPeriodEnd !== undefined) updatePayload.subscriptionPeriodEnd = subscriptionPeriodEnd;
     if (subscriptionCancelledAt !== undefined) updatePayload.subscriptionCancelledAt = subscriptionCancelledAt;
     if (subscriptionCancelReason !== undefined) updatePayload.subscriptionCancelReason = subscriptionCancelReason;
     if (premiumSince !== undefined) updatePayload.premiumSince = premiumSince;
+    if (Array.isArray(enrolledCourseIds)) updatePayload.enrolledCourseIds = enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0);
+    if (courseId !== undefined) updatePayload.courseId = courseId;
 
-    try {
-      const userRef = db.collection('users').doc(uid);
-      await Promise.race([
-        userRef.set(updatePayload, { merge: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2000))
-      ]);
-      userRoleCache.delete(uid);
-      console.log(`[DEV API via Admin] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
-      return res.json({ success: true, uid, ...updatePayload });
-    } catch (adminErr) {
-      console.log('[DEV API Admin fallback to dev teacher client]:', adminErr?.message || adminErr);
-      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
-      await cSetDoc(cDoc(clientDb, 'users', uid), updatePayload, { merge: true });
-      userRoleCache.delete(uid);
-      console.log(`[DEV API via Teacher Client] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
-      return res.json({ success: true, uid, ...updatePayload });
+    // Pokud máme Admin SDK credentials (produkce / Cloud), zkusíme Admin SDK
+    if (hasAdminCredentials) {
+      try {
+        const userRef = db.collection('users').doc(uid);
+        await Promise.race([
+          userRef.set(updatePayload, { merge: true }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2000))
+        ]);
+        userRoleCache.delete(uid);
+        console.log(`[DEV API via Admin] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
+        return res.json({ success: true, uid, ...updatePayload });
+      } catch (adminErr) {
+        // Fallback plynule přejde k dev klientovi
+      }
     }
+
+    // Dev fallback přes klientský Firestore (učitel má práva měnit users)
+    const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+    await cSetDoc(cDoc(clientDb, 'users', uid), updatePayload, { merge: true });
+    userRoleCache.delete(uid);
+    console.log(`[DEV API via Teacher Client] Role pro uživatele ${uid} úspěšně nastavena na: ${role}`);
+    return res.json({ success: true, uid, ...updatePayload });
   } catch (err) {
     console.error('[DEV API] Chyba při nastavování role:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se nastavit roli.' });
@@ -1362,41 +1459,51 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
     if (paymentMethod === 'comgate') {
       if (COMGATE_MERCHANT_ID && COMGATE_SECRET) {
         try {
-          const comgatePayload = new URLSearchParams({
-            merchant: COMGATE_MERCHANT_ID,
-            price: String(Math.round(amount * 100)),
-            curr: 'CZK',
-            label: 'ProEdu Premium (měsíční)',
-            refId: orderId,
-            email: invoiceEmail.trim(),
-            method: 'ALL',
-            prepareOnly: 'true',
-            initRecurring: 'true',
-            secret: COMGATE_SECRET,
-            test: COMGATE_TEST_MODE ? 'true' : 'false',
-            country: 'CZ',
-            lang: 'cs'
-          });
+          const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+          const isTest = COMGATE_TEST_MODE === 'true' || COMGATE_TEST_MODE === true;
 
-          const comgateRes = await fetch('https://webpay.comgate.cz/v1.0/create', {
+          // Oficiální Comgate REST API v2.0 (POST /v2.0/payment.json dle apidoc.comgate.cz)
+          const comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: comgatePayload.toString()
+            headers: {
+              'Authorization': authHeader,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              merchant: COMGATE_MERCHANT_ID,
+              test: isTest,
+              price: Math.round(amount * 100),
+              curr: 'CZK',
+              label: 'ProEdu Premium',
+              refId: orderId,
+              email: invoiceEmail.trim(),
+              fullName: (clientName || '').trim() || undefined,
+              method: 'ALL',
+              prepareOnly: true,
+              initRecurring: true, // Iniciační platba měsíčního předplatného
+              country: 'CZ',
+              lang: 'cs',
+              url_paid: `https://www.proeducator.eu/student/dashboard?payment=success&orderId=${orderId}`,
+              url_cancelled: `https://www.proeducator.eu/student/dashboard?payment=cancelled&orderId=${orderId}`,
+              url_pending: `https://www.proeducator.eu/student/dashboard?payment=pending&orderId=${orderId}`
+            })
           });
 
-          const responseText = await comgateRes.text();
-          const parsed = new URLSearchParams(responseText);
-          const code = parsed.get('code');
-          const transId = parsed.get('transId');
-          const redirectUrl = parsed.get('redirect');
+          const comgateJson = await comgateRes.json().catch(() => null);
 
-          if (code === '0' && redirectUrl) {
+          if (comgateJson && comgateJson.code === 0 && comgateJson.redirect) {
+            const transId = comgateJson.transId;
+            const redirectUrl = comgateJson.redirect;
             orderData.comgateTransId = transId;
             orderData.comgateRedirectUrl = redirectUrl;
             comgateData = { transId, redirectUrl, isLive: true };
           } else {
-            console.warn('[Comgate Create Warning]:', responseText);
-            comgateData = { isSandbox: true, testMode: true, message: parsed.get('message') || 'Brána v testovacím režimu.' };
+            console.warn('[Comgate REST v2.0 Warning]:', comgateJson);
+            comgateData = { 
+              isSandbox: true, 
+              testMode: true, 
+              message: comgateJson?.message || 'Brána v testovacím režimu.' 
+            };
           }
         } catch (comgateErr) {
           console.error('[Comgate API Error]:', comgateErr);
@@ -1606,23 +1713,86 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
     const { reason, immediate } = req.body || {};
     const safeReason = typeof reason === 'string' ? reason.slice(0, 500) : 'Bez udání důvodu';
     const nowIso = new Date().toISOString();
-    const defaultPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    // TODO (Comgate): Při nasazení ostrých klíčů COMGATE_MERCHANT_ID a COMGATE_SECRET
-    // zde zavolat zrušení rekurentní platby v Comgate bráně.
+    // 1. Zjistíme stávající data uživatele, abychom nepřepsali existující datum konce zaplaceného období
+    let userDoc = null;
+    try {
+      const snap = await Promise.race([
+        db.collection('users').doc(userId).get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      if (snap.exists) userDoc = snap.data();
+    } catch (e) {
+      try {
+        const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+        const snap = await cGetDoc(cDoc(clientDb, 'users', userId));
+        if (snap.exists()) userDoc = snap.data();
+      } catch (devErr) {
+        console.warn('[Cancel Subscription Get User Warning]:', devErr);
+      }
+    }
 
+    // Určení data konce zaplaceného období:
+    // Pokud uživatel již má platné budoucí datum konce období, zachováme ho přesně tak, jak bylo zaplaceno.
+    let periodEnd = userDoc?.subscriptionPeriodEnd;
+    const hasValidFuturePeriodEnd = periodEnd && !isNaN(new Date(periodEnd).getTime()) && new Date(periodEnd).getTime() > Date.now();
+
+    if (!hasValidFuturePeriodEnd) {
+      // Pokud v profilu datum chybí, pokusíme se ho dopočítat z poslední zaplacené objednávky uživatele (+30 dní od platby)
+      try {
+        let lastPaidOrder = null;
+        try {
+          const orderSnap = await Promise.race([
+            db.collection('orders')
+              .where('userId', '==', userId)
+              .where('status', '==', 'paid')
+              .get(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+          ]);
+          const orders = orderSnap.docs.map(d => d.data());
+          orders.sort((a, b) => new Date(b.paidAt || b.createdAt || 0).getTime() - new Date(a.paidAt || a.createdAt || 0).getTime());
+          if (orders.length > 0) lastPaidOrder = orders[0];
+        } catch {
+          // Dev fallback
+          const { clientDb, collection: cCollection, getDocs: cGetDocs, query: cQuery, where: cWhere } = await getDevDb();
+          const qSnap = await cGetDocs(cQuery(cCollection(clientDb, 'orders'), cWhere('userId', '==', userId), cWhere('status', '==', 'paid')));
+          const orders = qSnap.docs.map(d => d.data());
+          orders.sort((a, b) => new Date(b.paidAt || b.createdAt || 0).getTime() - new Date(a.paidAt || a.createdAt || 0).getTime());
+          if (orders.length > 0) lastPaidOrder = orders[0];
+        }
+
+        if (lastPaidOrder && (lastPaidOrder.paidAt || lastPaidOrder.createdAt)) {
+          const paidTime = new Date(lastPaidOrder.paidAt || lastPaidOrder.createdAt).getTime();
+          const candidateEnd = new Date(paidTime + 30 * 24 * 60 * 60 * 1000);
+          if (candidateEnd.getTime() > Date.now()) {
+            periodEnd = candidateEnd.toISOString();
+          }
+        }
+      } catch (orderErr) {
+        console.warn('[Cancel Subscription Order Lookup Warning]:', orderErr);
+      }
+    }
+
+    // Bezpečný fallback, pokud žádné platné datum nebylo nalezeno: 30 dní od aktuálního okamžiku
+    if (!periodEnd || isNaN(new Date(periodEnd).getTime()) || new Date(periodEnd).getTime() <= Date.now()) {
+      periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    // U standardního zrušení zůstává role: 'premium' až do vypršení termínu periodEnd!
     const updateData = immediate
       ? {
           role: 'free',
           subscriptionStatus: 'inactive',
           subscriptionCancelledAt: nowIso,
-          subscriptionCancelReason: safeReason
+          subscriptionCancelReason: safeReason,
+          subscriptionExpiredAt: nowIso
         }
       : {
+          role: 'premium',
           subscriptionStatus: 'cancelled_at_period_end',
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason,
-          subscriptionPeriodEnd: defaultPeriodEnd
+          subscriptionPeriodEnd: periodEnd
         };
 
     try {
@@ -1638,6 +1808,12 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
 
     userRoleCache.delete(userId);
 
+    const formattedEndDate = new Date(periodEnd).toLocaleDateString('cs-CZ', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+
     return res.json({
       success: true,
       immediate: Boolean(immediate),
@@ -1645,7 +1821,7 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
       subscriptionPeriodEnd: updateData.subscriptionPeriodEnd || null,
       message: immediate
         ? 'Předplatné bylo okamžitě ukončeno a účet byl přepnut na tarif Free.'
-        : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.'
+        : `Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou plně aktivní až do konce zaplaceného období (${formattedEndDate}). Další platba z karty již neproběhne.`
     });
   } catch (err) {
     console.error('Chyba při rušení předplatného:', err);
@@ -1657,11 +1833,35 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
 app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
   try {
     const userId = req.user.uid;
-    const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+
+    let userDoc = null;
+    try {
+      const snap = await Promise.race([
+        db.collection('users').doc(userId).get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      if (snap.exists) userDoc = snap.data();
+    } catch (e) {
+      try {
+        const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+        const snap = await cGetDoc(cDoc(clientDb, 'users', userId));
+        if (snap.exists()) userDoc = snap.data();
+      } catch (devErr) {
+        console.warn('[Reactivate Subscription Get User Warning]:', devErr);
+      }
+    }
+
+    // Pokud uživatel má dosud platný konec období, zachováme ho, jinak nastavíme 30 dní
+    let periodEnd = userDoc?.subscriptionPeriodEnd;
+    if (!periodEnd || isNaN(new Date(periodEnd).getTime()) || new Date(periodEnd).getTime() <= Date.now()) {
+      periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
     const updateData = {
       role: 'premium',
       subscriptionStatus: 'active',
       subscriptionCancelledAt: null,
+      subscriptionCancelReason: null,
       subscriptionPeriodEnd: periodEnd
     };
 
@@ -1682,11 +1882,81 @@ app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
       success: true,
       subscriptionStatus: 'active',
       subscriptionPeriodEnd: periodEnd,
-      message: 'Předplatné ProEducator Premium bylo úspěšně obnoveno!'
+      message: 'Předplatné ProEducator Premium bylo úspěšně obnoveno! Automatické prodlužování je aktivní.'
     });
   } catch (err) {
     console.error('Chyba při obnovení předplatného:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se obnovit předplatné.' });
+  }
+});
+
+// 5d. Kontrola a automatické vypršení předplatného po uplynutí zaplaceného období
+app.post('/api/subscription/check-expiry', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    let userDoc = null;
+    let userRef = db.collection('users').doc(userId);
+    try {
+      const snap = await Promise.race([
+        userRef.get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      if (snap.exists) userDoc = snap.data();
+    } catch (e) {
+      try {
+        const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+        const snap = await cGetDoc(cDoc(clientDb, 'users', userId));
+        if (snap.exists()) userDoc = snap.data();
+      } catch (devErr) {
+        console.warn('[check-expiry get user warning]:', devErr);
+      }
+    }
+
+    if (!userDoc) {
+      return res.status(404).json({ error: 'Uživatelský profil nenalezen.' });
+    }
+
+    const isCancelledAtPeriodEnd = userDoc.subscriptionStatus === 'cancelled_at_period_end';
+    const periodEndMs = userDoc.subscriptionPeriodEnd ? new Date(userDoc.subscriptionPeriodEnd).getTime() : 0;
+    const isExpired = isCancelledAtPeriodEnd && periodEndMs > 0 && Date.now() > periodEndMs;
+
+    if (isExpired && userDoc.role === 'premium') {
+      const nowIso = new Date().toISOString();
+      const updateData = {
+        role: 'free',
+        subscriptionStatus: 'inactive',
+        subscriptionExpiredAt: nowIso
+      };
+
+      try {
+        await Promise.race([
+          userRef.set(updateData, { merge: true }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+        ]);
+      } catch (adminErr) {
+        const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+        await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+      }
+
+      userRoleCache.delete(userId);
+
+      return res.json({
+        expired: true,
+        role: 'free',
+        subscriptionStatus: 'inactive',
+        message: 'Placené období předplatného skončilo. Účet byl přepnut na bezplatný tarif Free.'
+      });
+    }
+
+    return res.json({
+      expired: false,
+      role: userDoc.role || 'free',
+      subscriptionStatus: userDoc.subscriptionStatus || 'inactive',
+      subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null
+    });
+  } catch (err) {
+    console.error('Chyba při kontrole vypršení předplatného:', err);
+    return res.status(500).json({ error: err.message || 'Chyba při kontrole vypršení předplatného.' });
   }
 });
 
@@ -1729,43 +1999,41 @@ app.post('/api/payments/comgate/charge-recurring', requireAuth, async (req, res)
     let comgateTransId = null;
 
     if (COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE) {
-      const recurringPayload = new URLSearchParams({
-        merchant: COMGATE_MERCHANT_ID,
-        secret: COMGATE_SECRET,
-        initTransId: userDoc.initRecurringTransId,
-        price: String(Math.round(amount * 100)),
-        curr: 'CZK',
-        label: 'ProEdu Premium (obnovení předplatného)',
-        refId: newOrderId,
-        test: 'false'
-      });
-
-      const response = await fetch('https://webpay.comgate.cz/v1.0/recurring', {
+      const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+      const response = await fetch('https://payments.comgate.cz/v2.0/recurring', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: recurringPayload.toString()
+        headers: {
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          merchant: COMGATE_MERCHANT_ID,
+          initTransId: userDoc.initRecurringTransId,
+          price: Math.round(amount * 100),
+          curr: 'CZK',
+          label: 'ProEdu Premium (obnovení předplatného)',
+          refId: newOrderId,
+          test: false
+        })
       });
 
-      const responseText = await response.text();
-      const parsed = new URLSearchParams(responseText);
-      const code = parsed.get('code');
-      comgateTransId = parsed.get('transId');
-
-      if (code === '0') {
+      const json = await response.json().catch(() => null);
+      if (json && json.code === 0) {
         recurringSuccess = true;
+        comgateTransId = json.transId;
       } else {
-        console.warn('[Comgate Recurring Charge Failed]:', responseText);
+        console.warn('[Comgate Recurring Charge Failed]:', json);
         if (userDoc.email) {
           sendRecurringChargeFailedEmail({
             to: userDoc.email,
             name: userDoc.name,
             amount,
-            reason: parsed.get('message') || 'Platba byla zamítnuta vydavatelem karty'
+            reason: json?.message || 'Platba byla zamítnuta vydavatelem karty'
           }).catch(console.warn);
         }
         return res.status(400).json({
           error: 'Opakovaná platba byla platební bránou zamítnuta.',
-          details: parsed.get('message') || responseText
+          details: json?.message || JSON.stringify(json)
         });
       }
     } else {
@@ -1957,18 +2225,24 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
       updateData.premiumSince = new Date().toISOString();
     }
 
-    // 1. Zkusíme Admin SDK
-    try {
-      const userRef = db.collection('users').doc(studentId);
-      await Promise.race([
-        userRef.set(updateData, { merge: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
-      ]);
-      console.log(`[Update Student Access] Úspěšně aktualizován přístup pro ${studentId} (role: ${safeRole}, kurzy: ${safeCourseIds.length})`);
-    } catch (adminErr) {
-      console.log('[Update Student Access fallback to dev client]:', adminErr?.message || adminErr);
+    // 1. Zkusíme Admin SDK pokud máme credentials, jinak použijeme dev klienta
+    if (hasAdminCredentials) {
+      try {
+        const userRef = db.collection('users').doc(studentId);
+        await Promise.race([
+          userRef.set(updateData, { merge: true }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
+        ]);
+        console.log(`[Update Student Access] Úspěšně aktualizován přístup pro ${studentId} (role: ${safeRole}, kurzy: ${safeCourseIds.length})`);
+      } catch (adminErr) {
+        const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+        await cSetDoc(cDoc(clientDb, 'users', studentId), updateData, { merge: true });
+        console.log(`[Update Student Access via Teacher Client] Úspěšně aktualizován přístup pro ${studentId} (role: ${safeRole}, kurzy: ${safeCourseIds.length})`);
+      }
+    } else {
       const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
       await cSetDoc(cDoc(clientDb, 'users', studentId), updateData, { merge: true });
+      console.log(`[Update Student Access via Teacher Client] Úspěšně aktualizován přístup pro ${studentId} (role: ${safeRole}, kurzy: ${safeCourseIds.length})`);
     }
 
     // Zneplatníme cache role v paměti serveru
@@ -1984,6 +2258,70 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
   } catch (err) {
     console.error('Chyba při aktualizaci přístupu studenta:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se aktualizovat přístup studenta.' });
+  }
+});
+
+// 8. Trvalé smazání studenta učitelem/adminem (z Auth i z Firestore)
+app.delete('/api/students/:studentId', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    if (!studentId) {
+      return res.status(400).json({ error: 'Chybí ID studenta.' });
+    }
+
+    // Bezpečnostní pojistka: nelze smazat sám sebe
+    if (studentId === req.user?.uid) {
+      return res.status(400).json({ error: 'Nemůžete smazat svůj vlastní účet.' });
+    }
+
+    // Načteme uživatele z Firestore pro kontrolu role
+    let targetEmail = '';
+    try {
+      const uDoc = await db.collection('users').doc(studentId).get();
+      if (uDoc.exists) {
+        const uData = uDoc.data();
+        targetEmail = uData.email || '';
+        if (uData.role === 'teacher' || targetEmail.toLowerCase() === 'ucitel@ucitel.cz') {
+          return res.status(403).json({ error: 'Účet učitele/administrátora nelze smazat.' });
+        }
+      }
+    } catch (e) {}
+
+    // 1. Smazání z Firebase Authentication
+    try {
+      await auth.deleteUser(studentId);
+    } catch (authErr) {
+      if (authErr.code !== 'auth/user-not-found') {
+        console.warn('[Admin delete student Auth warning]:', authErr?.message || authErr);
+      }
+    }
+
+    // 2. Smazání z Firestore users/{studentId}
+    try {
+      await db.collection('users').doc(studentId).delete();
+    } catch (dbErr) {
+      console.warn('[Admin delete student DB warning]:', dbErr?.message || dbErr);
+    }
+
+    // 3. Vyčištění souvisejících dat (přiřazené testy a úkoly)
+    try {
+      const batch = db.batch();
+      const assignedSnap = await db.collection('assignedTests').where('studentId', '==', studentId).get();
+      assignedSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+      const todosSnap = await db.collection('todos').where('userId', '==', studentId).get();
+      todosSnap.docs.forEach(doc => batch.delete(doc.ref));
+
+      await batch.commit();
+    } catch (cleanErr) {
+      console.warn('[Admin delete student related data cleanup warning]:', cleanErr?.message || cleanErr);
+    }
+
+    console.log(`[Admin Delete Student]: Uživatel ${studentId} (${targetEmail || 'N/A'}) úspěšně smazán.`);
+    return res.json({ success: true, message: 'Student byl úspěšně trvale smazán.' });
+  } catch (err) {
+    console.error('Chyba při mazání studenta učitelem:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se smazat studenta.' });
   }
 });
 
@@ -2045,46 +2383,99 @@ app.all('/api/*', (req, res) => {
   res.status(404).json({ error: `API endpoint ${req.method} ${req.path} nenalezen.` });
 });
 
-// Vite middleware / static serving
-if (process.env.NODE_ENV !== 'production') {
-  const { createServer: createViteServer } = await import('vite');
-  const vite = await createViteServer({
-    server: { 
-      middlewareMode: true, 
-      hmr: true,
-      watch: {
-        ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
+// Vite middleware / static serving / Cloud Function export
+const isDirectExecution = Boolean(process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));
+
+if (isDirectExecution) {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { 
+        middlewareMode: true, 
+        hmr: true,
+        watch: {
+          ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
+        },
       },
-    },
-    appType: 'spa',
-  });
-  app.use(vite.middlewares);
-} else {
-  const distPath = path.join(process.cwd(), 'dist');
-  if (fs.existsSync(distPath)) {
-    app.use('/proeducator', express.static(distPath));
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      appType: 'spa',
     });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    if (fs.existsSync(distPath)) {
+      app.use('/proeducator', express.static(distPath));
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => {
+        res.sendFile(path.join(distPath, 'index.html'));
+      });
+    }
   }
+
+  // Globální ošetření chyb (např. přerušené requesty z klienta při reloadu)
+  app.use((err, req, res, next) => {
+    if (err.type === 'request.aborted' || err.code === 'ECONNABORTED' || err.message?.includes('aborted')) {
+      console.warn('[Server]: Request byl přerušen klientem:', req.path);
+      return;
+    }
+    console.error('[Server Error Handler]:', err);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ error: err.message || 'Interní chyba serveru.' });
+    }
+  });
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`ProEdu Server running on http://0.0.0.0:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+  });
+} else {
+  // Globální ošetření chyb v Cloud Function
+  app.use((err, req, res, next) => {
+    if (err.type === 'request.aborted' || err.code === 'ECONNABORTED' || err.message?.includes('aborted')) {
+      return;
+    }
+    console.error('[Cloud Function Error Handler]:', err);
+    if (!res.headersSent) {
+      res.status(err.status || 500).json({ error: err.message || 'Interní chyba serveru.' });
+    }
+  });
+}
 }
 
-// Globální ošetření chyb (např. přerušené requesty z klienta při reloadu)
-app.use((err, req, res, next) => {
-  if (err.type === 'request.aborted' || err.code === 'ECONNABORTED' || err.message?.includes('aborted')) {
-    console.warn('[Server]: Request byl přerušen klientem:', req.path);
-    return;
-  }
-  console.error('[Server Error Handler]:', err);
-  if (!res.headersSent) {
-    res.status(err.status || 500).json({ error: err.message || 'Interní chyba serveru.' });
-  }
-});
+await startServer();
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`ProEdu Server running on http://0.0.0.0:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
-});
-}
+export const api = onRequest(
+  {
+    region: 'europe-west1',
+    cors: true,
+    maxInstances: 10,
+    timeoutSeconds: 60,
+  },
+  app
+);
 
-startServer();
+// Automatický trigger při smazání uživatele ve Firebase Authentication (propíše se do Firestore)
+export const onAuthUserDeleted = authUserTrigger().onDelete(
+  async (userRecord) => {
+    if (!userRecord || !userRecord.uid) return;
+    const uid = userRecord.uid;
+    console.log(`[onUserDeleted Trigger]: Uživatel smazán z Firebase Auth: ${userRecord.email || 'N/A'} (UID: ${uid})`);
+
+    try {
+      // 1. Smazání profilu z Firestore users/{uid}
+      await db.collection('users').doc(uid).delete();
+      console.log(`[onUserDeleted Trigger]: Smazán profil users/${uid}`);
+
+      // 2. Smazání přiřazených testů a úkolů
+      const batch = db.batch();
+      const assignedSnap = await db.collection('assignedTests').where('studentId', '==', uid).get();
+      assignedSnap.docs.forEach((doc) => batch.delete(doc.ref));
+
+      const todosSnap = await db.collection('todos').where('userId', '==', uid).get();
+      todosSnap.docs.forEach((doc) => batch.delete(doc.ref));
+
+      await batch.commit();
+      console.log(`[onUserDeleted Trigger]: Úspěšně vyčištěna navázaná data pro studenta UID: ${uid}`);
+    } catch (err) {
+      console.error(`[onUserDeleted Trigger Error] pro studenta UID: ${uid}:`, err);
+    }
+  }
+);

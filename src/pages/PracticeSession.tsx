@@ -148,7 +148,7 @@ export default function PracticeSession() {
   const isAnswerSubmitted = !!currentAnswer?.isSubmitted;
   const isHintOpen = !!showHintMap[currentIndex];
 
-  // U Češtiny rozlišujeme velká a malá písmena (case-sensitive)
+  // U Češtiny nerozlišujeme velká a malá písmena plošně; case-sensitivity je řízeno nastavením konkrétní otázky (caseSensitive)
   const isCzechSubject = Boolean(
     subtopic?.subjectId === 'Čeština' ||
     currentQuestion?.subjectId === 'Čeština' ||
@@ -167,7 +167,7 @@ export default function PracticeSession() {
     }
 
     const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
-      caseSensitive: isCzechSubject
+      caseSensitive: Boolean(currentQuestion.caseSensitive)
     });
     const usedHint = !!showHintMap[currentIndex];
 
@@ -218,7 +218,7 @@ export default function PracticeSession() {
     }
 
     const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer, {
-      caseSensitive: isCzechSubject
+      caseSensitive: Boolean(currentQuestion.caseSensitive)
     });
     const usedHint = !!showHintMap[currentIndex];
 
@@ -891,7 +891,7 @@ export default function PracticeSession() {
                   ? currentAnswer.selectedOptionIndex === idx
                   : currentAnswer?.userAnswer === option;
               const isCorrectOption = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
-                caseSensitive: isCzechSubject
+                caseSensitive: Boolean(currentQuestion.caseSensitive)
               }).isCorrect;
               
               let optionStyle = 'bg-[#FAF7F0] border-gray-200/80 hover:bg-gray-100 hover:border-gray-300 text-gray-800';
@@ -965,7 +965,7 @@ export default function PracticeSession() {
                 }}
                 placeholder={
                   isCzechSubject
-                    ? 'Napiš svou odpověď sem (pozor na velká a malá písmena)...'
+                    ? 'Napiš svou odpověď sem...'
                     : 'Napiš svou odpověď sem (např. 1/2 nebo 3)...'
                 }
                 className="h-16 rounded-2xl border-gray-300 bg-gray-50 text-base sm:text-lg font-bold px-6 focus:bg-white flex-1"
