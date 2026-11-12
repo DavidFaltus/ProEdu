@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Check, Copy, CreditCard, QrCode, ShieldCheck, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
+import { X, ArrowLeft, Check, Copy, CreditCard, ShieldCheck, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 import {
   CapIcon,
   StarPinkIcon,
@@ -94,7 +94,7 @@ export default function UnifiedPaywallModal({
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
   const [zip, setZip] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState<'qr_bank_transfer' | 'comgate'>('qr_bank_transfer');
+  const [paymentMethod] = useState<'comgate'>('comgate');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [newsletterConsent, setNewsletterConsent] = useState(false);
   const [recurringConsent, setRecurringConsent] = useState(true);
@@ -118,7 +118,6 @@ export default function UnifiedPaywallModal({
       if (profile?.billingDetails?.street) setStreet(profile.billingDetails.street);
       if (profile?.billingDetails?.city) setCity(profile.billingDetails.city);
       if (profile?.billingDetails?.zip) setZip(profile.billingDetails.zip);
-      if (profile?.preferredPaymentMethod) setPaymentMethod(profile.preferredPaymentMethod);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialOrder]);
@@ -164,7 +163,6 @@ export default function UnifiedPaywallModal({
     if (profile?.billingDetails?.street) setStreet(profile.billingDetails.street);
     if (profile?.billingDetails?.city) setCity(profile.billingDetails.city);
     if (profile?.billingDetails?.zip) setZip(profile.billingDetails.zip);
-    if (profile?.preferredPaymentMethod) setPaymentMethod(profile.preferredPaymentMethod);
     setCurrentStep('order_form');
   };
 
@@ -375,7 +373,7 @@ export default function UnifiedPaywallModal({
               <DialogDescription className="text-xs sm:text-sm text-gray-500 font-medium leading-relaxed max-w-xl mx-auto">
                 {description || (isCourse 
                   ? 'Připrav se na přijímací zkoušky s certifikovaným lektorem v živých online lekcích a s kompletními materiály.' 
-                  : 'Kompletní příprava na přijímací zkoušky na střední školy – všechny materiály, teorie krok za krokem a neomezené procvičování bez reklam.')}
+                  : 'Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků.')}
               </DialogDescription>
             </div>
 
@@ -425,52 +423,96 @@ export default function UnifiedPaywallModal({
             ) : (
               <div className="grid md:grid-cols-12 gap-4 items-stretch">
                 {/* Levá karta s cenou a flexibilitou */}
-                <div className="md:col-span-5 p-4 sm:p-5 rounded-3xl border-2 border-[#B9D8FC] bg-gradient-to-br from-blue-50/80 via-sky-50/50 to-blue-50/80 flex flex-col justify-between text-center relative shadow-sm">
+                <div className="md:col-span-4 p-4 sm:p-5 rounded-3xl border-2 border-[#B9D8FC] bg-gradient-to-br from-blue-50/80 via-sky-50/50 to-blue-50/80 flex flex-col justify-between text-center relative shadow-sm">
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-[#0F2942] bg-[#B9D8FC] px-3 py-0.5 rounded-full inline-block mb-1.5 border border-blue-200/70">
-                      Aktuální akční nabídka
+                    <span className="text-[10px] font-black uppercase tracking-wider text-[#0F2942] bg-[#B9D8FC] px-3 py-1 rounded-full inline-block mb-2 border border-blue-200/70 shadow-2xs">
+                      Nabídka pro první podporovatele (-50 %)
                     </span>
-                    <div className="text-4xl sm:text-5xl font-display font-black text-[#0F2942]">
-                      99 Kč
+                    <div className="flex items-center justify-center gap-2 mt-1">
+                      <span className="text-base sm:text-lg font-bold text-gray-400 line-through">
+                        199 Kč
+                      </span>
+                      <span className="text-3xl sm:text-4xl lg:text-5xl font-display font-black text-[#0F2942]">
+                        99 Kč
+                      </span>
                     </div>
                     <div className="text-xs font-bold text-gray-600 mt-0.5">/ měsíc</div>
                   </div>
 
-                  <div className="mt-3 pt-3 border-t border-blue-200/60 text-xs text-gray-600 font-medium space-y-0.5">
-                    <p className="font-bold text-gray-800">Flexibilní předplatné</p>
-                    <p className="text-[11px] leading-tight">Platba QR kódem nebo kartou online. Kdykoliv můžete jednoduše zrušit.</p>
+                  <div className="mt-3 pt-3 border-t border-blue-200/60 text-xs text-gray-600 font-medium space-y-1">
+                    <p className="font-black text-gray-800 text-[12px]">Poloviční cena zafixovaná napořád</p>
+                    <p className="text-[11px] leading-relaxed text-gray-600">
+                      Cena 99 Kč/měsíc ti zůstane i po přidání všech funkcí a zdražení na 199 Kč. Bez vázanosti, zrušit lze kdykoliv jedním klikem.
+                    </p>
                   </div>
                 </div>
 
                 {/* Pravý checklist výhod v 2-sloupcovém gridu */}
-                <div className="md:col-span-7 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/70 flex flex-col justify-center space-y-2.5">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-gray-600">
-                    Co všechno s balíčkem Premium získáš:
+                <div className="md:col-span-8 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/70 flex flex-col justify-center space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-gray-600 flex items-center gap-1.5">
+                    <StarYellowIcon size={16} />
+                    <span>Konkrétní výhody balíčku Premium:</span>
                   </h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs sm:text-sm">
-                    <div className="flex items-center gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/70 border border-gray-100">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs sm:text-sm">
+                    {/* 1. Neomezené procvičování */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                         <Check size={13} strokeWidth={3} />
                       </div>
-                      <span>Všechny materiály a listy bez omezení</span>
+                      <div className="leading-snug">
+                        <span>Neomezené procvičování bez žolíků a čekání</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/70 border border-gray-100">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+
+                    {/* 2. Podrobné statistiky */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                         <Check size={13} strokeWidth={3} />
                       </div>
-                      <span>Kompletní teorie a vzorové postupy</span>
+                      <div className="leading-snug">
+                        <span>Podrobné statistiky a chytrá doporučení k procvičování</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/70 border border-gray-100">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+
+                    {/* 3. Plánovač v kalendáři */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                         <Check size={13} strokeWidth={3} />
                       </div>
-                      <span>Neomezené procvičování bez čekání</span>
+                      <div className="leading-snug">
+                        <span>Chytrý studijní plánovač v kalendáři</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/70 border border-gray-100">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
+
+                    {/* 4. Grafické listy */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                         <Check size={13} strokeWidth={3} />
                       </div>
-                      <span>100% bez reklam a bez video pauz</span>
+                      <div className="leading-snug">
+                        <span>Přehledné grafické listy</span>
+                      </div>
+                    </div>
+
+                    {/* 5. Bez reklam */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
+                        <Check size={13} strokeWidth={3} />
+                      </div>
+                      <div className="leading-snug">
+                        <span>100% bez reklam a přerušování</span>
+                      </div>
+                    </div>
+
+                    {/* 6. Všechny budoucí funkce */}
+                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 shadow-2xs">
+                      <div className="w-5 h-5 rounded-full bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
+                        <Check size={13} strokeWidth={3} />
+                      </div>
+                      <div className="leading-snug">
+                        <span className="text-[#1E1B18]">Všechny budoucí funkce v ceně 99 Kč</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -519,27 +561,30 @@ export default function UnifiedPaywallModal({
                 <div className="space-y-3">
                   <div className="p-3.5 rounded-2xl bg-white border border-gray-200 shadow-2xs">
                     <span className="text-[10px] font-black uppercase tracking-wider text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded">
-                      Objednávka
+                      Objednávka pro podporovatele
                     </span>
                     <div className="flex items-baseline justify-between mt-1.5">
                       <h4 className="font-bold text-sm sm:text-base text-gray-900">ProEdu Premium</h4>
-                      <span className="text-xl sm:text-2xl font-black text-[#B80053]">99 Kč</span>
+                      <div className="text-right">
+                        <span className="text-xs text-gray-400 line-through mr-1 font-bold">199 Kč</span>
+                        <span className="text-xl sm:text-2xl font-black text-[#B80053]">99 Kč</span>
+                      </div>
                     </div>
-                    <p className="text-xs text-gray-500 mt-0.5">Měsíční předplatné, bez vázanosti</p>
+                    <p className="text-xs text-gray-500 mt-0.5">Zvýhodněná cena 99 Kč/měsíc zafixovaná napořád</p>
                   </div>
 
                   <div className="space-y-2 text-xs sm:text-sm text-gray-700">
                     <div className="flex items-center gap-2.5 font-semibold">
                       <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Okamžitý přístup k materiálům a testům</span>
+                      <span>Neomezené procvičování bez žolíků a reklam</span>
                     </div>
                     <div className="flex items-center gap-2.5 font-semibold">
                       <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Faktura automaticky do e-mailu</span>
+                      <span>Statistiky, doporučení i studijní plánovač</span>
                     </div>
                     <div className="flex items-center gap-2.5 font-semibold">
                       <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Podpora lektorů ProEdu</span>
+                      <span>Všechny budoucí funkce i ostré testy v ceně</span>
                     </div>
                   </div>
                 </div>
@@ -612,61 +657,39 @@ export default function UnifiedPaywallModal({
                   </div>
                 </div>
 
-                {/* 3. Řádek: Volba způsobu platby */}
-                <div className="space-y-1">
-                  <Label className="text-xs sm:text-sm font-bold text-gray-700">Způsob platby *</Label>
-                  <div className="grid grid-cols-2 gap-3">
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('qr_bank_transfer')}
-                      className={`h-10 px-3.5 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-center gap-2 ${
-                        paymentMethod === 'qr_bank_transfer'
-                          ? 'border-[#2B44B8] bg-blue-50 text-[#0F2942] font-black shadow-xs'
-                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 font-bold'
-                      }`}
-                    >
-                      <QrCode size={17} />
-                      <span className="text-xs sm:text-sm">QR kód</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setPaymentMethod('comgate')}
-                      className={`h-10 px-3.5 rounded-xl border-2 cursor-pointer transition-all flex items-center justify-center gap-2 ${
-                        paymentMethod === 'comgate'
-                          ? 'border-[#2B44B8] bg-blue-50 text-[#0F2942] font-black shadow-xs'
-                          : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300 font-bold'
-                      }`}
-                    >
-                      <CreditCard size={17} />
-                      <span className="text-xs sm:text-sm">Kartou online</span>
-                    </button>
+                {/* 3. Řádek: Způsob platby - Platební brána */}
+                <div className="space-y-2">
+                  <Label className="text-xs sm:text-sm font-bold text-gray-700">Způsob platby</Label>
+                  <div className="h-11 px-4 rounded-xl border-2 border-[#2B44B8] bg-blue-50/70 text-[#0F2942] flex items-center justify-between shadow-2xs">
+                    <div className="flex items-center gap-2.5">
+                      <CreditCard size={18} className="text-[#2B44B8]" />
+                      <span className="text-xs sm:text-sm font-bold">Platební brána (karta online, Apple Pay, Google Pay)</span>
+                    </div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/90 border border-emerald-200 px-2 py-0.5 rounded">
+                      Okamžitá aktivace
+                    </span>
                   </div>
 
-                  {paymentMethod === 'comgate' && (
-                    <div className="pt-2 flex items-center justify-between flex-wrap gap-2 text-[11px] text-gray-500 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200">
-                      <span className="font-semibold text-gray-700">Podporované metody:</span>
-                      <PaymentLogosBar />
-                    </div>
-                  )}
+                  <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] text-gray-500 bg-gray-50/80 p-2.5 rounded-xl border border-gray-200">
+                    <span className="font-semibold text-gray-700">Podporované metody platební brány:</span>
+                    <PaymentLogosBar />
+                  </div>
                 </div>
 
                 {/* 4. Řádek: Souhlasy */}
                 <div className="space-y-1.5 pt-0.5 text-xs sm:text-sm">
-                  {paymentMethod === 'comgate' && (
-                    <label className="flex items-start gap-2 cursor-pointer select-none bg-blue-50/80 p-2.5 rounded-xl border border-blue-200">
-                      <input
-                        type="checkbox"
-                        required
-                        checked={recurringConsent}
-                        onChange={e => setRecurringConsent(e.target.checked)}
-                        className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                      />
-                      <span className="text-[#0F2942] text-xs leading-normal">
-                        <strong>Souhlasím se zřízením opakované platby (předplatného)</strong> ve výši 99 Kč měsíčně. Platba se automaticky obnovuje každých 30 dní. Předplatné lze kdykoliv bezplatně ukončit v nastavení účtu. *
-                      </span>
-                    </label>
-                  )}
+                  <label className="flex items-start gap-2 cursor-pointer select-none bg-blue-50/80 p-2.5 rounded-xl border border-blue-200">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={recurringConsent}
+                      onChange={e => setRecurringConsent(e.target.checked)}
+                      className="mt-0.5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span className="text-[#0F2942] text-xs leading-normal">
+                      <strong>Souhlasím se zřízením opakované platby (předplatného)</strong> ve výši 99 Kč měsíčně. Platba se automaticky obnovuje každých 30 dní. Předplatné lze kdykoliv bezplatně ukončit v nastavení účtu. *
+                    </span>
+                  </label>
 
                   <label className="flex items-start gap-2 cursor-pointer select-none">
                     <input
@@ -716,246 +739,46 @@ export default function UnifiedPaywallModal({
         )}
 
         {/* ========================================================== */}
-        {/* KROK 3: VÝSLEDEK OBJEDNÁVKY / DUMMY OKNA                   */}
+        {/* KROK 3: VÝSLEDEK OBJEDNÁVKY / PLATEBNÍ BRÁNA COMGATE       */}
         {/* ========================================================== */}
         {currentStep === 'order_result' && orderResult && (
           <div className="flex-1 flex flex-col justify-between space-y-4 relative z-10 pt-2 sm:pt-0">
-            {/* Přepínač způsobu úhrady přímo v platebním okně */}
-            <div className="flex items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() =>
-                  setOrderResult(prev =>
-                    prev ? { ...prev, order: { ...prev.order, paymentMethod: 'qr_bank_transfer' } } : prev
-                  )
-                }
-                className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  orderResult.order.paymentMethod === 'qr_bank_transfer'
-                    ? 'border-[#2B44B8] bg-blue-50 text-[#0F2942] shadow-2xs'
-                    : 'border-gray-200 bg-[#FAF6EE] text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <QrCode size={14} />
-                <span>QR kód</span>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setOrderResult(prev =>
-                    prev ? { ...prev, order: { ...prev.order, paymentMethod: 'comgate' } } : prev
-                  )
-                }
-                className={`px-3.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                  orderResult.order.paymentMethod === 'comgate'
-                    ? 'border-[#2B44B8] bg-blue-50 text-[#0F2942] shadow-2xs'
-                    : 'border-gray-200 bg-[#FAF6EE] text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                <CreditCard size={14} />
-                <span>Kartou online</span>
-              </button>
-            </div>
+            <div className="max-w-2xl mx-auto w-full space-y-4 py-1 text-center my-auto">
+              <DialogTitle className="text-3xl sm:text-4xl font-playful text-[#1E1B18] tracking-tight">
+                Platba kartou online
+              </DialogTitle>
 
-            {orderResult.order.paymentMethod === 'qr_bank_transfer' ? (
-              /* Zobrazení Dummy QR kódu a platebních instrukcí */
-              <div className="space-y-4 my-auto">
-                <div className="text-center space-y-1">
-                  <div className="inline-flex items-center gap-1.5 px-3.5 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-xs sm:text-sm font-bold">
-                    <CheckCircle2 size={16} />
-                    <span>Objednávka č. {orderResult.order.variableSymbol} vytvořena (Dummy QR režim)</span>
+              {/* Comgate platební brána karta */}
+              <div className="bg-[#FAF6EE] p-5 rounded-3xl border border-gray-200 text-left space-y-3.5 shadow-xs">
+                <div className="flex items-center justify-between pb-2.5 border-b border-gray-200">
+                  <div className="flex items-center gap-2">
+                    <Lock size={14} className="text-emerald-600" />
+                    <span className="text-xs text-gray-700 font-bold uppercase tracking-wider">Platební brána Comgate</span>
                   </div>
-                  <DialogTitle className="text-3xl sm:text-4xl font-playful text-[#1E1B18] tracking-tight">
-                    Platba přes QR kód
-                  </DialogTitle>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-blue-100 text-blue-900">
+                    {orderResult.comgate?.isLive ? 'Zabezpečená platba' : 'Testovací režim'}
+                  </span>
                 </div>
 
-                <div className="grid md:grid-cols-12 gap-5 items-center">
-                  {/* Dummy QR Kód vlevo */}
-                  <div className="md:col-span-5 flex flex-col items-center justify-center p-5 bg-white rounded-3xl border-2 border-gray-200 shadow-sm relative">
-                    <div className="p-2.5 bg-white rounded-2xl border border-gray-100 shadow-2xs relative">
-                      {/* Vektorový Dummy QR kód s okamžitým vykreslením */}
-                      <svg
-                        viewBox="0 0 210 210"
-                        className="w-44 h-44 text-[#1E1B18]"
-                        fill="currentColor"
-                        role="img"
-                        aria-label="Dummy QR Platba 99 Kč"
-                      >
-                        {/* Levý horní rohový marker */}
-                        <path d="M10 10h60v60H10V10zm10 10v40h40V20H20zm10 10h20v20H30V30z" />
-                        {/* Pravý horní rohový marker */}
-                        <path d="M140 10h60v60h-60V10zm10 10v40h40V20h-40zm10 10h20v20h-20V30z" />
-                        {/* Levý dolní rohový marker */}
-                        <path d="M10 140h60v60H10v-60zm10 10v40h40v-40H20zm10 10h20v20H30v-20z" />
-                        {/* Vnitřní matice QR bodů */}
-                        <rect x="80" y="10" width="10" height="10" />
-                        <rect x="100" y="10" width="20" height="10" />
-                        <rect x="90" y="20" width="10" height="20" />
-                        <rect x="110" y="30" width="20" height="10" />
-                        <rect x="80" y="50" width="20" height="10" />
-                        <rect x="120" y="50" width="10" height="20" />
-                        <rect x="10" y="80" width="20" height="10" />
-                        <rect x="40" y="80" width="10" height="20" />
-                        <rect x="60" y="80" width="20" height="10" />
-                        <rect x="10" y="100" width="10" height="20" />
-                        <rect x="30" y="110" width="20" height="10" />
-                        <rect x="60" y="110" width="10" height="20" />
-                        <rect x="140" y="80" width="20" height="10" />
-                        <rect x="170" y="80" width="10" height="20" />
-                        <rect x="190" y="80" width="10" height="10" />
-                        <rect x="150" y="100" width="10" height="20" />
-                        <rect x="180" y="110" width="20" height="10" />
-                        <rect x="80" y="140" width="10" height="20" />
-                        <rect x="100" y="140" width="20" height="10" />
-                        <rect x="130" y="140" width="20" height="10" />
-                        <rect x="160" y="140" width="20" height="20" />
-                        <rect x="190" y="140" width="10" height="20" />
-                        <rect x="90" y="160" width="20" height="10" />
-                        <rect x="120" y="160" width="10" height="20" />
-                        <rect x="140" y="170" width="20" height="10" />
-                        <rect x="180" y="170" width="20" height="10" />
-                        <rect x="80" y="190" width="30" height="10" />
-                        <rect x="130" y="190" width="10" height="10" />
-                        <rect x="150" y="190" width="30" height="10" />
-                        <rect x="190" y="190" width="10" height="10" />
-                      </svg>
-                      {/* Středový štítek QR Platba */}
-                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className="bg-white px-2.5 py-1 rounded-lg border-2 border-[#1E1B18] shadow-xs text-[10px] font-black tracking-wider uppercase text-[#1E1B18]">
-                          QR PLATBA
-                        </div>
-                      </div>
-                    </div>
-                    <p className="text-xs text-gray-500 font-bold mt-2 uppercase tracking-wider text-center">
-                      Dummy QR kód • 99 Kč
-                    </p>
+                <div className="grid sm:grid-cols-3 gap-2.5">
+                  <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
+                    <div className="text-gray-500 text-[11px]">Objednávka</div>
+                    <div className="font-mono font-bold text-gray-800 mt-0.5 text-sm">VS: {orderResult.order.variableSymbol}</div>
                   </div>
-
-                  {/* Platební údaje a testovací tlačítko vpravo */}
-                  <div className="md:col-span-7 space-y-3">
-                    <div className="bg-[#FAF6EE] p-4 rounded-3xl border border-gray-200 text-left text-xs sm:text-sm space-y-2.5">
-                      <div className="grid sm:grid-cols-2 gap-2.5">
-                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-gray-100">
-                          <span className="text-gray-500 font-medium">Číslo účtu:</span>
-                          <div className="flex items-center gap-1 font-mono font-bold text-gray-900 text-xs sm:text-sm">
-                            <span>{orderResult.bankDetails?.accountNumber} / {orderResult.bankDetails?.bankCode}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(`${orderResult.bankDetails?.accountNumber}/${orderResult.bankDetails?.bankCode}`, 'Číslo účtu')}
-                              className="p-1 hover:bg-gray-200 rounded text-gray-500 cursor-pointer"
-                              title="Zkopírovat"
-                            >
-                              <Copy size={14} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-gray-100">
-                          <span className="text-gray-500 font-medium">Částka k úhradě:</span>
-                          <span className="font-black text-[#B80053] text-sm sm:text-base">99 Kč</span>
-                        </div>
-                      </div>
-
-                      <div className="grid sm:grid-cols-2 gap-2.5">
-                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-gray-100">
-                          <span className="text-gray-500 font-medium">Variabilní symbol:</span>
-                          <div className="flex items-center gap-1 font-mono font-bold text-gray-900 text-xs sm:text-sm">
-                            <span>{orderResult.bankDetails?.variableSymbol}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(orderResult.bankDetails?.variableSymbol || '', 'Variabilní symbol')}
-                              className="p-1 hover:bg-gray-200 rounded text-gray-500 cursor-pointer"
-                              title="Zkopírovat"
-                            >
-                              <Copy size={14} />
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-2.5 rounded-xl bg-white border border-gray-100">
-                          <span className="text-gray-500 font-medium">Zpráva:</span>
-                          <div className="flex items-center gap-1 font-mono font-semibold text-gray-800 text-xs truncate max-w-[170px]">
-                            <span className="truncate">{orderResult.bankDetails?.message}</span>
-                            <button
-                              type="button"
-                              onClick={() => handleCopy(orderResult.bankDetails?.message || '', 'Zpráva pro příjemce')}
-                              className="p-1 hover:bg-gray-200 rounded text-gray-500 shrink-0 cursor-pointer"
-                              title="Zkopírovat"
-                            >
-                              <Copy size={14} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs text-left flex items-start gap-2.5">
-                      <CheckCircle2 size={17} className="shrink-0 mt-0.5 text-emerald-600" />
-                      <span>
-                        <strong>Testovací režim:</strong> Kliknutím na zelené tlačítko níže nasimuluješ spárování QR platby a okamžité přepnutí účtu na <strong>ProEducator Premium</strong>.
-                      </span>
-                    </div>
-
-                    <div className="flex flex-col sm:flex-row gap-2.5">
-                      <Button
-                        type="button"
-                        onClick={handleSandboxSimulate}
-                        disabled={isSimulatingPayment}
-                        className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                      >
-                        <QrCode size={18} />
-                        <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Otestovat zaplacení QR kódem (Dummy)'}</span>
-                      </Button>
-
-                      <Button
-                        type="button"
-                        onClick={onClose}
-                        variant="outline"
-                        className="sm:w-32 h-12 bg-[#FAF6EE] hover:bg-gray-200 text-gray-800 font-bold rounded-xl border border-gray-300 text-xs sm:text-sm cursor-pointer"
-                      >
-                        Zavřít
-                      </Button>
+                  <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
+                    <div className="text-gray-500 text-[11px]">Částka k úhradě</div>
+                    <div className="font-black text-emerald-700 text-base mt-0.5">99,00 Kč</div>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
+                    <div className="text-gray-500 text-[11px]">E-mail klienta</div>
+                    <div className="font-bold text-gray-800 truncate mt-0.5 text-xs" title={orderResult.order.invoiceEmail}>
+                      {orderResult.order.invoiceEmail}
                     </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              /* Dummy platební brána Comgate */
-              <div className="max-w-2xl mx-auto w-full space-y-4 py-1 text-center my-auto">
-                <DialogTitle className="text-3xl sm:text-4xl font-playful text-[#1E1B18] tracking-tight">
-                  Platba kartou online
-                </DialogTitle>
 
-                {/* Dummy Comgate platební brána karta */}
-                <div className="bg-[#FAF6EE] p-5 rounded-3xl border border-gray-200 text-left space-y-3.5 shadow-xs">
-                  <div className="flex items-center justify-between pb-2.5 border-b border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <Lock size={14} className="text-emerald-600" />
-                      <span className="text-xs text-gray-700 font-bold uppercase tracking-wider">Testovací platební brána</span>
-                    </div>
-                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-blue-100 text-blue-900">
-                      Dummy režim
-                    </span>
-                  </div>
-
-                  <div className="grid sm:grid-cols-3 gap-2.5">
-                    <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
-                      <div className="text-gray-500 text-[11px]">Objednávka</div>
-                      <div className="font-mono font-bold text-gray-800 mt-0.5 text-sm">VS: {orderResult.order.variableSymbol}</div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
-                      <div className="text-gray-500 text-[11px]">Částka k úhradě</div>
-                      <div className="font-black text-emerald-700 text-base mt-0.5">99,00 Kč</div>
-                    </div>
-                    <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
-                      <div className="text-gray-500 text-[11px]">E-mail klienta</div>
-                      <div className="font-bold text-gray-800 truncate mt-0.5 text-xs" title={orderResult.order.invoiceEmail}>
-                        {orderResult.order.invoiceEmail}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Předvyplněná testovací karta v dummy bráně */}
+                {/* Předvyplněná testovací karta v dummy bráně (pouze v testovacím režimu) */}
+                {!orderResult.comgate?.isLive && (
                   <div className="bg-white p-4 rounded-2xl border-2 border-blue-200 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Testovací platební karta</span>
@@ -974,56 +797,56 @@ export default function UnifiedPaywallModal({
                       </div>
                     </div>
                   </div>
+                )}
 
-                  <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 text-blue-900 text-xs text-left flex items-start gap-2.5">
-                    <ShieldCheck size={18} className="shrink-0 mt-0.5 text-blue-600" />
-                    <span>
-                      <strong>Opakované předplatné Comgate:</strong> Iniciační platba ve výši 99 Kč autorizuje automatické prodlužování balíčku každých 30 dní. Po každém úspěšném stržení vám zašleme e-mailové potvrzení. Předplatné lze kdykoliv zrušit v nastavení účtu.
-                    </span>
-                  </div>
-
-                  <div className="text-xs text-gray-600 leading-relaxed">
-                    {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive
-                      ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
-                      : 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na dummy platební bráně a přepnutí účtu na ProEducator Premium.'}
-                  </div>
+                <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 text-blue-900 text-xs text-left flex items-start gap-2.5">
+                  <ShieldCheck size={18} className="shrink-0 mt-0.5 text-blue-600" />
+                  <span>
+                    <strong>Opakované předplatné Comgate:</strong> Iniciační platba ve výši 99 Kč autorizuje automatické prodlužování balíčku každých 30 dní. Po každém úspěšném stržení vám zašleme e-mailové potvrzení. Předplatné lze kdykoliv zrušit v nastavení účtu.
+                  </span>
                 </div>
 
-                {/* Tlačítka */}
-                <div className="flex flex-col sm:flex-row gap-3">
-                  {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive ? (
-                    <a
-                      href={orderResult.comgate.redirectUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                    >
-                      <CreditCard size={18} />
-                      <span>Přejít na bránu Comgate k autorizaci</span>
-                    </a>
-                  ) : (
-                    <Button
-                      type="button"
-                      onClick={handleSandboxSimulate}
-                      disabled={isSimulatingPayment}
-                      className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                    >
-                      <Check size={18} />
-                      <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Zaplatit 99 Kč (Testovací autorizace)'}</span>
-                    </Button>
-                  )}
-
-                  <Button
-                    type="button"
-                    onClick={onClose}
-                    variant="outline"
-                    className="sm:w-32 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
-                  >
-                    Zavřít
-                  </Button>
+                <div className="text-xs text-gray-600 leading-relaxed">
+                  {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive
+                    ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                    : 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na platební bráně a přepnutí účtu na ProEducator Premium.'}
                 </div>
               </div>
-            )}
+
+              {/* Tlačítka */}
+              <div className="flex flex-col sm:flex-row gap-3">
+                {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive ? (
+                  <a
+                    href={orderResult.comgate.redirectUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                  >
+                    <CreditCard size={18} />
+                    <span>Přejít na bránu Comgate k autorizaci</span>
+                  </a>
+                ) : (
+                  <Button
+                    type="button"
+                    onClick={handleSandboxSimulate}
+                    disabled={isSimulatingPayment}
+                    className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                  >
+                    <Check size={18} />
+                    <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Zaplatit 99 Kč (Testovací autorizace)'}</span>
+                  </Button>
+                )}
+
+                <Button
+                  type="button"
+                  onClick={onClose}
+                  variant="outline"
+                  className="sm:w-32 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
+                >
+                  Zavřít
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </DialogContent>

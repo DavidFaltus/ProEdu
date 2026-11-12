@@ -79,6 +79,8 @@ export default function JokerZoneSection() {
   const hasDailyGrantToday = profile?.lastDailyGrantDate === today;
   const hasPracticedToday = profile?.lastStreakPracticeDate === today;
   const isCapped = !isGuest && jokers >= maxJokersCap;
+  const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
+  const isVideoLimitReached = videosWatchedToday >= 3;
   const currentReferrals = Math.min(MAX_REFERRALS, profile?.referralsCount || 0);
 
   // Unikátní odkaz pro doporučení
@@ -181,7 +183,7 @@ export default function JokerZoneSection() {
             <span className="text-base">🃏</span>
             <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Žolíky:</span>
             <span className="font-mono font-black text-sm text-[#1E1B18]">
-              {isGuest ? '20' : jokers}
+              {isGuest ? '10' : jokers}
             </span>
             {!isGuest && (
               <span className="text-xs font-bold text-gray-400">
@@ -220,7 +222,7 @@ export default function JokerZoneSection() {
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-[#1E1B18]">10denní streak</h3>
-                  <p className="text-[11px] font-semibold text-gray-500">Zvyšuje limit až na 30</p>
+                  <p className="text-[11px] font-semibold text-gray-500">Odemkne limit 15 žolíků</p>
                 </div>
               </div>
               <span className="px-2 py-0.5 rounded-lg bg-white border border-gray-200 font-mono font-black text-xs text-orange-600 shadow-2xs">
@@ -233,7 +235,7 @@ export default function JokerZoneSection() {
               <div className="flex items-center justify-between text-[11px] font-bold">
                 <span className="text-gray-600">Aktuální limit:</span>
                 <span className="font-black text-[#1E1B18]">
-                  {isGuest ? '20' : maxJokersCap} žolíků
+                  {isGuest ? '10' : maxJokersCap} žolíků
                 </span>
               </div>
               <div className="grid grid-cols-10 gap-1">
@@ -249,14 +251,14 @@ export default function JokerZoneSection() {
                           ? "bg-gradient-to-r from-amber-500 to-orange-500 shadow-2xs"
                           : "bg-gray-200"
                       )}
-                      title={`Den ${dayNum}: limit ${BASE_JOKER_CAP + dayNum} žolíků`}
+                      title={`Den ${dayNum}: ${dayNum >= 10 ? 'odemčen limit 15' : 'základní limit 10'} žolíků`}
                     />
                   );
                 })}
               </div>
               <div className="flex justify-between text-[10px] text-gray-400 font-bold px-0.5">
-                <span>Základ 20</span>
-                <span>Max 30 🎯</span>
+                <span>Základ 10</span>
+                <span>10 dní = 15 🎯</span>
               </div>
             </div>
 
@@ -264,17 +266,17 @@ export default function JokerZoneSection() {
             <div className="rounded-xl bg-white p-3 border border-gray-200/80 text-xs space-y-1 shadow-2xs">
               <div className="flex items-center gap-1.5 text-[#1E1B18] font-bold">
                 <StarYellowIcon size={15} />
-                <span>Denní příděl: +5 žolíků</span>
+                <span>Denní obnova: Do plné kapacity</span>
               </div>
               <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
                 {isGuest ? (
-                  'Každý den se ti přičte +5 žolíků do kapacity dané streakem.'
+                  'Každý den o půlnoci se žolíky doplní do plné kapacity (10 nebo 15 dle streaku).'
                 ) : hasDailyGrantToday ? (
                   <span className="text-emerald-700 font-bold flex items-center gap-1">
-                    <CorrectCyanIcon size={13} /> Dnešní příděl byl úspěšně připsán!
+                    <CorrectCyanIcon size={13} /> Dnešní energie je připravena!
                   </span>
                 ) : (
-                  'Připíše se automaticky dnes při prvním přístupu.'
+                  'Doplní se automaticky dnes o půlnoci do plné kapacity.'
                 )}
               </p>
             </div>
@@ -316,7 +318,7 @@ export default function JokerZoneSection() {
                 </div>
                 <div>
                   <h3 className="font-bold text-sm text-[#1E1B18]">Dobít videem</h3>
-                  <p className="text-[11px] font-semibold text-gray-500">15s sponzorované video</p>
+                  <p className="text-[11px] font-semibold text-gray-500">15s sponzorované video (max. 3x/den)</p>
                 </div>
               </div>
               <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 font-black text-xs border border-amber-200 shadow-2xs">
@@ -348,21 +350,32 @@ export default function JokerZoneSection() {
                       : "bg-[#2B44B8]"
                   )}
                   style={{ 
-                    width: `${Math.min(100, Math.round(((isGuest ? 20 : jokers) / (isGuest ? 20 : maxJokersCap)) * 100))}%` 
+                    width: `${Math.min(100, Math.round(((isGuest ? 10 : jokers) / (isGuest ? 10 : maxJokersCap)) * 100))}%` 
                   }}
                 />
               </div>
               <p className="text-[10px] text-gray-400 font-semibold text-center">
-                {isCapped 
+                {isVideoLimitReached
+                  ? 'Dnešní limit 3 videí vyčerpán'
+                  : isCapped 
                   ? 'Máš plnou kapacitu – nelze dobít nad limit' 
-                  : 'Sledování videa nepřekročí tvůj limit'}
+                  : `Dnes zbývá: ${Math.max(0, 3 - videosWatchedToday)} zhlédnutí`}
               </p>
             </div>
           </div>
 
           {/* Action button */}
           <div>
-            {isCapped ? (
+            {isVideoLimitReached ? (
+              <Button
+                disabled
+                size="sm"
+                className="w-full rounded-xl bg-gray-100 border border-gray-200 text-gray-400 font-bold text-xs h-9 cursor-not-allowed flex items-center justify-center gap-1.5"
+              >
+                <Lock size={13} />
+                <span>Limit 3 videí vyčerpán</span>
+              </Button>
+            ) : isCapped ? (
               <Button
                 disabled
                 size="sm"
@@ -378,14 +391,14 @@ export default function JokerZoneSection() {
                 className="w-full rounded-xl bg-amber-400 hover:bg-amber-500 text-black font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs transition-transform hover:scale-[1.02]"
               >
                 <Play size={13} className="fill-current" />
-                <span>Zhlédnout video (+5)</span>
+                <span>Zhlédnout video (+5) – zbývá {Math.max(0, 3 - videosWatchedToday)}x</span>
               </Button>
             )}
           </div>
         </div>
 
         {/* ========================================================
-            TILE 3: POZVI KAMARÁDA (+50 ŽOLÍKŮ PRO OBA)
+            TILE 3: POZVI KAMARÁDA (+30 ŽOLÍKŮ PRO OBA)
            ======================================================== */}
         <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
           <div className="space-y-3">
@@ -400,12 +413,12 @@ export default function JokerZoneSection() {
                 </div>
               </div>
               <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs border border-emerald-200 shadow-2xs">
-                +50 pro oba
+                +30 pro oba
               </span>
             </div>
 
             <p className="text-xs text-gray-600 font-medium leading-relaxed">
-              Za každého kamaráda, který se zaregistruje přes tvůj odkaz, získáte <strong>oba +50 žolíků bez limitu</strong>.
+              Za každého kamaráda, který se zaregistruje přes tvůj odkaz, získáte <strong>oba +30 žolíků bez limitu</strong>.
             </p>
 
             {/* Referral slots 5x */}
@@ -431,16 +444,16 @@ export default function JokerZoneSection() {
                           ? "bg-emerald-500 text-white shadow-2xs"
                           : "bg-gray-100 text-gray-400 border border-dashed border-gray-300"
                       )}
-                      title={isClaimedSlot ? `Doporučení ${slotNum} vyplaceno (+50)` : `Slot ${slotNum}: volný`}
+                      title={isClaimedSlot ? `Doporučení ${slotNum} vyplaceno (+30)` : `Slot ${slotNum}: volný`}
                     >
-                      {isClaimedSlot ? <CorrectCyanIcon size={15} /> : `+50`}
+                      {isClaimedSlot ? <CorrectCyanIcon size={15} /> : `+30`}
                     </div>
                   );
                 })}
               </div>
 
               <p className="text-[10px] text-gray-400 font-semibold text-center">
-                Maximálně 5 doporučení (až +250 žolíků)
+                Maximálně 5 doporučení (až +150 žolíků)
               </p>
             </div>
           </div>
@@ -483,7 +496,7 @@ export default function JokerZoneSection() {
         </div>
 
         {/* ========================================================
-            TILE 4: ODKUD JSTE O NÁS SLYŠELI ? (+20 ŽOLÍKŮ)
+            TILE 4: ODKUD JSTE O NÁS SLYŠELI ? (+15 ŽOLÍKŮ)
            ======================================================== */}
         <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
           <div className="space-y-3">
@@ -500,7 +513,7 @@ export default function JokerZoneSection() {
                 </div>
               </div>
               <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 font-black text-xs border border-blue-200 shadow-2xs shrink-0">
-                +20 žolíků
+                +15 žolíků
               </span>
             </div>
 
@@ -513,7 +526,7 @@ export default function JokerZoneSection() {
                 <div>
                   <h4 className="font-bold text-xs text-emerald-900">Dotazník dokončen!</h4>
                   <p className="text-[10px] text-gray-500 font-medium">
-                    +20 bonusových žolíků bylo připsáno k tvému účtu.
+                    +15 bonusových žolíků bylo připsáno k tvému účtu.
                   </p>
                 </div>
                 <div className="space-y-1 text-[10px] font-bold text-gray-700 text-left bg-[#FAF7F0] p-2 rounded-lg border border-gray-200/60">
@@ -531,7 +544,7 @@ export default function JokerZoneSection() {
             ) : isGuest ? (
               <div className="space-y-2.5">
                 <p className="text-xs text-gray-600 font-medium leading-relaxed">
-                  Zodpověz 3 rychlé otázky a získej <strong>+20 žolíků ihned</strong> nad rámec denního limitu.
+                  Zodpověz 3 rychlé otázky a získej <strong>+15 žolíků ihned</strong> nad rámec denního limitu.
                 </p>
                 <div className="rounded-xl bg-white p-3 border border-gray-200/80 space-y-2 shadow-2xs text-xs text-gray-400">
                   <div className="flex items-center gap-2">
@@ -623,7 +636,7 @@ export default function JokerZoneSection() {
                 className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
               >
                 <Lock size={12} className="text-[#0F2942]" />
-                <span>Registrace pro +20 žolíků</span>
+                <span>Registrace pro +15 žolíků</span>
               </Button>
             ) : profile?.surveyCompleted ? (
               <div className="p-2 rounded-xl bg-gray-100 border border-gray-200 text-gray-500 text-[11px] font-bold text-center">
@@ -640,7 +653,7 @@ export default function JokerZoneSection() {
                   <span>Odesílám...</span>
                 ) : (
                   <>
-                    <span>Odeslat dotazník (+20)</span>
+                    <span>Odeslat dotazník (+15)</span>
                     <ArrowRight size={13} />
                   </>
                 )}
@@ -659,6 +672,7 @@ export default function JokerZoneSection() {
         isGuest={isGuest}
         guestVideosWatched={guestState.videosWatched}
         rewardAmount={5}
+        isLimitReached={isVideoLimitReached}
       />
     </section>
   );

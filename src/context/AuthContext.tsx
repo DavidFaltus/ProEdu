@@ -661,6 +661,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } : null);
       trackRewardedVideoComplete('joker');
       toast.success(`Získáno +${res.added} žolíků! Stav: ${res.newJokers}/${res.cap}`);
+    } else if (res.limitReached) {
+      toast.info('Dnes jsi již vyčerpal limit 3 odměňovacích videí. Další budou k dispozici zítra!');
     } else if (res.reachedCap) {
       toast.info(`Máš již plnou kapacitu (${profile.jokers}/${res.cap} žolíků). Pro další dobití si nejdříve procvič pár otázek!`);
     }
@@ -712,8 +714,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Backend survey API error, using direct profile update:', apiErr?.message);
         res = {
           success: true,
-          reward: 20,
-          newJokers: (profile?.jokers || 20) + 20,
+          reward: 15,
+          newJokers: (profile?.jokers || 10) + 15,
         };
         try {
           const userRef = doc(db, 'users', user.uid);
@@ -736,7 +738,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             customAnswer: customAnswer || null,
             school: school,
             grade: grade,
-            bonusAwarded: 20,
+            bonusAwarded: 15,
             createdAt: serverTimestamp(),
           }, { merge: true });
         } catch (dbErr) {
@@ -766,7 +768,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const res = await recordPracticeStreak(profile);
     if (res.streakIncreased) {
       setProfileAndCache(res.updatedProfile);
-      toast.success(`🔥 Streak prodloužen na ${res.newStreak} ${res.newStreak === 1 ? 'den' : res.newStreak < 5 ? 'dny' : 'dní'}! Maximální kapacita žolíků se zvýšila na ${calculateMaxJokersCap(res.newStreak)}.`);
+      if (res.newStreak === 10) {
+        toast.success('🔥 Gratulujeme k 10dennímu streaku! Tvoje denní kapacita žolíků se trvale navýšila na 15!');
+      } else {
+        toast.success(`🔥 Streak prodloužen na ${res.newStreak} ${res.newStreak === 1 ? 'den' : res.newStreak < 5 ? 'dny' : 'dní'}!`);
+      }
     }
     return { streakIncreased: res.streakIncreased, newStreak: res.newStreak };
   };

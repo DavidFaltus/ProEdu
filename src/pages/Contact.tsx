@@ -50,7 +50,7 @@ export default function Contact() {
               </div>
               <div>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">E-mail</div>
-                <div className="text-lg font-bold text-gray-800">info@pro-edu.cz</div>
+                <div className="text-lg font-bold text-gray-800">info@pro-edu.eu</div>
               </div>
             </Card>
             <Card className="rounded-3xl border-none shadow-lg bg-white p-6 space-y-4">

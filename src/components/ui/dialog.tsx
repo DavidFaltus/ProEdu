@@ -26,13 +26,13 @@ function DialogContent({
     <DialogPrimitive.Portal>
       <DialogPrimitive.Backdrop
         data-slot="dialog-overlay"
-        className="data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto pointer-events-none">
         <DialogPrimitive.Popup
           data-slot="dialog-content"
           className={cn(
-            "bg-background data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95 relative w-full max-w-[calc(100%-2rem)] rounded-2xl border p-6 shadow-2xl duration-200 pointer-events-auto my-auto sm:max-w-lg",
+            "bg-background relative w-full max-w-[calc(100%-2rem)] rounded-2xl border p-6 shadow-2xl pointer-events-auto my-auto sm:max-w-lg",
             className
           )}
           {...props}

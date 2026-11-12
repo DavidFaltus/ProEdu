@@ -94,6 +94,10 @@ service cloud.firestore {
              (!('studentId' in data) || data.studentId == null || (data.studentId is string && data.studentId.size() <= 128)) &&
              data.questions is list && data.questions.size() <= 200 &&
              data.createdAt is timestamp &&
+             (!('score' in data) || data.score == null || data.score is number) &&
+             (!('totalQuestions' in data) || data.totalQuestions == null || data.totalQuestions is number) &&
+             (!('percentage' in data) || data.percentage == null || data.percentage is number) &&
+             (!('durationSeconds' in data) || data.durationSeconds == null || data.durationSeconds is number) &&
              (!('courseId' in data) || data.courseId == null || (data.courseId is string && data.courseId.size() <= 128));
     }
 
@@ -101,7 +105,7 @@ service cloud.firestore {
       return data.question is string && data.question.size() <= 2000 &&
              (!('options' in data) || data.options == null || (data.options is list && data.options.size() <= 10)) &&
              data.correctAnswer is string && data.correctAnswer.size() <= 500 &&
-             (!('type' in data) || data.type == null || (data.type is string && (data.type == 'choice' || data.type == 'open'))) &&
+             (!('type' in data) || data.type == null || (data.type is string && (data.type == 'choice' || data.type == 'open' || data.type == 'self_check'))) &&
              (!('subjectId' in data) || data.subjectId == null || (data.subjectId is string && data.subjectId.size() <= 128)) &&
              (!('topicId' in data) || data.topicId == null || (data.topicId is string && data.topicId.size() <= 128)) &&
              (!('subtopicId' in data) || data.subtopicId == null || (data.subtopicId is string && data.subtopicId.size() <= 128)) &&
@@ -111,8 +115,11 @@ service cloud.firestore {
              (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
              (!('imageUrl' in data) || data.imageUrl == null || (data.imageUrl is string && data.imageUrl.size() <= 600000)) &&
              (!('svgContent' in data) || data.svgContent == null || (data.svgContent is string && data.svgContent.size() <= 500000)) &&
+             (!('solutionImageUrl' in data) || data.solutionImageUrl == null || (data.solutionImageUrl is string && data.solutionImageUrl.size() <= 600000)) &&
+             (!('solutionSvgContent' in data) || data.solutionSvgContent == null || (data.solutionSvgContent is string && data.solutionSvgContent.size() <= 500000)) &&
              (!('caseSensitive' in data) || data.caseSensitive == null || data.caseSensitive is bool) &&
-             data.createdBy is string && data.createdBy.size() <= 128;
+             (!('createdAt' in data) || data.createdAt is timestamp) &&
+             (!('createdBy' in data) || data.createdBy == null || (data.createdBy is string && data.createdBy.size() <= 128));
     }
 
     function isValidPracticeTopic(data) {
@@ -154,6 +161,22 @@ service cloud.firestore {
              data.completedAt is timestamp;
     }
 
+    function isValidActivePracticeSession(data) {
+      return data.studentId is string && data.studentId == request.auth.uid &&
+             data.subtopicId is string && data.subtopicId.size() <= 128 &&
+             data.topicId is string && data.topicId.size() <= 128 &&
+             data.subjectId is string && data.subjectId.size() <= 128 &&
+             data.questionIds is list && data.questionIds.size() <= 200 &&
+             data.currentIndex is number && data.currentIndex >= 0 &&
+             data.answeredCount is number && data.answeredCount >= 0 &&
+             data.totalCount is number && data.totalCount >= 0 &&
+             data.answersMap is map &&
+             (!('openInputs' in data) || data.openInputs == null || data.openInputs is map) &&
+             (!('showHintMap' in data) || data.showHintMap == null || data.showHintMap is map) &&
+             (!('bookmarkedIndices' in data) || data.bookmarkedIndices == null || (data.bookmarkedIndices is list && data.bookmarkedIndices.size() <= 200)) &&
+             data.updatedAt is timestamp;
+    }
+
     function isValidAssignedTest(data) {
       return data.testId is string && data.testId.size() <= 128 &&
              data.studentId is string && data.studentId.size() <= 128 &&
@@ -182,13 +205,21 @@ service cloud.firestore {
              (!('fileUrl' in data) || data.fileUrl == null || (data.fileUrl is string && data.fileUrl.size() <= 2048)) &&
              (!('pdfUrl' in data) || data.pdfUrl == null || (data.pdfUrl is string && data.pdfUrl.size() <= 2048)) &&
              (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 2048)) &&
+             (!('downloadUrl' in data) || data.downloadUrl == null || (data.downloadUrl is string && data.downloadUrl.size() <= 2048)) &&
              (!('thumbnailUrl' in data) || data.thumbnailUrl == null || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 300000)) &&
              (!('fileType' in data) || data.fileType == null || (data.fileType is string && data.fileType.size() <= 128)) &&
              (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 128)) &&
              (!('level' in data) || data.level == null || (data.level is string && data.level.size() <= 128)) &&
              (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
              (!('topics' in data) || data.topics == null || data.topics is list) &&
-             (!('content' in data) || data.content == null || data.content is string);
+             (!('content' in data) || data.content == null || data.content is string) &&
+             (!('status' in data) || data.status == null || (data.status is string && (data.status == 'processing' || data.status == 'ready' || data.status == 'error'))) &&
+             (!('errorMessage' in data) || data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() <= 1000)) &&
+             (!('pageCount' in data) || data.pageCount == null || data.pageCount is int) &&
+             (!('originalName' in data) || data.originalName == null || (data.originalName is string && data.originalName.size() <= 256)) &&
+             (!('fileSize' in data) || data.fileSize == null || data.fileSize is int) &&
+             (!('hasStudyMaterial' in data) || data.hasStudyMaterial == null || data.hasStudyMaterial is bool) &&
+             (!('updatedAt' in data) || data.updatedAt == null || data.updatedAt is timestamp);
     }
 
     function isValidPracticeCourse(data) {
@@ -316,6 +347,21 @@ service cloud.firestore {
              data.billingAddress.zip is string && data.billingAddress.zip.size() <= 20;
     }
 
+    function isValidBugReport(data) {
+      return data.userId is string && data.userId.size() <= 128 &&
+             data.userEmail is string && data.userEmail.size() <= 256 &&
+             data.userName is string && data.userName.size() <= 128 &&
+             data.category is string && (data.category == 'question' || data.category == 'technical' || data.category == 'visual' || data.category == 'improvement' || data.category == 'other') &&
+             data.description is string && data.description.size() >= 3 && data.description.size() <= 4000 &&
+             data.pageUrl is string && data.pageUrl.size() <= 1024 &&
+             data.status is string && (data.status == 'pending' || data.status == 'in_progress' || data.status == 'resolved') &&
+             (!('screenshotUrl' in data) || data.screenshotUrl == null || (data.screenshotUrl is string && data.screenshotUrl.size() <= 2048)) &&
+             (!('resolutionNotes' in data) || data.resolutionNotes == null || (data.resolutionNotes is string && data.resolutionNotes.size() <= 4000)) &&
+             (!('resolvedAt' in data) || data.resolvedAt == null || data.resolvedAt is timestamp) &&
+             (!('userAgent' in data) || data.userAgent == null || (data.userAgent is string && data.userAgent.size() <= 512)) &&
+             (!('screenResolution' in data) || data.screenResolution == null || (data.screenResolution is string && data.screenResolution.size() <= 64));
+    }
+
     function isValidLiveLesson(data) {
       return data.title is string && data.title.size() <= 256 &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
@@ -387,6 +433,19 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    match /activePracticeSessions/{sessionId} {
+      allow read: if isAuthenticated() && (resource == null || isOwner(resource.data.studentId) || isAdmin());
+      allow create: if isAuthenticated() && 
+                    request.resource.data.studentId == request.auth.uid && 
+                    isValidActivePracticeSession(request.resource.data);
+      allow update: if isAuthenticated() && 
+                    request.resource.data.studentId == request.auth.uid && 
+                    keepsImmutableFields() && 
+                    unchanged('subtopicId') &&
+                    isValidActivePracticeSession(request.resource.data);
+      allow delete: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
+    }
+
     match /assignedTests/{assignedTestId} {
       allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isAdmin());
       allow create: if isAdmin() || (isAuthenticated() && request.resource.data.studentId == request.auth.uid && isValidAssignedTest(request.resource.data));
@@ -399,6 +458,11 @@ service cloud.firestore {
       allow create: if isAdmin() && request.resource.data.createdBy == request.auth.uid && isValidLearningSheet(request.resource.data);
       allow update: if isAdmin() && keepsImmutableFields() && isValidLearningSheet(request.resource.data);
       allow delete: if isAdmin();
+
+      match /chunks/{chunkId} {
+        allow read: if isAuthenticated();
+        allow write: if isAdmin();
+      }
     }
 
     match /practiceCourses/{courseId} {
@@ -521,6 +585,16 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated() && (isAdmin() || request.resource.data.userId == request.auth.uid);
       allow update, delete: if isAdmin();
+    }
+
+    // Hlášení chyb od studentů a uživatelů
+    match /bugReports/{reportId} {
+      allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && 
+                    (isAdmin() || (request.resource.data.userId == request.auth.uid && request.resource.data.status == 'pending')) &&
+                    isValidBugReport(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
     }
 
     // Dočasná registrace s 6místným OTP kódem - správa přes backend / admina

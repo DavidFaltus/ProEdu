@@ -234,13 +234,30 @@ export default function StudentInquiriesSection({
                     </div>
                   )}
 
-                  {/* Correct answer (if open question or not highlighted yet) */}
-                  {qDetails.correctAnswer && qDetails.type !== 'choice' && (
+                  {/* Correct answer for open questions */}
+                  {qDetails.correctAnswer && qDetails.type === 'open' && (
                     <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg text-emerald-950">
                       <span className="font-bold block text-[10px] uppercase tracking-wider text-emerald-800">
                         Správné řešení:
                       </span>
                       <span className="font-bold">{qDetails.correctAnswer}</span>
+                    </div>
+                  )}
+
+                  {/* Solution for self_check questions */}
+                  {qDetails.type === 'self_check' && (
+                    <div className="p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-amber-950 space-y-2">
+                      <span className="font-bold block text-[10px] uppercase tracking-wider text-amber-800">
+                        Vzorové řešení (Self-check):
+                      </span>
+                      {qDetails.solutionImageUrl && (
+                        <img
+                          src={qDetails.solutionImageUrl}
+                          alt="Vzorové řešení"
+                          className="max-h-48 rounded-lg object-contain cursor-pointer"
+                          onClick={() => window.open(qDetails.solutionImageUrl, '_blank')}
+                        />
+                      )}
                     </div>
                   )}
 

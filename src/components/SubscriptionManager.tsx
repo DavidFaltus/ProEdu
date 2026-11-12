@@ -428,31 +428,52 @@ export default function SubscriptionManager() {
               )}
             >
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 inline-block">
+                  Nabídka pro první podporovatele
+                </span>
+                <div className="flex items-baseline justify-between gap-2">
                   <span className="font-black text-lg text-gray-900 flex items-center gap-1.5">
-                    <StarYellowIcon size={18} /> Premium Měsíční
+                    <StarYellowIcon size={18} /> ProEdu Premium
                   </span>
-                  <span className="font-black text-lg text-[#B80053]">99 Kč / měs.</span>
+                  <div className="text-right">
+                    <span className="text-xs text-gray-400 line-through font-bold mr-1.5">199 Kč</span>
+                    <span className="font-black text-lg text-[#B80053]">99 Kč / měs.</span>
+                  </div>
                 </div>
+                <p className="text-[11px] text-gray-600 font-medium leading-relaxed">
+                  Zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků.
+                </p>
                 <ul className="space-y-2 text-xs text-gray-700 font-medium">
                   <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} />
-                    Neomezené procvičování všech témat bez žolíků
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>Neomezené procvičování bez žolíků a čekání</span>
                   </li>
                   <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} />
-                    Všechny studijní materiály, taháky a vzorové úlohy
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>Podrobné statistiky a chytrá doporučení k procvičování</span>
                   </li>
                   <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} />
-                    Možnost zrušení kdykoliv jedním klikem
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>Chytrý studijní plánovač v kalendáři</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>Přehledné grafické listy</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>100% bez reklam a přerušování</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <CorrectCyanIcon size={14} className="shrink-0" />
+                    <span>Všechny budoucí funkce v ceně 99 Kč</span>
                   </li>
                 </ul>
               </div>
 
               {isPremium && !isCancelledAtPeriodEnd ? (
                 <div className="text-center py-2 px-3 rounded-xl bg-[#F5C400]/30 text-[#1E1B18] text-xs font-black">
-                  Tvůj současný tarif
+                  Tvůj současný tarif (Zafixováno 99 Kč)
                 </div>
               ) : isCancelledAtPeriodEnd ? (
                 <Button
@@ -467,7 +488,7 @@ export default function SubscriptionManager() {
                   onClick={handleOpenNewOrderModal}
                   className="w-full rounded-xl h-10 bg-[#B80053] hover:bg-[#B80053]/90 text-white text-xs font-black shadow-md shadow-pink-100 cursor-pointer"
                 >
-                  Přejít na Premium (99 Kč / měs.)
+                  Zafixovat Premium za 99 Kč / měs.
                 </Button>
               )}
             </div>

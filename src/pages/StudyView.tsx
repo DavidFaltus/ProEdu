@@ -472,7 +472,7 @@ export default function StudyView() {
         navigate('/practice');
       }}
       type="premium"
-      description="Kompletní výukové listy, vysvětlení látky krok za krokem a tipy lektorů jsou dostupné pouze v balíčku Premium."
+      description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
     />
   </>
   );

@@ -16,7 +16,8 @@ import {
   sendOrderQrEmail, 
   sendPaymentConfirmedEmail, 
   sendRecurringChargeSuccessEmail, 
-  sendRecurringChargeFailedEmail 
+  sendRecurringChargeFailedEmail,
+  sendBugReportEmail
 } from './services/emailService.js';
 
 console.log('--- SERVER STARTING ---');
@@ -45,6 +46,8 @@ const PORT = Number(process.env.PORT || (process.env.NODE_ENV === 'production' ?
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const isCloudFunction = Boolean(process.env.K_SERVICE || process.env.FUNCTION_NAME || process.env.FUNCTION_TARGET);
+const isDirectExecution = !isCloudFunction && Boolean(process.argv[1] && path.resolve(process.argv[1]).toLowerCase() === path.resolve(__filename).toLowerCase());
 
 // Read Firebase config to get the exact bucket name and API key
 let configBucket = 'gen-lang-client-0972842509.firebasestorage.app';
@@ -144,7 +147,8 @@ async function getDevDb() {
       where, 
       getDocs, 
       addDoc, 
-      serverTimestamp 
+      serverTimestamp,
+      Timestamp 
     } = await import('firebase/firestore');
     const configCandidatePaths = [
       path.join(__dirname, 'firebase-applet-config.json'),
@@ -158,6 +162,7 @@ async function getDevDb() {
     await signInWithEmailAndPassword(clientAuth, 'ucitel@ucitel.cz', 'ucitel123');
     return { 
       clientDb, 
+      currentUserUid: clientAuth.currentUser?.uid,
       doc, 
       updateDoc, 
       setDoc, 
@@ -168,7 +173,8 @@ async function getDevDb() {
       where, 
       getDocs, 
       addDoc, 
-      serverTimestamp 
+      serverTimestamp,
+      Timestamp
     };
   })();
   return devClientDbPromise;
@@ -179,12 +185,15 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   // Normalizace URL pro Cloud Functions (pokud požadavek přijde bez prefixu /api)
-  app.use((req, res, next) => {
-    if (!req.url.startsWith('/api') && req.url !== '/health') {
-      req.url = '/api' + req.url;
-    }
-    next();
-  });
+  // Pouze v prostředí Cloud Functions - v standalone/dev serveru musí frontendové cesty (/, /src/...) zůstat nedotčeny
+  if (!isDirectExecution) {
+    app.use((req, res, next) => {
+      if (!req.url.startsWith('/api') && req.url !== '/health') {
+        req.url = '/api' + req.url;
+      }
+      next();
+    });
+  }
 
   const uploadsDir = path.join(process.cwd(), 'public', 'uploads');
   const uploadsMaterialsDir = path.join(uploadsDir, 'materials');
@@ -334,8 +343,12 @@ function requireTeacher(req, res, next) {
   next();
 }
 
-app.get('/health', (_req, res) => {
+app.get(['/health', '/api/health'], (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get(['/api', '/api/'], (_req, res) => {
+  res.json({ ok: true, message: 'ProEdu API is running' });
 });
 
 // =========================================================================
@@ -763,7 +776,7 @@ app.post('/api/auth/register-confirm', async (req, res) => {
       email: pending.email,
       name: pending.name,
       role: 'student',
-      jokers: 20,
+      jokers: 10,
       streak: 0,
       referralCode: refCode,
       referralsCount: 0,
@@ -946,8 +959,8 @@ app.post('/api/referrals/claim', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Tento zvoucí uživatel již dosáhl maximálního limitu 5 doporučení.' });
     }
 
-    const inviterNewJokers = (Number(inviterData.jokers) || 20) + 50;
-    const refereeNewJokers = (Number(refereeData.jokers) || 20) + 50;
+    const inviterNewJokers = (Number(inviterData.jokers) || 10) + 30;
+    const refereeNewJokers = (Number(refereeData.jokers) || 10) + 30;
 
     // 3. Provedení zápisu
     try {
@@ -964,7 +977,7 @@ app.post('/api/referrals/claim', requireAuth, async (req, res) => {
       batch.set(referralLogRef, {
         referrerUid: inviterUid,
         refereeUid: refereeUid,
-        bonusAwarded: 50,
+        bonusAwarded: 30,
         createdAt: Timestamp.now()
       });
       await batch.commit();
@@ -982,14 +995,14 @@ app.post('/api/referrals/claim', requireAuth, async (req, res) => {
       await cAddDoc(cCollection(clientDb, 'referrals'), {
         referrerUid: inviterUid,
         refereeUid: refereeUid,
-        bonusAwarded: 50,
+        bonusAwarded: 30,
         createdAt: cTimestamp()
       });
     }
 
     return res.json({
       success: true,
-      reward: 50,
+      reward: 30,
       newJokers: refereeNewJokers,
       referrerName: inviterData.name || 'Kamarád'
     });
@@ -1048,7 +1061,7 @@ app.post('/api/survey/submit', requireAuth, async (req, res) => {
 
     const cleanSchool = school.trim().slice(0, 200);
     const cleanGrade = grade.trim().slice(0, 100);
-    const newJokers = (Number(userData.jokers) || 20) + 20;
+    const newJokers = (Number(userData.jokers) || 10) + 15;
 
     try {
       if (userRef) {
@@ -1068,7 +1081,7 @@ app.post('/api/survey/submit', requireAuth, async (req, res) => {
           customAnswer: customAnswer ? String(customAnswer).slice(0, 250) : null,
           school: cleanSchool,
           grade: cleanGrade,
-          bonusAwarded: 20,
+          bonusAwarded: 15,
           createdAt: Timestamp.now()
         });
       }
@@ -1092,7 +1105,7 @@ app.post('/api/survey/submit', requireAuth, async (req, res) => {
           customAnswer: customAnswer ? String(customAnswer).slice(0, 250) : null,
           school: cleanSchool,
           grade: cleanGrade,
-          bonusAwarded: 20,
+          bonusAwarded: 15,
           createdAt: cTimestamp()
         });
       } catch (clientErr) {
@@ -1102,7 +1115,7 @@ app.post('/api/survey/submit', requireAuth, async (req, res) => {
 
     return res.json({
       success: true,
-      reward: 20,
+      reward: 15,
       newJokers,
       school: cleanSchool,
       grade: cleanGrade
@@ -1246,6 +1259,262 @@ app.delete('/api/admin/surveys/:id', requireAuth, requireTeacher, async (req, re
 });
 
 // ==========================================
+// --- BUG REPORTING SYSTEM ---
+// ==========================================
+
+const bugReportRateLimits = new Map();
+const inMemoryBugReports = new Map();
+
+app.post('/api/bug-reports/submit', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const userEmail = req.user.email || '';
+    const now = Date.now();
+
+    // Rate limiting: max 5 reports per 10 minutes
+    const userTimestamps = (bugReportRateLimits.get(userId) || []).filter(t => now - t < 10 * 60 * 1000);
+    if (userTimestamps.length >= 5) {
+      return res.status(429).json({ error: 'Příliš mnoho hlášení v krátkém čase. Zkuste to prosím za několik minut.' });
+    }
+    userTimestamps.push(now);
+    bugReportRateLimits.set(userId, userTimestamps);
+
+    const {
+      category = 'other',
+      description = '',
+      pageUrl = '',
+      screenshotUrl = null,
+      userAgent = null,
+      screenResolution = null,
+      userName = ''
+    } = req.body || {};
+
+    const cleanDescription = String(description || '').trim();
+    if (!cleanDescription || cleanDescription.length < 3) {
+      return res.status(400).json({ error: 'Zadejte prosím podrobnější popis chyby (alespoň 3 znaky).' });
+    }
+    if (cleanDescription.length > 4000) {
+      return res.status(400).json({ error: 'Popis chyby je příliš dlouhý (maximum je 4000 znaků).' });
+    }
+
+    const allowedCategories = ['question', 'technical', 'visual', 'improvement', 'other'];
+    const safeCategory = allowedCategories.includes(category) ? category : 'other';
+
+    const categoryLabels = {
+      question: 'Chyba v otázce / zadání',
+      technical: 'Technická chyba / nefunkčnost',
+      visual: 'Vzhled / překlep / text',
+      improvement: 'Návrh na zlepšení',
+      other: 'Jiné'
+    };
+
+    const safeUserName = String(userName || req.user.name || req.user.displayName || userEmail.split('@')[0] || 'Student').trim().slice(0, 128);
+    const safePageUrl = String(pageUrl || '').trim().slice(0, 1024);
+    const safeScreenshotUrl = screenshotUrl ? String(screenshotUrl).trim().slice(0, 2048) : null;
+    const safeUserAgent = userAgent ? String(userAgent).trim().slice(0, 512) : (req.headers['user-agent'] || '').slice(0, 512);
+    const safeResolution = screenResolution ? String(screenResolution).trim().slice(0, 64) : null;
+
+    const reportData = {
+      userId,
+      userEmail,
+      userName: safeUserName,
+      category: safeCategory,
+      categoryLabel: categoryLabels[safeCategory],
+      description: cleanDescription,
+      pageUrl: safePageUrl,
+      screenshotUrl: safeScreenshotUrl,
+      userAgent: safeUserAgent,
+      screenResolution: safeResolution,
+      status: 'pending',
+      resolutionNotes: null,
+      resolvedAt: null,
+      createdAt: FieldValue.serverTimestamp()
+    };
+
+    let reportId = null;
+
+    try {
+      const docRef = await Promise.race([
+        db.collection('bugReports').add(reportData),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      reportId = docRef.id;
+    } catch (adminErr) {
+      console.warn('[BugReport submit] Admin SDK fallback to dev client:', adminErr?.message || adminErr);
+      try {
+        const { clientDb, collection: cCollection, addDoc: cAddDoc, serverTimestamp: cTimestamp } = await getDevDb();
+        const clientRef = await cAddDoc(cCollection(clientDb, 'bugReports'), {
+          ...reportData,
+          createdAt: cTimestamp()
+        });
+        reportId = clientRef.id;
+      } catch (clientErr) {
+        console.warn('[BugReport submit] Dev client write warning:', clientErr?.message || clientErr);
+      }
+    }
+
+    if (!reportId) {
+      reportId = 'bug_' + Date.now();
+    }
+
+    // Uložit do in-memory mezipaměti
+    inMemoryBugReports.set(reportId, {
+      id: reportId,
+      ...reportData,
+      createdAt: new Date().toISOString()
+    });
+
+    // Odeslání notifikačního e-mailu na netkova.nela@gmail.com
+    try {
+      await sendBugReportEmail({
+        to: 'netkova.nela@gmail.com',
+        studentName: safeUserName,
+        studentEmail: userEmail,
+        category: safeCategory,
+        categoryLabel: categoryLabels[safeCategory],
+        description: cleanDescription,
+        pageUrl: safePageUrl,
+        userAgent: safeUserAgent,
+        screenResolution: safeResolution,
+        screenshotUrl: safeScreenshotUrl,
+        reportId
+      });
+    } catch (emailErr) {
+      console.error('[BugReport submit] Chyba při odesílání e-mailu:', emailErr);
+    }
+
+    return res.json({
+      success: true,
+      reportId,
+      message: 'Hlášení chyby bylo úspěšně odesláno. Děkujeme!'
+    });
+  } catch (err) {
+    console.error('Chyba při zpracování hlášení chyby:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se odeslat hlášení chyby.' });
+  }
+});
+
+// Admin endpoint: Načtení všech hlášení pro učitele
+app.get('/api/admin/bug-reports', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    let reports = [];
+    try {
+      const snap = await Promise.race([
+        db.collection('bugReports').orderBy('createdAt', 'desc').get(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+      ]);
+      reports = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    } catch (adminErr) {
+      console.log('[Admin BugReports fallback to dev client]:', adminErr?.message || adminErr);
+      try {
+        const { clientDb, collection: cCollection, getDocs: cGetDocs } = await getDevDb();
+        const cSnap = await cGetDocs(cCollection(clientDb, 'bugReports'));
+        reports = cSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      } catch (clientErr) {
+        console.warn('[Admin BugReports dev client read note]:', clientErr?.message || clientErr);
+      }
+    }
+
+    // Sloučení s in-memory mezipamětí pro lokální spolehlivost
+    const existingIds = new Set(reports.map(r => r.id));
+    for (const [memId, memReport] of inMemoryBugReports.entries()) {
+      if (!existingIds.has(memId)) {
+        reports.push(memReport);
+      }
+    }
+
+    reports.sort((a, b) => {
+      const aTime = a.createdAt?.toMillis ? a.createdAt.toMillis() : (a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (a.createdAt?._seconds ? a.createdAt._seconds * 1000 : new Date(a.createdAt || 0).getTime()));
+      const bTime = b.createdAt?.toMillis ? b.createdAt.toMillis() : (b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (b.createdAt?._seconds ? b.createdAt._seconds * 1000 : new Date(b.createdAt || 0).getTime()));
+      return bTime - aTime;
+    });
+
+    return res.json({ success: true, reports });
+  } catch (err) {
+    console.error('Chyba při načítání hlášení chyb:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se načíst hlášení chyb.' });
+  }
+});
+
+// Admin endpoint: Změna stavu a interní poznámky
+app.patch('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, resolutionNotes } = req.body || {};
+
+    const allowedStatuses = ['pending', 'in_progress', 'resolved'];
+    if (status && !allowedStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Neplatný stav hlášení.' });
+    }
+
+    const updates = {};
+    if (status) {
+      updates.status = status;
+      if (status === 'resolved') {
+        updates.resolvedAt = FieldValue.serverTimestamp();
+      }
+    }
+    if (typeof resolutionNotes === 'string') {
+      updates.resolutionNotes = resolutionNotes.slice(0, 4000);
+    }
+
+    // Aktualizace v in-memory mezipaměti
+    if (inMemoryBugReports.has(id)) {
+      const current = inMemoryBugReports.get(id);
+      inMemoryBugReports.set(id, {
+        ...current,
+        ...updates,
+        resolvedAt: updates.resolvedAt ? new Date().toISOString() : current.resolvedAt
+      });
+    }
+
+    try {
+      await db.collection('bugReports').doc(id).update(updates);
+    } catch (adminErr) {
+      console.warn('[Admin BugReport Update fallback]:', adminErr?.message || adminErr);
+      try {
+        const { clientDb, doc: cDoc, updateDoc: cUpdateDoc, serverTimestamp: cTimestamp } = await getDevDb();
+        if (updates.resolvedAt) {
+          updates.resolvedAt = cTimestamp();
+        }
+        await cUpdateDoc(cDoc(clientDb, 'bugReports', id), updates);
+      } catch (clientErr) {
+        console.warn('[Admin BugReport Update dev client note]:', clientErr?.message || clientErr);
+      }
+    }
+
+    return res.json({ success: true, message: 'Hlášení bylo úspěšně aktualizováno.' });
+  } catch (err) {
+    console.error('Chyba při aktualizaci hlášení:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se aktualizovat hlášení.' });
+  }
+});
+
+// Admin endpoint: Smazání hlášení
+app.delete('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { id } = req.params;
+    inMemoryBugReports.delete(id);
+
+    try {
+      await db.collection('bugReports').doc(id).delete();
+    } catch (adminErr) {
+      console.warn('[Admin BugReport Delete fallback]:', adminErr?.message || adminErr);
+      try {
+        const { clientDb, doc: cDoc, deleteDoc: cDeleteDoc } = await getDevDb();
+        await cDeleteDoc(cDoc(clientDb, 'bugReports', id));
+      } catch (clientErr) {
+        console.warn('[Admin BugReport Delete dev client note]:', clientErr?.message || clientErr);
+      }
+    }
+    return res.json({ success: true, message: 'Hlášení bylo smazáno.' });
+  } catch (err) {
+    console.error('Chyba při mazání hlášení:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se smazat hlášení.' });
+  }
+});
+
+// ==========================================
 // --- ORDERS & PAYMENT GATEWAY INTEGRATION ---
 // ==========================================
 
@@ -1383,7 +1652,7 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
       clientName,
       billingAddress,
       invoiceEmail,
-      paymentMethod = 'qr_bank_transfer',
+      paymentMethod = 'comgate',
       termsAccepted,
       newsletterConsent = false,
       planId = 'premium-monthly',
@@ -2325,67 +2594,380 @@ app.delete('/api/students/:studentId', requireAuth, requireTeacher, async (req, 
   }
 });
 
-// 7. Bezpečné nahrávání studijních materiálů (SVG grafické listy, původní PDF a JPEG miniatury)
+// 7. Robustní ukládání a asynchronní zpracování studijních materiálů
+// Soubory se dělí na bezpečné chunky (~350 KB) v podkolekci learningSheets/{id}/chunks,
+// čímž se nikdy nepřekročí 1MB limit Firestore a soubory jsou trvale a spolehlivě dostupné bez ohledu na Storage bucket či ephemeral disk.
+
+async function createMaterialDoc(materialId, data) {
+  if (hasAdminCredentials) {
+    try {
+      const adminData = {
+        ...data,
+        createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+        updatedAt: data.updatedAt ? new Date(data.updatedAt) : new Date()
+      };
+      await db.collection('learningSheets').doc(materialId).set(adminData);
+      return true;
+    } catch (e) {
+      console.warn('[Admin SDK createMaterialDoc error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, currentUserUid, doc: cDoc, setDoc: cSetDoc, Timestamp } = await getDevDb();
+  const clientData = {
+    ...data,
+    createdBy: currentUserUid,
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now()
+  };
+  await cSetDoc(cDoc(clientDb, 'learningSheets', materialId), clientData);
+  return true;
+}
+
+async function updateMaterialDoc(materialId, updates) {
+  const cleanUpdates = { ...updates };
+  delete cleanUpdates.uid;
+  delete cleanUpdates.createdAt;
+  delete cleanUpdates.createdBy;
+  delete cleanUpdates.studentId;
+  delete cleanUpdates.testId;
+
+  if (hasAdminCredentials) {
+    try {
+      const adminUpdates = {
+        ...cleanUpdates,
+        updatedAt: new Date()
+      };
+      await db.collection('learningSheets').doc(materialId).set(adminUpdates, { merge: true });
+      return true;
+    } catch (e) {
+      console.warn('[Admin SDK updateMaterialDoc error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, doc: cDoc, updateDoc: cUpdateDoc, Timestamp } = await getDevDb();
+  const clientUpdates = {
+    ...cleanUpdates,
+    updatedAt: Timestamp.now()
+  };
+  await cUpdateDoc(cDoc(clientDb, 'learningSheets', materialId), clientUpdates);
+  return true;
+}
+
+async function saveMaterialDoc(materialId, data) {
+  return createMaterialDoc(materialId, data);
+}
+
+async function getMaterialDoc(materialId) {
+  if (hasAdminCredentials) {
+    try {
+      const snap = await db.collection('learningSheets').doc(materialId).get();
+      if (snap.exists) return { id: snap.id, ...snap.data() };
+    } catch (e) {
+      console.warn('[Admin SDK getMaterialDoc error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+  const snap = await cGetDoc(cDoc(clientDb, 'learningSheets', materialId));
+  if (snap.exists()) return { id: snap.id, ...snap.data() };
+  return null;
+}
+
+async function saveMaterialChunk(materialId, chunkId, chunkData) {
+  if (hasAdminCredentials) {
+    try {
+      await db.collection('learningSheets').doc(materialId).collection('chunks').doc(chunkId).set(chunkData);
+      return true;
+    } catch (e) {
+      console.warn('[Admin SDK saveMaterialChunk error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, doc: cDoc, setDoc: cSetDoc, Timestamp } = await getDevDb();
+  const clientChunk = { ...chunkData };
+  if (!clientChunk.createdAt || typeof clientChunk.createdAt === 'string') {
+    clientChunk.createdAt = Timestamp.now();
+  }
+  await cSetDoc(cDoc(clientDb, 'learningSheets', materialId, 'chunks', chunkId), clientChunk);
+  return true;
+}
+
+async function getMaterialChunk(materialId, chunkId) {
+  if (hasAdminCredentials) {
+    try {
+      const snap = await db.collection('learningSheets').doc(materialId).collection('chunks').doc(chunkId).get();
+      if (snap.exists) return snap.data();
+    } catch (e) {
+      console.warn('[Admin SDK getMaterialChunk error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+  const snap = await cGetDoc(cDoc(clientDb, 'learningSheets', materialId, 'chunks', chunkId));
+  if (snap.exists()) return snap.data();
+  return null;
+}
+
+async function getAllMaterialChunks(materialId) {
+  if (hasAdminCredentials) {
+    try {
+      const snap = await db.collection('learningSheets').doc(materialId).collection('chunks').get();
+      if (!snap.empty) {
+        return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      }
+    } catch (e) {
+      console.warn('[Admin SDK getAllMaterialChunks error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, collection: cColl, getDocs: cGetDocs } = await getDevDb();
+  const snap = await cGetDocs(cColl(clientDb, 'learningSheets', materialId, 'chunks'));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+async function deleteMaterialWithChunks(materialId) {
+  if (hasAdminCredentials) {
+    try {
+      const chunksSnap = await db.collection('learningSheets').doc(materialId).collection('chunks').get();
+      const batch = db.batch();
+      chunksSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+      batch.delete(db.collection('learningSheets').doc(materialId));
+      await batch.commit();
+      return true;
+    } catch (e) {
+      console.warn('[Admin SDK deleteMaterialWithChunks error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, doc: cDoc, collection: cColl, getDocs: cGetDocs, deleteDoc: cDeleteDoc } = await getDevDb();
+  const snap = await cGetDocs(cColl(clientDb, 'learningSheets', materialId, 'chunks'));
+  for (const d of snap.docs) {
+    await cDeleteDoc(d.ref);
+  }
+  await cDeleteDoc(cDoc(clientDb, 'learningSheets', materialId));
+  return true;
+}
+
+async function processMaterialInBackground(materialId, options) {
+  const { fileData, fileType, originalName, thumbnailDataUrl } = options;
+  console.log(`[MaterialProcessor] Zahajuji asynchronní zpracování materiálu ${materialId}...`);
+  try {
+    // 1. Zpracování náhledu (JPEG/PNG miniatura)
+    if (thumbnailDataUrl && typeof thumbnailDataUrl === 'string') {
+      const cleanThumb = thumbnailDataUrl.replace(/^data:[^;]+;base64,/, '');
+      await saveMaterialChunk(materialId, 'thumbnail', {
+        data: cleanThumb,
+        contentType: thumbnailDataUrl.includes('image/png') ? 'image/png' : 'image/jpeg',
+        createdAt: new Date().toISOString()
+      });
+      console.log(`[MaterialProcessor] Náhled pro ${materialId} byl úspěšně uložen.`);
+    }
+
+    // 2. Dělení a ukládání souboru po kusech (chunks)
+    let byteLength = 0;
+    if (fileData && typeof fileData === 'string') {
+      const cleanBase64 = fileData.replace(/^data:[^;]+;base64,/, '');
+      byteLength = Buffer.byteLength(cleanBase64, 'base64');
+      const CHUNK_SIZE = 350000; // ~260 KB binárně na chunk (daleko pod limitem 1MB Firestore)
+      const totalChunks = Math.ceil(cleanBase64.length / CHUNK_SIZE);
+      
+      console.log(`[MaterialProcessor] Ukládám soubor (${byteLength} B, ${cleanBase64.length} znaků) do ${totalChunks} částí...`);
+      for (let i = 0; i < totalChunks; i++) {
+        const slice = cleanBase64.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+        await saveMaterialChunk(materialId, `chunk_${String(i).padStart(4, '0')}`, {
+          index: i,
+          total: totalChunks,
+          data: slice,
+          createdAt: new Date().toISOString()
+        });
+      }
+      console.log(`[MaterialProcessor] Všech ${totalChunks} částí souboru pro ${materialId} bylo uloženo.`);
+    }
+
+    // 3. Povýšení stavu na 'ready'
+    await updateMaterialDoc(materialId, {
+      status: 'ready',
+      fileSize: byteLength
+    });
+    console.log(`[MaterialProcessor] Materiál ${materialId} byl úspěšně zpracován a je PŘIPRAVEN (ready)!`);
+  } catch (err) {
+    console.error(`[MaterialProcessor] Chyba při asynchronním zpracování materiálu ${materialId}:`, err);
+    try {
+      await updateMaterialDoc(materialId, {
+        status: 'error',
+        errorMessage: err.message || 'Chyba při zpracování souboru'
+      });
+    } catch (saveErr) {
+      console.error(`[MaterialProcessor] Selhalo uložení chybového stavu pro ${materialId}:`, saveErr);
+    }
+  }
+}
+
+// 7.1 Zahájení nahrávání materiálu s okamžitou odpovědí (asynchronní zpracování na pozadí)
 app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) => {
   try {
-    const { svgContent, thumbnailDataUrl, pdfDataUrl, originalName } = req.body || {};
-    if (!svgContent && !thumbnailDataUrl && !pdfDataUrl) {
-      return res.status(400).json({ error: 'Chybí obsah souboru pro nahrání.' });
+    const { 
+      title, 
+      subject, 
+      topic, 
+      studyTheory, 
+      fileData, 
+      fileType, 
+      originalName, 
+      thumbnailDataUrl,
+      svgContent,
+      pdfDataUrl
+    } = req.body || {};
+
+    const effectiveFileData = fileData || pdfDataUrl || (svgContent ? Buffer.from(svgContent, 'utf8').toString('base64') : null);
+    const effectiveFileType = fileType || (svgContent ? 'image/svg+xml' : 'application/pdf');
+
+    if (!effectiveFileData && !studyTheory) {
+      return res.status(400).json({ error: 'Chybí obsah souboru nebo textový výklad.' });
     }
 
-    const timestamp = Date.now();
-    const randomSuffix = Math.random().toString(36).substring(2, 9);
-    let svgUrl = null;
-    let thumbnailUrl = null;
-    let pdfUrl = null;
+    const cleanTitle = (title || 'Nový studijní materiál').trim().slice(0, 256);
+    const cleanSubject = (subject || 'Matematika').trim().slice(0, 128);
+    const cleanTopic = (topic || 'Obecné').trim().slice(0, 128);
+    const cleanOriginalName = (originalName || (effectiveFileType === 'image/svg+xml' ? 'material.svg' : 'material.pdf')).slice(0, 256);
+    const materialId = `mat_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
 
-    const safeName = (originalName || 'material')
-      .replace(/[^a-zA-Z0-9_\-\.]/g, '_')
-      .replace(/\.(svg|pdf)$/i, '');
+    const initialDoc = {
+      title: cleanTitle,
+      subject: cleanSubject,
+      topic: cleanTopic,
+      studyTheory: (studyTheory || '').trim(),
+      status: effectiveFileData ? 'processing' : 'ready',
+      originalName: cleanOriginalName,
+      fileType: effectiveFileType,
+      thumbnailUrl: `/api/materials/${materialId}/thumbnail`,
+      fileUrl: `/api/materials/${materialId}/file`,
+      downloadUrl: `/api/materials/${materialId}/download`,
+      hasStudyMaterial: true,
+      createdBy: req.user.uid
+    };
 
-    if (svgContent) {
-      const svgFileName = `${timestamp}_${randomSuffix}_${safeName}.svg`;
-      const svgFilePath = path.join(uploadsMaterialsDir, svgFileName);
-      fs.writeFileSync(svgFilePath, svgContent, 'utf8');
-      svgUrl = `/uploads/materials/${svgFileName}`;
+    // Uložíme výchozí dokument do databáze
+    await createMaterialDoc(materialId, initialDoc);
+
+    // Spustíme asynchronní zpracování souboru na pozadí (neblokuje HTTP odpověď!)
+    if (effectiveFileData) {
+      processMaterialInBackground(materialId, {
+        fileData: effectiveFileData,
+        fileType: effectiveFileType,
+        originalName: cleanOriginalName,
+        thumbnailDataUrl
+      }).catch(err => console.error('[Background process unhandled error]:', err));
     }
 
-    if (pdfDataUrl && typeof pdfDataUrl === 'string') {
-      const pdfFileName = `${timestamp}_${randomSuffix}_${safeName}.pdf`;
-      const pdfFilePath = path.join(uploadsMaterialsDir, pdfFileName);
-      const base64Pdf = pdfDataUrl.replace(/^data:application\/pdf;base64,/, '').replace(/^data:[^;]+;base64,/, '');
-      fs.writeFileSync(pdfFilePath, Buffer.from(base64Pdf, 'base64'));
-      pdfUrl = `/uploads/materials/${pdfFileName}`;
-    }
-
-    if (thumbnailDataUrl) {
-      const thumbFileName = `${timestamp}_${randomSuffix}_thumb.jpg`;
-      const thumbFilePath = path.join(uploadsMaterialsDir, thumbFileName);
-      const base64Data = thumbnailDataUrl.replace(/^data:image\/\w+;base64,/, '');
-      fs.writeFileSync(thumbFilePath, Buffer.from(base64Data, 'base64'));
-      thumbnailUrl = `/uploads/materials/${thumbFileName}`;
-    }
-
-    return res.json({
+    // Okamžitá odpověď administrátorovi
+    return res.status(202).json({
       success: true,
-      svgUrl,
-      thumbnailUrl,
-      pdfUrl
+      materialId,
+      status: effectiveFileData ? 'processing' : 'ready',
+      thumbnailUrl: `/api/materials/${materialId}/thumbnail`,
+      fileUrl: `/api/materials/${materialId}/file`,
+      downloadUrl: `/api/materials/${materialId}/download`,
+      message: effectiveFileData 
+        ? 'Materiál byl zařazen ke zpracování na pozadí.' 
+        : 'Materiál byl úspěšně vytvořen.'
     });
   } catch (err) {
-    console.error('Chyba při nahrávání materiálu na server:', err);
-    return res.status(500).json({ error: err.message || 'Nepodařilo se uložit soubor materiálu.' });
+    console.error('Chyba při inicializaci uploadu materiálu:', err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se zahájit nahrávání.' });
+  }
+});
+
+// 7.2 Servírování náhledové miniatury (JPEG/SVG)
+app.get('/api/materials/:id/thumbnail', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const thumbChunk = await getMaterialChunk(id, 'thumbnail');
+    if (thumbChunk && thumbChunk.data) {
+      const buf = Buffer.from(thumbChunk.data, 'base64');
+      res.setHeader('Content-Type', thumbChunk.contentType || 'image/jpeg');
+      res.setHeader('Cache-Control', 'public, max-age=86400, stale-while-revalidate=604800');
+      return res.send(buf);
+    }
+
+    const mat = await getMaterialDoc(id);
+    const isProcessing = mat?.status === 'processing';
+
+    const placeholderSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300" fill="none">
+      <rect width="400" height="300" rx="16" fill="#F8FAFC"/>
+      <rect x="1" y="1" width="398" height="298" rx="15" stroke="#E2E8F0" stroke-width="2"/>
+      <circle cx="200" cy="130" r="36" fill="${isProcessing ? '#FEF3C7' : '#EFF6FF'}"/>
+      <path d="M190 120 L210 120 L210 140 L190 140 Z" fill="${isProcessing ? '#D97706' : '#3B82F6'}" opacity="0.3"/>
+      <text x="200" y="195" text-anchor="middle" fill="#64748B" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600">
+        ${isProcessing ? '⏳ Zpracovává se na pozadí...' : '📄 Studijní materiál'}
+      </text>
+    </svg>`;
+
+    res.setHeader('Content-Type', 'image/svg+xml');
+    res.setHeader('Cache-Control', 'no-cache');
+    return res.send(placeholderSvg);
+  } catch (err) {
+    console.error(`Chyba při servírování miniatury pro ${id}:`, err);
+    res.status(500).send('Chyba při načítání náhledu');
+  }
+});
+
+// 7.3 Servírování plného souboru (pro náhled ve webovém prohlížeči nebo stažení)
+async function serveMaterialFile(req, res, asDownload = false) {
+  const { id } = req.params;
+  try {
+    const mat = await getMaterialDoc(id);
+    if (!mat) {
+      return res.status(404).json({ error: 'Materiál nenalezen.' });
+    }
+
+    const allChunks = await getAllMaterialChunks(id);
+    const dataChunks = allChunks.filter(c => c.id !== 'thumbnail' && c.index !== undefined);
+
+    if (dataChunks.length === 0) {
+      if (mat.svgContent) {
+        const buf = Buffer.from(mat.svgContent, 'utf8');
+        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Content-Disposition', `${asDownload ? 'attachment' : 'inline'}; filename="${encodeURIComponent(mat.originalName || 'material.svg')}"`);
+        res.setHeader('Content-Length', buf.length);
+        return res.send(buf);
+      }
+      return res.status(404).json({ error: 'Soubor materiálu ještě není připraven nebo chybí.' });
+    }
+
+    dataChunks.sort((a, b) => a.index - b.index);
+    const fullBase64 = dataChunks.map(c => c.data).join('');
+    const buf = Buffer.from(fullBase64, 'base64');
+
+    const contentType = mat.fileType || (mat.originalName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf');
+    const filename = mat.originalName || (contentType === 'image/svg+xml' ? 'material.svg' : 'material.pdf');
+
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `${asDownload ? 'attachment' : 'inline'}; filename="${encodeURIComponent(filename)}"`);
+    res.setHeader('Content-Length', buf.length);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.send(buf);
+  } catch (err) {
+    console.error(`Chyba při servírování souboru materiálu ${id}:`, err);
+    return res.status(500).json({ error: 'Nepodařilo se načíst soubor materiálu.' });
+  }
+}
+
+app.get('/api/materials/:id/file', (req, res) => serveMaterialFile(req, res, false));
+app.get('/api/materials/:id/download', (req, res) => serveMaterialFile(req, res, true));
+
+// 7.4 Smazání materiálu včetně všech jeho podkolekcí chunks
+app.delete('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
+  const { id } = req.params;
+  try {
+    await deleteMaterialWithChunks(id);
+    return res.json({ success: true, message: 'Materiál byl úspěšně smazán.' });
+  } catch (err) {
+    console.error(`Chyba při mazání materiálu ${id}:`, err);
+    return res.status(500).json({ error: 'Nepodařilo se smazat materiál.' });
   }
 });
 
 // 404 handler pro všechny neexistující API požadavky, aby nepropadávaly do Vite middleware a nezasekávaly se
-app.all('/api/*', (req, res) => {
+app.all(['/api', '/api/*'], (req, res) => {
   res.status(404).json({ error: `API endpoint ${req.method} ${req.path} nenalezen.` });
 });
 
 // Vite middleware / static serving / Cloud Function export
-const isDirectExecution = Boolean(process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));
-
 if (isDirectExecution) {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');

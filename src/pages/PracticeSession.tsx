@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, RotateCcw, 
-  ArrowRight, ChevronLeft, ChevronRight, Send, Bookmark
+  ArrowRight, ChevronLeft, ChevronRight, Send, Bookmark, Clock, Eye
 } from 'lucide-react';
 import {
   BookCyanIcon,
@@ -25,15 +25,17 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { 
-  getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice 
+  getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice,
+  saveActivePracticeSession, getActivePracticeSession, deleteActivePracticeSession
 } from '../services/practiceService';
 import { completeScheduledPracticeTodo } from '../services/calendarService';
 import { submitInquiry } from '../services/inquiryService';
 import { sanitizeSvg } from '../utils/svgUtils';
-import { PracticeSubtopic, PracticeQuestion } from '../types';
+import { PracticeSubtopic, PracticeQuestion, ActivePracticeSession, PracticeAttemptAnswer } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
 import { evaluateStudentAnswer } from '../utils/mathEvaluator';
 import RewardedAdModal from '../components/common/RewardedAdModal';
+import MandatorySetPromoModal from '../components/common/MandatorySetPromoModal';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import { 
   recordGuestVideo, 
@@ -54,6 +56,9 @@ interface QuestionAnswerState {
   usedHint: boolean;
   isSubmitted: boolean;
   tutorFeedback?: string;
+  selfScore?: number;
+  selfEvaluation?: 'correct' | 'partial' | 'wrong';
+  solutionRevealed?: boolean;
 }
 
 export default function PracticeSession() {
@@ -62,6 +67,7 @@ export default function PracticeSession() {
     user, 
     profile, 
     isPremium, 
+    isTeacher,
     jokers, 
     consumeOneJoker, 
     claimVideoReward, 
@@ -76,7 +82,15 @@ export default function PracticeSession() {
 
   // Stavy pro video a paywall
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [isMandatoryPromoOpen, setIsMandatoryPromoOpen] = useState(false);
   const [isPremiumFeatureModalOpen, setIsPremiumFeatureModalOpen] = useState(false);
+  const [lightboxImageUrl, setLightboxImageUrl] = useState<string | null>(null);
+
+  // Kontrola limitu žolíků a videí pro dnešní den
+  const isGuest = !user;
+  const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
+  const isVideoLimitReached = videosWatchedToday >= 3;
+  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
 
   // Active question index
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -97,6 +111,12 @@ export default function PracticeSession() {
   // Bookmarked / marked questions for later review
   const [bookmarkedSet, setBookmarkedSet] = useState<Set<number>>(new Set());
 
+  // Active practice session state
+  const [pendingResumeSession, setPendingResumeSession] = useState<ActivePracticeSession | null>(null);
+  const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
+  const allSubtopicQuestionsRef = useRef<PracticeQuestion[]>([]);
+  const debouncedInputSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   // Slider scrolling refs
   const sliderScrollRef = useRef<HTMLDivElement>(null);
   const sliderButtonRefs = useRef<Record<number, HTMLButtonElement | null>>({});
@@ -109,10 +129,40 @@ export default function PracticeSession() {
       if (!subtopicId) return;
       setLoading(true);
       try {
-        const subData = await getSubtopicById(subtopicId);
-        setSubtopic(subData);
+        const [subData, qData, activeSession] = await Promise.all([
+          getSubtopicById(subtopicId),
+          getQuestionsForSubtopic(subtopicId),
+          getActivePracticeSession(subtopicId, user?.uid)
+        ]);
 
-        const qData = await getQuestionsForSubtopic(subtopicId);
+        setSubtopic(subData);
+        allSubtopicQuestionsRef.current = qData;
+
+        // Check if there is an active session to resume
+        const hasValidSession = Boolean(
+          activeSession &&
+          activeSession.questionIds &&
+          activeSession.questionIds.length > 0 &&
+          (activeSession.answeredCount > 0 || Object.keys(activeSession.answersMap || {}).length > 0)
+        );
+
+        if (hasValidSession && activeSession) {
+          const qMap = new Map(qData.map(q => [q.id, q]));
+          const matchedCount = activeSession.questionIds.filter(id => qMap.has(id)).length;
+
+          if (matchedCount > 0) {
+            setPendingResumeSession(activeSession);
+            setIsResumeModalOpen(true);
+            const restoredQuestions = activeSession.questionIds
+              .map(id => qMap.get(id))
+              .filter((q): q is PracticeQuestion => Boolean(q));
+            setQuestions(restoredQuestions);
+            sessionStartTimeRef.current = Date.now();
+            setLoading(false);
+            return;
+          }
+        }
+
         const sampled = sampleQuestionsForPractice(qData, subData?.practiceConfig);
         setQuestions(sampled);
         sessionStartTimeRef.current = Date.now();
@@ -132,7 +182,14 @@ export default function PracticeSession() {
       }
     }
     loadData();
-  }, [subtopicId]);
+  }, [subtopicId, user?.uid]);
+
+  // Pokud student vstoupí do procvičování s 0 žolíky a vyčerpaným limitem videí, nepouštíme ho dovnitř a přesměrujeme na hlavní stránku
+  useEffect(() => {
+    if (!loading && isOutOfJokersAndVideos) {
+      navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+    }
+  }, [loading, isOutOfJokersAndVideos, navigate]);
 
   // Auto-scroll slider when currentIndex changes
   useEffect(() => {
@@ -142,6 +199,217 @@ export default function PracticeSession() {
       inline: 'center'
     });
   }, [currentIndex]);
+
+  // Synchronous / debounced state persistence
+  const persistSession = (
+    currentAnswers: Record<number, QuestionAnswerState>,
+    currentOpenInputs: Record<number, string>,
+    currentHintMap: Record<number, boolean>,
+    currentBookmarks: Set<number>,
+    targetIndex: number,
+    currentQuestions: PracticeQuestion[] = questions
+  ) => {
+    if (!subtopic || currentQuestions.length === 0 || isCompleted) return;
+
+    const answeredCount = Object.values(currentAnswers).filter(a => a.isSubmitted).length;
+    const hasTypedSomething = Object.values(currentOpenInputs).some(t => Boolean(t && t.trim()));
+    if (answeredCount === 0 && !hasTypedSomething) return;
+
+    const serializedAnswers: Record<string, any> = {};
+    for (const [k, v] of Object.entries(currentAnswers)) {
+      serializedAnswers[k] = {
+        userAnswer: v.userAnswer,
+        ...(typeof v.selectedOptionIndex === 'number' ? { selectedOptionIndex: v.selectedOptionIndex } : {}),
+        isCorrect: Boolean(v.isCorrect),
+        usedHint: Boolean(v.usedHint),
+        isSubmitted: Boolean(v.isSubmitted),
+        ...(v.tutorFeedback ? { tutorFeedback: v.tutorFeedback } : {}),
+        ...(typeof v.selfScore === 'number' ? { selfScore: v.selfScore } : {}),
+        ...(v.selfEvaluation ? { selfEvaluation: v.selfEvaluation } : {}),
+        ...(v.solutionRevealed ? { solutionRevealed: true } : {})
+      };
+    }
+
+    const serializedInputs: Record<string, string> = {};
+    for (const [k, v] of Object.entries(currentOpenInputs)) {
+      if (v && v.trim()) {
+        serializedInputs[k] = v;
+      }
+    }
+
+    const serializedHints: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(currentHintMap)) {
+      if (v) {
+        serializedHints[k] = true;
+      }
+    }
+
+    const payload: ActivePracticeSession = {
+      studentId: user?.uid || '',
+      subtopicId: subtopic.id,
+      topicId: subtopic.topicId || '',
+      subjectId: subtopic.subjectId || '',
+      questionIds: currentQuestions.map(q => q.id),
+      currentIndex: targetIndex,
+      answersMap: serializedAnswers,
+      openInputs: serializedInputs,
+      showHintMap: serializedHints,
+      bookmarkedIndices: Array.from(currentBookmarks),
+      answeredCount,
+      totalCount: currentQuestions.length,
+      updatedAt: new Date()
+    };
+
+    saveActivePracticeSession(payload).catch(err => {
+      console.warn('Failed to save active practice session:', err);
+    });
+  };
+
+  const navigateToQuestion = (targetIdx: number) => {
+    setCurrentIndex(targetIdx);
+    persistSession(answersMap, openInputs, showHintMap, bookmarkedSet, targetIdx);
+  };
+
+  const handleOpenInputChange = (val: string) => {
+    const nextInputs = { ...openInputs, [currentIndex]: val };
+    setOpenInputs(nextInputs);
+
+    if (debouncedInputSaveTimeoutRef.current) {
+      clearTimeout(debouncedInputSaveTimeoutRef.current);
+    }
+    debouncedInputSaveTimeoutRef.current = setTimeout(() => {
+      persistSession(answersMap, nextInputs, showHintMap, bookmarkedSet, currentIndex);
+    }, 1000);
+  };
+
+  const handleAcceptResume = () => {
+    if (!pendingResumeSession) return;
+    const qMap = new Map(allSubtopicQuestionsRef.current.map(q => [q.id, q]));
+    const restoredQuestions = pendingResumeSession.questionIds
+      .map(id => qMap.get(id))
+      .filter((q): q is PracticeQuestion => Boolean(q));
+
+    if (restoredQuestions.length > 0) {
+      setQuestions(restoredQuestions);
+    } else {
+      const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
+      setQuestions(sampled);
+    }
+
+    const restoredAnswers: Record<number, QuestionAnswerState> = {};
+    if (pendingResumeSession.answersMap) {
+      for (const [k, v] of Object.entries(pendingResumeSession.answersMap)) {
+        const idx = Number(k);
+        if (!isNaN(idx)) {
+          restoredAnswers[idx] = v;
+        }
+      }
+    }
+    setAnswersMap(restoredAnswers);
+
+    const restoredInputs: Record<number, string> = {};
+    if (pendingResumeSession.openInputs) {
+      for (const [k, v] of Object.entries(pendingResumeSession.openInputs)) {
+        const idx = Number(k);
+        if (!isNaN(idx)) {
+          restoredInputs[idx] = v;
+        }
+      }
+    }
+    setOpenInputs(restoredInputs);
+
+    const restoredHints: Record<number, boolean> = {};
+    if (pendingResumeSession.showHintMap) {
+      for (const [k, v] of Object.entries(pendingResumeSession.showHintMap)) {
+        const idx = Number(k);
+        if (!isNaN(idx)) {
+          restoredHints[idx] = v;
+        }
+      }
+    }
+    setShowHintMap(restoredHints);
+
+    if (Array.isArray(pendingResumeSession.bookmarkedIndices)) {
+      setBookmarkedSet(new Set(pendingResumeSession.bookmarkedIndices));
+    }
+
+    const targetIndex = Math.min(
+      Math.max(0, pendingResumeSession.currentIndex || 0),
+      (restoredQuestions.length || 1) - 1
+    );
+    setCurrentIndex(targetIndex);
+
+    setIsResumeModalOpen(false);
+    toast.success('Procvičování obnoveno z uloženého stavu.');
+  };
+
+  const handleRejectResumeAndRestart = async () => {
+    if (subtopicId) {
+      await deleteActivePracticeSession(subtopicId, user?.uid);
+    }
+    const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
+    setQuestions(sampled);
+    setCurrentIndex(0);
+    setAnswersMap({});
+    setOpenInputs({});
+    setShowHintMap({});
+    setBookmarkedSet(new Set());
+    setIsCompleted(false);
+    setIsMandatoryPromoOpen(false);
+    sessionStartTimeRef.current = Date.now();
+    setPendingResumeSession(null);
+    setIsResumeModalOpen(false);
+    toast.info('Procvičování bylo spuštěno od začátku.');
+  };
+
+  // Synchronous localStorage backup on tab close
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!subtopic || questions.length === 0 || isCompleted) return;
+      const answeredCount = Object.values(answersMap).filter(a => a.isSubmitted).length;
+      if (answeredCount === 0) return;
+
+      const serializedAnswers: Record<string, any> = {};
+      for (const [k, v] of Object.entries(answersMap)) {
+        serializedAnswers[k] = {
+          userAnswer: v.userAnswer,
+          ...(typeof v.selectedOptionIndex === 'number' ? { selectedOptionIndex: v.selectedOptionIndex } : {}),
+          isCorrect: Boolean(v.isCorrect),
+          usedHint: Boolean(v.usedHint),
+          isSubmitted: Boolean(v.isSubmitted),
+          ...(v.tutorFeedback ? { tutorFeedback: v.tutorFeedback } : {}),
+          ...(typeof v.selfScore === 'number' ? { selfScore: v.selfScore } : {}),
+          ...(v.selfEvaluation ? { selfEvaluation: v.selfEvaluation } : {}),
+          ...(v.solutionRevealed ? { solutionRevealed: true } : {})
+        };
+      }
+      const storageKey = `proedu_active_practice_${subtopic.id}`;
+      try {
+        localStorage.setItem(storageKey, JSON.stringify({
+          studentId: user?.uid || '',
+          subtopicId: subtopic.id,
+          topicId: subtopic.topicId || '',
+          subjectId: subtopic.subjectId || '',
+          questionIds: questions.map(q => q.id),
+          currentIndex,
+          answersMap: serializedAnswers,
+          openInputs,
+          showHintMap,
+          bookmarkedIndices: Array.from(bookmarkedSet),
+          answeredCount,
+          totalCount: questions.length,
+          updatedAt: new Date().toISOString()
+        }));
+      } catch (err) {
+        // ignore
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [subtopic, questions, isCompleted, answersMap, openInputs, showHintMap, bookmarkedSet, currentIndex, user?.uid]);
 
   const currentQuestion = questions[currentIndex];
   const currentAnswer = answersMap[currentIndex];
@@ -161,6 +429,10 @@ export default function PracticeSession() {
     if (!currentQuestion || isAnswerSubmitted) return;
 
     if (!isPremium && user && jokers <= 0) {
+      if (isVideoLimitReached) {
+        navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+        return;
+      }
       toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
       setIsVideoModalOpen(true);
       return;
@@ -179,8 +451,8 @@ export default function PracticeSession() {
       usedHint,
     });
 
-    setAnswersMap(prev => ({
-      ...prev,
+    const nextAnswers = {
+      ...answersMap,
       [currentIndex]: {
         userAnswer: option,
         selectedOptionIndex: optionIndex,
@@ -189,15 +461,17 @@ export default function PracticeSession() {
         isSubmitted: true,
         tutorFeedback: evalResult.tutorFeedback
       }
-    }));
+    };
+    setAnswersMap(nextAnswers);
 
     // Automaticky odebereme označení, jakmile je otázka zodpovězena
-    setBookmarkedSet(prev => {
-      if (!prev.has(currentIndex)) return prev;
-      const next = new Set(prev);
-      next.delete(currentIndex);
-      return next;
-    });
+    const nextBookmarks = new Set(bookmarkedSet);
+    if (nextBookmarks.has(currentIndex)) {
+      nextBookmarks.delete(currentIndex);
+      setBookmarkedSet(nextBookmarks);
+    }
+
+    persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
 
     if (!isPremium && user) {
       await consumeOneJoker();
@@ -212,6 +486,10 @@ export default function PracticeSession() {
     if (!answer) return;
 
     if (!isPremium && user && jokers <= 0) {
+      if (isVideoLimitReached) {
+        navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+        return;
+      }
       toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
       setIsVideoModalOpen(true);
       return;
@@ -230,8 +508,8 @@ export default function PracticeSession() {
       usedHint,
     });
 
-    setAnswersMap(prev => ({
-      ...prev,
+    const nextAnswers = {
+      ...answersMap,
       [currentIndex]: {
         userAnswer: answer,
         isCorrect: evalResult.isCorrect,
@@ -239,19 +517,98 @@ export default function PracticeSession() {
         isSubmitted: true,
         tutorFeedback: evalResult.tutorFeedback
       }
-    }));
+    };
+    setAnswersMap(nextAnswers);
 
     // Automaticky odebereme označení, jakmile je otázka zodpovězena
-    setBookmarkedSet(prev => {
-      if (!prev.has(currentIndex)) return prev;
-      const next = new Set(prev);
-      next.delete(currentIndex);
-      return next;
-    });
+    const nextBookmarks = new Set(bookmarkedSet);
+    if (nextBookmarks.has(currentIndex)) {
+      nextBookmarks.delete(currentIndex);
+      setBookmarkedSet(nextBookmarks);
+    }
+
+    persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
 
     if (!isPremium && user) {
       await consumeOneJoker();
     }
+  };
+
+  // Self-check solution reveal
+  const handleRevealSolution = async () => {
+    if (!currentQuestion) return;
+
+    if (!isPremium && user && jokers <= 0) {
+      if (isVideoLimitReached) {
+        navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+        return;
+      }
+      toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
+      setIsVideoModalOpen(true);
+      return;
+    }
+
+    const currentAns = answersMap[currentIndex] || {
+      userAnswer: '',
+      isCorrect: false,
+      usedHint: false,
+      isSubmitted: false
+    };
+
+    const nextAnswers = {
+      ...answersMap,
+      [currentIndex]: {
+        ...currentAns,
+        solutionRevealed: true
+      }
+    };
+    setAnswersMap(nextAnswers);
+    persistSession(nextAnswers, openInputs, showHintMap, bookmarkedSet, currentIndex);
+
+    if (!isPremium && user) {
+      await consumeOneJoker();
+    }
+  };
+
+  // Self-check evaluation (Správně = 1, Částečně = 0.5, Špatně = 0)
+  const handleSelfCheckAnswer = (evalType: 'correct' | 'partial' | 'wrong', score: number) => {
+    if (!currentQuestion || isAnswerSubmitted) return;
+
+    const usedHint = !!showHintMap[currentIndex];
+    const isCorrect = score > 0;
+    const label = evalType === 'correct' ? 'Správně' : evalType === 'partial' ? 'Částečně správně' : 'Špatně';
+
+    trackPracticeAnswer({
+      subtopicId: subtopic?.id || subtopicId || '',
+      questionId: currentQuestion.id,
+      questionIndex: currentIndex,
+      isCorrect: score === 1,
+      usedHint,
+    });
+
+    const nextAnswers = {
+      ...answersMap,
+      [currentIndex]: {
+        userAnswer: label,
+        isCorrect,
+        usedHint,
+        isSubmitted: true,
+        selfScore: score,
+        selfEvaluation: evalType,
+        solutionRevealed: true,
+        tutorFeedback: currentQuestion.explanation || undefined
+      }
+    };
+    setAnswersMap(nextAnswers);
+
+    // Automaticky odebereme označení, jakmile je otázka zodpovězena
+    const nextBookmarks = new Set(bookmarkedSet);
+    if (nextBookmarks.has(currentIndex)) {
+      nextBookmarks.delete(currentIndex);
+      setBookmarkedSet(nextBookmarks);
+    }
+
+    persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
   };
 
   // Toggle hint
@@ -271,7 +628,9 @@ export default function PracticeSession() {
   // Next question or finish
   const handleNext = () => {
     if (currentIndex + 1 < questions.length) {
-      setCurrentIndex(prev => prev + 1);
+      const nextIdx = currentIndex + 1;
+      setCurrentIndex(nextIdx);
+      persistSession(answersMap, openInputs, showHintMap, bookmarkedSet, nextIdx);
     } else {
       handleFinishPractice();
     }
@@ -281,9 +640,24 @@ export default function PracticeSession() {
   const handleFinishPractice = async () => {
     setIsCompleted(true);
 
-    const correctCount = Object.values(answersMap).filter(a => a.isCorrect).length;
+    // Pro bezplatné uživatele zobrazíme po dokončení sady 5s povinné promo okno na Premium
+    if (!isPremium && !isTeacher && profile?.role !== 'course') {
+      setIsMandatoryPromoOpen(true);
+    }
+
+    // Delete active practice session since practice is completed!
+    if (subtopic?.id) {
+      deleteActivePracticeSession(subtopic.id, user?.uid).catch(err => {
+        console.warn('Failed to delete active practice session upon completion:', err);
+      });
+    }
+
+    const earnedScore = Object.values(answersMap).reduce((acc, a) => {
+      if (typeof a.selfScore === 'number') return acc + a.selfScore;
+      return acc + (a.isCorrect ? 1 : 0);
+    }, 0);
     const total = questions.length;
-    const percentage = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+    const percentage = total > 0 ? Math.round((earnedScore / total) * 100) : 0;
     const durationSeconds = Math.round((Date.now() - sessionStartTimeRef.current) / 1000);
 
     trackPracticeComplete({
@@ -291,7 +665,7 @@ export default function PracticeSession() {
       subtopicTitle: subtopic?.title || '',
       subject: subtopic?.subjectId || '',
       totalQuestions: total,
-      correctCount,
+      correctCount: earnedScore,
       scorePercentage: percentage,
       durationSeconds,
     });
@@ -302,9 +676,21 @@ export default function PracticeSession() {
 
     if (user && subtopic) {
       const answersRecord: Record<string, string> = {};
+      const detailedAnswers: PracticeAttemptAnswer[] = [];
       questions.forEach((q, idx) => {
-        if (answersMap[idx]) {
-          answersRecord[q.id] = answersMap[idx].userAnswer;
+        const ans = answersMap[idx];
+        if (ans) {
+          answersRecord[q.id] = ans.userAnswer;
+          detailedAnswers.push({
+            questionId: q.id,
+            questionText: q.question,
+            userAnswer: ans.userAnswer,
+            correctAnswer: q.correctAnswer,
+            isCorrect: Boolean(ans.isCorrect),
+            explanation: q.explanation || ans.tutorFeedback || '',
+            options: q.options || [],
+            selfScore: ans.selfScore
+          });
         }
       });
 
@@ -314,10 +700,12 @@ export default function PracticeSession() {
           subtopicId: subtopic.id,
           topicId: subtopic.topicId,
           subjectId: subtopic.subjectId,
-          score: correctCount,
+          score: earnedScore,
           totalQuestions: total,
           percentage,
-          answers: answersRecord
+          answers: answersRecord,
+          detailedAnswers,
+          durationSeconds
         });
       } catch (err) {
         console.error('Failed to record attempt:', err);
@@ -354,14 +742,26 @@ export default function PracticeSession() {
     }
   };
 
-  const handleRestart = () => {
+  const handleRestart = async () => {
+    if (isOutOfJokersAndVideos) {
+      navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+      return;
+    }
+    if (subtopicId) {
+      await deleteActivePracticeSession(subtopicId, user?.uid);
+    }
+    const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
+    setQuestions(sampled);
     setCurrentIndex(0);
     setAnswersMap({});
     setOpenInputs({});
     setShowHintMap({});
     setBookmarkedSet(new Set());
     setIsCompleted(false);
+    setIsMandatoryPromoOpen(false);
     sessionStartTimeRef.current = Date.now();
+    setPendingResumeSession(null);
+    toast.info('Procvičování bylo spuštěno od začátku.');
   };
 
   const handleToggleBookmark = () => {
@@ -372,6 +772,7 @@ export default function PracticeSession() {
       } else {
         next.add(currentIndex);
       }
+      persistSession(answersMap, openInputs, showHintMap, next, currentIndex);
       return next;
     });
   };
@@ -601,6 +1002,22 @@ export default function PracticeSession() {
             })}
           </div>
         </div>
+
+        {/* 5s Povinné promo okno na Premium po dokončení sady otázek pro free studenty */}
+        <MandatorySetPromoModal
+          isOpen={isMandatoryPromoOpen}
+          onFinish={() => setIsMandatoryPromoOpen(false)}
+          onOpenPaywall={() => setIsPremiumFeatureModalOpen(true)}
+        />
+
+        {/* Sjednocený Paywall dialog pro Premium funkce */}
+        <UnifiedPaywallModal
+          isOpen={isPremiumFeatureModalOpen}
+          onClose={() => setIsPremiumFeatureModalOpen(false)}
+          type="premium"
+          title="ProEducator Premium"
+          description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
+        />
       </div>
     );
   }
@@ -702,6 +1119,9 @@ export default function PracticeSession() {
                     // Answered correctly WITHOUT hint: Green
                     colorClasses = 'bg-emerald-500 hover:bg-emerald-600 text-white border-emerald-600';
                   }
+                } else if (ans.selfEvaluation === 'partial' || ans.selfScore === 0.5) {
+                  // Partial self check evaluation: Amber
+                  colorClasses = 'bg-amber-400 hover:bg-amber-500 text-amber-950 border-amber-500 font-bold';
                 } else {
                   // Answered incorrectly: Red
                   colorClasses = 'bg-rose-500 hover:bg-rose-600 text-white border-rose-600';
@@ -717,7 +1137,7 @@ export default function PracticeSession() {
                 <button
                   key={idx}
                   ref={el => { sliderButtonRefs.current[idx] = el; }}
-                  onClick={() => setCurrentIndex(idx)}
+                  onClick={() => navigateToQuestion(idx)}
                   className={`w-10 h-10 sm:w-11 sm:h-11 rounded-2xl text-xs sm:text-sm font-bold flex items-center justify-center shrink-0 border transition-all cursor-pointer ${colorClasses} ${
                     isActive ? 'ring-2 ring-inset ring-[#2B44B8] shadow-sm font-black' : ''
                   }`}
@@ -765,7 +1185,7 @@ export default function PracticeSession() {
               {currentIndex + 1}
             </span>
             <span className="px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-gray-100 text-gray-700">
-              {currentQuestion.type === 'choice' ? 'Výběr z možností' : 'Vepisovací otázka'}
+              {currentQuestion.type === 'choice' ? 'Výběr z možností' : currentQuestion.type === 'self_check' ? 'Self check otázka' : 'Vepisovací otázka'}
             </span>
             <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border ${
               (currentQuestion.difficulty || 'Střední') === 'Lehká'
@@ -942,7 +1362,7 @@ export default function PracticeSession() {
                     type="button"
                     onClick={() => {
                       const prevVal = openInputs[currentIndex] ?? '';
-                      setOpenInputs(p => ({ ...p, [currentIndex]: prevVal + sym }));
+                      handleOpenInputChange(prevVal + sym);
                     }}
                     className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-sm border border-gray-200 transition-colors cursor-pointer"
                     title={`Vložit symbol ${sym}`}
@@ -957,7 +1377,7 @@ export default function PracticeSession() {
               <Input
                 disabled={isAnswerSubmitted}
                 value={openInputs[currentIndex] ?? currentAnswer?.userAnswer ?? ''}
-                onChange={e => setOpenInputs(prev => ({ ...prev, [currentIndex]: e.target.value }))}
+                onChange={e => handleOpenInputChange(e.target.value)}
                 onKeyDown={e => {
                   if (e.key === 'Enter' && !isAnswerSubmitted && (openInputs[currentIndex] || '').trim()) {
                     handleCheckOpenAnswer();
@@ -983,19 +1403,166 @@ export default function PracticeSession() {
           </div>
         )}
 
+        {/* Self check question UI (porovnání s papírovým rýsováním / vzorovým řešením) */}
+        {currentQuestion.type === 'self_check' && (
+          <div className="pt-2 space-y-4 relative z-10">
+            {/* Instrukce pro samostatnou práci na papír */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-amber-950 space-y-1.5">
+              <div className="flex items-center gap-2 font-black text-sm sm:text-base text-amber-900">
+                <span className="text-xl">✏️</span>
+                <span>Úloha na rýsování / samostatné řešení na papír</span>
+              </div>
+              <p className="text-xs sm:text-sm text-amber-800 leading-relaxed font-medium">
+                Vezmi si papír, tužku a rýsovací potřeby a vyřeš úlohu podle zadání. Až budeš mít hotovo, klikni na tlačítko níže pro porovnání se vzorovým řešením.
+              </p>
+            </div>
+
+            {/* Tlačítko pro odkrytí řešení */}
+            {!currentAnswer?.solutionRevealed && !isAnswerSubmitted && (
+              <div className="flex justify-center py-2">
+                <Button
+                  onClick={handleRevealSolution}
+                  className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 py-6 font-black text-base shadow-sm flex items-center gap-2.5 transition-transform hover:scale-102 cursor-pointer"
+                >
+                  <Eye size={20} />
+                  <span>Zobrazit vzorové řešení pro kontrolu</span>
+                </Button>
+              </div>
+            )}
+
+            {/* Odkryté vzorové řešení */}
+            {(currentAnswer?.solutionRevealed || isAnswerSubmitted) && (
+              <div className="space-y-4 pt-1">
+                <div className="p-4 sm:p-6 rounded-2xl bg-white border-2 border-dashed border-gray-200 space-y-4">
+                  <div className="flex items-center justify-between gap-2 border-b border-gray-100 pb-3">
+                    <span className="text-xs sm:text-sm font-black text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
+                      <span>📐</span> Vzorové řešení pro kontrolu
+                    </span>
+                    {(currentQuestion.solutionImageUrl || currentQuestion.solutionSvgContent) && (
+                      <span className="text-[11px] font-bold text-gray-400">
+                        Kliknutím na obrázek jej zvětšíte
+                      </span>
+                    )}
+                  </div>
+
+                  {/* SVG nebo obrázek řešení */}
+                  {currentQuestion.solutionSvgContent ? (
+                    <div 
+                      className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-xl [&>svg]:h-auto rounded-xl bg-[#FAF7F0] p-3 border border-gray-200/80 overflow-hidden"
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(currentQuestion.solutionSvgContent) }}
+                    />
+                  ) : currentQuestion.solutionImageUrl ? (
+                    <div className="flex justify-center">
+                      <div 
+                        className="rounded-xl overflow-hidden border border-gray-200/80 bg-[#FAF7F0] p-2 shadow-2xs max-w-full cursor-zoom-in group relative"
+                        onClick={() => setLightboxImageUrl(currentQuestion.solutionImageUrl || null)}
+                        title="Kliknutím otevřít v plné velikosti"
+                      >
+                        <img
+                          src={currentQuestion.solutionImageUrl}
+                          alt="Vzorové řešení"
+                          className="max-h-[380px] w-auto max-w-full rounded-lg object-contain group-hover:scale-[1.01] transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition-colors flex items-center justify-center pointer-events-none">
+                          <span className="opacity-0 group-hover:opacity-100 transition-opacity bg-black/75 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg">
+                            🔍 Zvětšit
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {/* Textové vysvětlení / konstrukční postup */}
+                  {currentQuestion.explanation && (
+                    <div className="text-xs sm:text-sm font-medium leading-relaxed pt-2 text-gray-700 bg-gray-50/80 p-3.5 rounded-xl border border-gray-100">
+                      <div className="font-bold text-gray-800 mb-1 flex items-center gap-1.5">
+                        <BulbYellowIcon size={16} /> Postup řešení / konstrukce:
+                      </div>
+                      <MathRenderer content={currentQuestion.explanation} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Sebehodnotící tlačítka */}
+                {!isAnswerSubmitted && (
+                  <div className="p-4 sm:p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-3">
+                    <p className="text-xs sm:text-sm font-black text-gray-800 text-center">
+                      Porovnej své řešení se vzorem a vyber výsledek:
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => handleSelfCheckAnswer('correct', 1)}
+                        className="p-4 rounded-xl bg-white hover:bg-emerald-50 border-2 border-emerald-300 hover:border-emerald-500 text-emerald-900 font-black text-sm flex flex-col items-center justify-center gap-1.5 transition-all shadow-xs hover:scale-102 cursor-pointer"
+                      >
+                        <span className="text-xl">✅</span>
+                        <span>Mám to správně</span>
+                        <span className="text-[11px] font-bold text-emerald-700">1 bod (100 %)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelfCheckAnswer('partial', 0.5)}
+                        className="p-4 rounded-xl bg-white hover:bg-amber-50 border-2 border-amber-300 hover:border-amber-500 text-amber-950 font-black text-sm flex flex-col items-center justify-center gap-1.5 transition-all shadow-xs hover:scale-102 cursor-pointer"
+                      >
+                        <span className="text-xl">⚠️</span>
+                        <span>Částečně správně</span>
+                        <span className="text-[11px] font-bold text-amber-800">0,5 bodu (50 %)</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleSelfCheckAnswer('wrong', 0)}
+                        className="p-4 rounded-xl bg-white hover:bg-rose-50 border-2 border-rose-300 hover:border-rose-500 text-rose-900 font-black text-sm flex flex-col items-center justify-center gap-1.5 transition-all shadow-xs hover:scale-102 cursor-pointer"
+                      >
+                        <span className="text-xl">❌</span>
+                        <span>Mám to špatně</span>
+                        <span className="text-[11px] font-bold text-rose-700">0 bodů (0 %)</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Feedback Banner after submission */}
         {isAnswerSubmitted && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             className={`p-5 rounded-2xl border space-y-2.5 ${
-              currentAnswer.isCorrect
-                ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
-                : 'bg-rose-50 border-rose-200 text-rose-950'
+              currentQuestion.type === 'self_check'
+                ? currentAnswer.selfEvaluation === 'correct'
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  : currentAnswer.selfEvaluation === 'partial'
+                    ? 'bg-amber-50 border-amber-200 text-amber-950'
+                    : 'bg-rose-50 border-rose-200 text-rose-950'
+                : currentAnswer.isCorrect
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                  : 'bg-rose-50 border-rose-200 text-rose-950'
             }`}
           >
             <div className="flex items-center gap-2 font-black text-base">
-              {currentAnswer.isCorrect ? (
+              {currentQuestion.type === 'self_check' ? (
+                currentAnswer.selfEvaluation === 'correct' ? (
+                  <>
+                    <CorrectCyanIcon size={22} className="shrink-0" />
+                    <span>Označil/a jsi: Správné řešení (+1 bod)</span>
+                  </>
+                ) : currentAnswer.selfEvaluation === 'partial' ? (
+                  <>
+                    <span className="text-xl shrink-0">⚠️</span>
+                    <span>Označil/a jsi: Částečně správné řešení (+0,5 bodu)</span>
+                  </>
+                ) : (
+                  <>
+                    <WrongPinkIcon size={22} className="shrink-0" />
+                    <span>Označil/a jsi: Špatné řešení (0 bodů)</span>
+                  </>
+                )
+              ) : currentAnswer.isCorrect ? (
                 <>
                   <CorrectCyanIcon size={22} className="shrink-0" />
                   <span>
@@ -1023,7 +1590,7 @@ export default function PracticeSession() {
               </div>
             )}
 
-            {currentQuestion.explanation && (
+            {currentQuestion.type !== 'self_check' && currentQuestion.explanation && (
               <div className="text-xs sm:text-sm font-medium leading-relaxed pt-1 border-t border-gray-200/50">
                 <div className="font-bold text-gray-700 mb-0.5 flex items-center gap-1.5"><BulbYellowIcon size={15} /> Vysvětlení:</div>
                 <MathRenderer content={currentQuestion.explanation} />
@@ -1124,21 +1691,95 @@ export default function PracticeSession() {
         </DialogContent>
       </Dialog>
 
+      {/* Dialog pro navázání na rozpracované procvičování */}
+      <Dialog open={isResumeModalOpen} onOpenChange={() => {}}>
+        <DialogContent 
+          showCloseButton={false}
+          className="sm:max-w-md bg-white border-gray-200 p-6 rounded-3xl shadow-2xl"
+        >
+          <DialogHeader className="text-center space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-sky-100 text-sky-600 flex items-center justify-center mx-auto mb-1">
+              <Clock size={24} />
+            </div>
+            <DialogTitle className="text-xl font-black text-gray-900">
+              Máš rozpracované procvičování
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-600">
+              Našli jsme tvůj uložený postup v tomto tématu.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-gray-200/80 space-y-3 my-2">
+            <div className="flex justify-between items-center text-xs font-bold text-gray-700">
+              <span>Zodpovězeno otázek</span>
+              <span className="text-[#0F2942] font-black text-sm">
+                {pendingResumeSession?.answeredCount || 0} z {pendingResumeSession?.totalCount || questions.length}
+              </span>
+            </div>
+            <div className="w-full bg-gray-200 h-2.5 rounded-full overflow-hidden">
+              <div 
+                className="bg-[#2B44B8] h-full rounded-full transition-all duration-300"
+                style={{ 
+                  width: `${Math.round(((pendingResumeSession?.answeredCount || 0) / (pendingResumeSession?.totalCount || questions.length || 1)) * 100)}%` 
+                }}
+              />
+            </div>
+            <p className="text-xs text-gray-500">
+              Chceš navázat tam, kde jsi skončil/a, nebo si přeješ začít úplně od začátku s novými otázkami?
+            </p>
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2 mt-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleRejectResumeAndRestart}
+              className="rounded-xl font-bold text-xs h-11 px-4 border-gray-300 hover:bg-gray-100 text-gray-700 w-full sm:w-auto flex items-center justify-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw size={14} />
+              <span>Začít od začátku</span>
+            </Button>
+            <Button
+              type="button"
+              onClick={handleAcceptResume}
+              className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-11 px-6 w-full sm:flex-1 flex items-center justify-center gap-2 shadow-xs cursor-pointer border border-blue-200/80"
+            >
+              <span>Pokračovat</span>
+              <ArrowRight size={14} />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* 15s Video simulátor pro dobití žolíků */}
       <RewardedAdModal
         open={isVideoModalOpen}
         onOpenChange={setIsVideoModalOpen}
+        isLimitReached={isVideoLimitReached}
         onRewardEarned={async () => {
           if (user) {
-            await claimVideoReward();
-            toast.success('Získal jsi +5 žolíků! Můžeš pokračovat v procvičování.');
+            const res = await claimVideoReward();
+            if (!res.success && (res as any).limitReached) {
+              navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+            }
           } else {
             const res = recordGuestVideo();
-            toast.success(`Host zhlédl video ${res.videosWatched}/${GUEST_MAX_VIDEOS}!`);
+            if (res.reachedLimit) {
+              navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+            } else {
+              toast.success(`Host zhlédl video ${res.videosWatched}/${GUEST_MAX_VIDEOS}!`);
+            }
           }
         }}
         isGuest={!user}
         guestVideosWatched={getGuestState().videosWatched}
+      />
+
+      {/* 5s Povinné promo okno na Premium po dokončení sady otázek pro free studenty */}
+      <MandatorySetPromoModal
+        isOpen={isMandatoryPromoOpen}
+        onFinish={() => setIsMandatoryPromoOpen(false)}
+        onOpenPaywall={() => setIsPremiumFeatureModalOpen(true)}
       />
 
       {/* Sjednocený Paywall dialog pro Premium funkce (Dotaz lektorovi) */}
@@ -1147,8 +1788,28 @@ export default function PracticeSession() {
         onClose={() => setIsPremiumFeatureModalOpen(false)}
         type="premium"
         title="Komunikace s lektorem vyžaduje Premium"
-        description="Přímá komunikace s lektorem, podrobné vysvětlení nejasných úloh a neomezené procvičování bez čekání na žolíky je součástí balíčku Premium."
+        description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
       />
+
+      {/* Lightbox dialog pro zvětšení vzorového řešení geometrie */}
+      <Dialog open={Boolean(lightboxImageUrl)} onOpenChange={(open) => { if (!open) setLightboxImageUrl(null); }}>
+        <DialogContent className="max-w-4xl p-4 sm:p-6 bg-white/95 backdrop-blur-md border border-gray-200 rounded-3xl shadow-2xl">
+          <DialogHeader className="flex flex-row items-center justify-between pb-2">
+            <DialogTitle className="text-base font-black text-gray-900 flex items-center gap-2">
+              <span>📐</span> Vzorové řešení (plná velikost)
+            </DialogTitle>
+          </DialogHeader>
+          {lightboxImageUrl && (
+            <div className="flex items-center justify-center p-2 bg-[#FAF7F0] rounded-2xl overflow-auto max-h-[80vh]">
+              <img
+                src={lightboxImageUrl}
+                alt="Vzorové řešení v plné velikosti"
+                className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-xs"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -152,11 +152,10 @@ Pro debug učitele využívej účet ucitel@ucitel.cz s heslem ucitel123 a pro d
   - V `src/components/common/UnifiedPaywallModal.tsx` funguje 2-krokový proces (Výběr balíčku -> Fakturační formulář -> Platební instrukce).
   - Formulář vyžaduje jméno klienta, fakturační adresu (ulice, město, PSČ), e-mail pro fakturu, souhlas s obchodními podmínkami a volitelný newsletter.
   - Aktuální cena Premium balíčku: **99 Kč / měsíc**.
-- **Platba QR kódem (převodem na účet):**
-  - Okamžitě funkční díky standardu SPAYD (`src/utils/qrPayment.ts`).
-  - Do zprávy pro příjemce se automaticky propisuje e-mail klienta a variabilní symbol = ID objednávky.
-  - Bankovní účet je konfigurovatelný v `.env` (`BANK_ACCOUNT_NUMBER`, `BANK_CODE`, `BANK_NAME`, `BANK_RECIPIENT`).
-- **Platební brána Comgate (Sandbox / Testovací režim):**
+- **Výhradní platební metoda – Platební brána Comgate (Sandbox / Produkční režim):**
+  - Vzhledem k charakteru měsíčního opakovaného předplatného (99 Kč / měsíc) byla odstraněna volba jednorázové platby QR kódem / bankovním převodem.
+  - Všechny platby probíhají výhradně přes platební bránu Comgate (karta online, Apple Pay, Google Pay).
+  - V testovacím / sandbox režimu modal nabízí tlačítko pro testovací simulaci autorizace platby kartou, po níž dojde k okamžité aktivaci ProEducator Premium.
   - Backend připraven v `server/index.js` (`POST /api/orders/create` a webhook `POST /api/payments/comgate/notify`).
   - Podporuje testovací režim (`COMGATE_TEST_MODE="true"`). Dokud nejsou v `.env` zadány ostré klíče od Comgate, funguje v sandbox režimu s možností testovací simulace platby.
   - Po úspěšném zaplacení server automaticky aktivuje `role: 'premium'` v dokumentu uživatele.

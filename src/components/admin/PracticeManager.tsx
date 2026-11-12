@@ -1056,9 +1056,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         toast.error('Vyberte správnou odpověď z možností.');
         return;
       }
-    } else {
+    } else if (editingQuestion.type === 'open') {
       if (!editingQuestion?.correctAnswer?.trim()) {
         toast.error('Vyplňte správnou odpověď.');
+        return;
+      }
+    } else if (editingQuestion.type === 'self_check') {
+      if (!editingQuestion.solutionImageUrl?.trim() && !editingQuestion.solutionSvgContent?.trim() && !editingQuestion.explanation?.trim()) {
+        toast.error('Zadejte alespoň vzorový obrázek řešení nebo postup řešení.');
         return;
       }
     }
@@ -1107,15 +1112,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       const res = await convertFileToSvg(file, (msg) => setConversionMsg(msg));
       setEditingQuestion(prev => ({
         ...prev,
-        svgContent: res.svgString,
-        imageUrl: res.thumbnailDataUrl || ''
+        svgContent: ext === 'svg' ? res.svgString : '',
+        imageUrl: ext !== 'svg' ? (res.thumbnailDataUrl || '') : ''
       }));
       toast.success(
         ext === 'svg'
           ? 'SVG soubor úspěšně načten a přiřazen k otázce!'
           : ext === 'pdf'
-            ? 'PDF úspěšně převedeno na vektorové SVG a vloženo k otázce!'
-            : 'Obrázek byl úspěšně převeden do formátu SVG a vložen k otázce!'
+            ? 'PDF úspěšně převedeno a vloženo k otázce!'
+            : 'Obrázek byl úspěšně optimalizován a vložen k otázce!'
       );
     } catch (err: any) {
       console.error('Error processing question image/svg:', err);
@@ -1123,6 +1128,45 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     } finally {
       setIsUploadingImage(false);
       setConversionMsg('');
+      e.target.value = '';
+    }
+  };
+
+  const [isUploadingSolutionImage, setIsUploadingSolutionImage] = useState(false);
+  const [solutionConversionMsg, setSolutionConversionMsg] = useState('');
+
+  const handleQuestionSolutionFileDrop = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const validExts = ['svg', 'pdf', 'png', 'jpg', 'jpeg', 'webp'];
+    if (!ext || !validExts.includes(ext)) {
+      toast.error('Podporovány jsou soubory SVG, PDF, PNG, JPG a WebP.');
+      return;
+    }
+
+    if (file.size > 15 * 1024 * 1024) {
+      toast.error('Soubor je příliš velký (maximum 15 MB).');
+      return;
+    }
+
+    setIsUploadingSolutionImage(true);
+    setSolutionConversionMsg('Převádím soubor vzorového řešení...');
+    try {
+      const res = await convertFileToSvg(file, (msg) => setSolutionConversionMsg(msg));
+      setEditingQuestion(prev => ({
+        ...prev,
+        solutionSvgContent: ext === 'svg' ? res.svgString : '',
+        solutionImageUrl: ext !== 'svg' ? (res.thumbnailDataUrl || '') : ''
+      }));
+      toast.success('Vzorové řešení úspěšně načteno a přiřazeno k otázce!');
+    } catch (err: any) {
+      console.error('Error processing solution image/svg:', err);
+      toast.error('Nepodařilo se zpracovat vzorové řešení: ' + (err.message || ''));
+    } finally {
+      setIsUploadingSolutionImage(false);
+      setSolutionConversionMsg('');
       e.target.value = '';
     }
   };
@@ -2176,9 +2220,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                               <div className="flex items-center gap-2">
                                                 <span className="font-bold text-gray-400">{qIdx + 1}.</span>
                                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider ${
-                                                  q.type === 'choice' ? 'bg-blue-50 text-blue-700' : 'bg-purple-50 text-purple-700'
+                                                  q.type === 'choice' ? 'bg-blue-50 text-blue-700' : q.type === 'self_check' ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-purple-50 text-purple-700'
                                                 }`}>
-                                                  {q.type === 'choice' ? '4 možnosti' : 'Volná odpověď'}
+                                                  {q.type === 'choice' ? '4 možnosti' : q.type === 'self_check' ? 'Self check' : 'Volná odpověď'}
                                                 </span>
                                                 <span className={`px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider border ${
                                                   (q.difficulty || 'Střední') === 'Lehká' 
@@ -2195,6 +2239,12 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                                     <span>{q.svgContent ? 'SVG' : 'Obrázek'}</span>
                                                   </span>
                                                 )}
+                                                {(q.solutionSvgContent || q.solutionImageUrl) && (
+                                                  <span className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-sky-50 text-sky-800 border border-sky-200 flex items-center gap-1 shrink-0" title="Otázka má přiložené vzorové řešení pro kontrolu">
+                                                    <Eye size={10} />
+                                                    <span>Řešení</span>
+                                                  </span>
+                                                )}
                                                 {q.caseSensitive && (
                                                   <span 
                                                     className="px-2 py-0.5 rounded font-black text-[9px] uppercase tracking-wider bg-violet-50 text-violet-700 border border-violet-200 flex items-center gap-1 shrink-0" 
@@ -2209,7 +2259,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                                 </span>
                                               </div>
                                               <div className="pl-5 text-gray-500">
-                                                Správná odpověď: <span className="font-bold text-emerald-700">{q.correctAnswer}</span>
+                                                Správná odpověď: <span className="font-bold text-emerald-700">{q.type === 'self_check' ? 'Vzorové řešení (Self-check)' : q.correctAnswer}</span>
                                               </div>
                                             </div>
                                           </div>
@@ -3120,7 +3170,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-bold text-gray-700 block mb-1.5">Typ otázky</label>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-3 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setEditingQuestion(prev => ({ 
@@ -3128,7 +3178,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                       type: 'choice',
                       options: prev?.options?.length ? prev.options : ['', '', '', '']
                     }))}
-                    className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    className={`p-2 rounded-xl border font-bold text-xs flex items-center justify-center gap-1 cursor-pointer transition-all ${
                       editingQuestion?.type === 'choice'
                         ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
                         : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
@@ -3140,13 +3190,25 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   <button
                     type="button"
                     onClick={() => setEditingQuestion(prev => ({ ...prev, type: 'open' }))}
-                    className={`p-2.5 rounded-xl border font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
+                    className={`p-2 rounded-xl border font-bold text-xs flex items-center justify-center gap-1 cursor-pointer transition-all ${
                       editingQuestion?.type === 'open'
                         ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
                         : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
                     }`}
                   >
                     Volná odpověď
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setEditingQuestion(prev => ({ ...prev, type: 'self_check', options: [] }))}
+                    className={`p-2 rounded-xl border font-bold text-xs flex items-center justify-center gap-1 cursor-pointer transition-all ${
+                      editingQuestion?.type === 'self_check'
+                        ? 'bg-[#1E1B18] text-white border-transparent shadow-sm'
+                        : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                    Self check
                   </button>
                 </div>
               </div>
@@ -3491,26 +3553,104 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               </div>
             )}
 
-            {/* Case-sensitive switch */}
-            <div className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/70 hover:bg-gray-50 transition-colors">
-              <label className="flex items-start gap-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={Boolean(editingQuestion?.caseSensitive)}
-                  onChange={e => setEditingQuestion(prev => prev ? ({ ...prev, caseSensitive: e.target.checked }) : null)}
-                  className="mt-0.5 w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600 cursor-pointer shrink-0"
-                />
-                <div className="space-y-0.5">
-                  <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
-                    <span>Rozlišovat velká a malá písmena (Case-sensitive)</span>
-                    <span className="px-1.5 py-0.2 rounded font-black text-[9px] bg-violet-100 text-violet-800 border border-violet-200">Aa</span>
-                  </div>
-                  <p className="text-[11px] text-gray-500 leading-relaxed">
-                    Při zapnutí musí student zadat přesnou shodu velkých a malých písmen (např. u vlastních jmen nebo pravopisu). Ve výchozím stavu je kontrola volná bez ohledu na velikost písmen.
+            {/* Vzorové řešení pro kontrolu (jen pro self_check) */}
+            {editingQuestion?.type === 'self_check' && (
+              <div className="space-y-4 bg-amber-50/60 p-5 rounded-2xl border border-amber-200/90">
+                <div>
+                  <h5 className="font-bold text-sm text-gray-900 flex items-center gap-2">
+                    <Eye size={16} className="text-amber-600" />
+                    Vzorové řešení pro kontrolu (Self check)
+                  </h5>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Obrázek nebo textové kroky konstrukce, které se studentovi odhalí po kliknutí na tlačítko pro kontrolu.
                   </p>
                 </div>
-              </label>
-            </div>
+
+                {/* Upload vzorového obrázku řešení */}
+                <div>
+                  <label className="text-xs font-bold text-gray-700 block mb-1.5">
+                    Obrázek / nákres správného řešení (vektorové SVG, PDF, PNG, JPG)
+                  </label>
+                  {editingQuestion?.solutionSvgContent || editingQuestion?.solutionImageUrl ? (
+                    <div className="relative border border-amber-200 rounded-xl p-3 bg-white flex flex-col items-center justify-center space-y-2.5 shadow-2xs">
+                      {editingQuestion?.solutionSvgContent ? (
+                        <div 
+                          className="w-full flex justify-center [&>svg]:max-h-56 [&>svg]:w-auto [&>svg]:max-w-full overflow-hidden p-2 bg-[#FAF7F0] rounded-lg"
+                          dangerouslySetInnerHTML={{ __html: sanitizeSvg(editingQuestion.solutionSvgContent) }}
+                        />
+                      ) : (
+                        <img
+                          src={editingQuestion.solutionImageUrl}
+                          alt="Náhled vzorového řešení"
+                          className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
+                        />
+                      )}
+                      <div className="flex flex-wrap items-center justify-between gap-2 w-full pt-1 border-t border-gray-100">
+                        <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                          <CorrectCyanIcon size={13} />
+                          {editingQuestion?.solutionSvgContent ? 'Vzorové řešení uloženo jako vektorové SVG' : 'Obrázek řešení (URL / data)'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setEditingQuestion(prev => ({ ...prev, solutionSvgContent: '', solutionImageUrl: '' }))}
+                          className="px-2.5 py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          Smazat
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2.5">
+                      <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                        <label className={`cursor-pointer inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-amber-300 hover:border-amber-500 bg-white hover:bg-amber-50/50 text-amber-900 text-xs font-bold transition-all shadow-2xs shrink-0 ${isUploadingSolutionImage ? 'opacity-60 pointer-events-none' : ''}`}>
+                          <input
+                            type="file"
+                            accept=".svg,.pdf,.png,.jpg,.jpeg,.webp"
+                            className="hidden"
+                            onChange={handleQuestionSolutionFileDrop}
+                            disabled={isUploadingSolutionImage}
+                          />
+                          <Upload size={14} className="text-amber-600" />
+                          <span>{isUploadingSolutionImage ? (solutionConversionMsg || 'Zpracovávám...') : 'Nahrát vzorový obrázek / PDF'}</span>
+                        </label>
+                        <div className="flex-1 w-full">
+                          <Input
+                            type="text"
+                            placeholder="Nebo zadejte URL odkaz na obrázek řešení..."
+                            value={editingQuestion?.solutionImageUrl || ''}
+                            onChange={e => setEditingQuestion(prev => ({ ...prev, solutionImageUrl: e.target.value, solutionSvgContent: '' }))}
+                            className="rounded-xl h-10 text-xs bg-white border-amber-200"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Case-sensitive switch */}
+            {editingQuestion?.type === 'open' && (
+              <div className="p-3.5 rounded-xl border border-gray-200 bg-gray-50/70 hover:bg-gray-50 transition-colors">
+                <label className="flex items-start gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(editingQuestion?.caseSensitive)}
+                    onChange={e => setEditingQuestion(prev => prev ? ({ ...prev, caseSensitive: e.target.checked }) : null)}
+                    className="mt-0.5 w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500 accent-violet-600 cursor-pointer shrink-0"
+                  />
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
+                      <span>Rozlišovat velká a malá písmena (Case-sensitive)</span>
+                      <span className="px-1.5 py-0.2 rounded font-black text-[9px] bg-violet-100 text-violet-800 border border-violet-200">Aa</span>
+                    </div>
+                    <p className="text-[11px] text-gray-500 leading-relaxed">
+                      Při zapnutí musí student zadat přesnou shodu velkých a malých písmen (např. u vlastních jmen nebo pravopisu). Ve výchozím stavu je kontrola volná bez ohledu na velikost písmen.
+                    </p>
+                  </div>
+                </label>
+              </div>
+            )}
 
             {/* Student hint (takes full width, difficulty removed) */}
             <div className="space-y-1">

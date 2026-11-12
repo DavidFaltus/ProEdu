@@ -84,7 +84,7 @@ export async function convertFileToSvg(
           const canvas = document.createElement('canvas');
           let w = img.naturalWidth || img.width;
           let h = img.naturalHeight || img.height;
-          const maxDim = 1100;
+          const maxDim = 1000;
           if (w > maxDim || h > maxDim) {
             if (w > h) {
               h = Math.round((h * maxDim) / w);
@@ -102,7 +102,10 @@ export async function convertFileToSvg(
             return;
           }
           ctx.drawImage(img, 0, 0, w, h);
-          const compressed = canvas.toDataURL('image/jpeg', 0.84);
+          let compressed = canvas.toDataURL('image/webp', 0.82);
+          if (!compressed.startsWith('data:image/webp')) {
+            compressed = canvas.toDataURL('image/jpeg', 0.82);
+          }
           resolve({ width: w, height: h, optimizedDataUrl: compressed });
         } catch {
           resolve({ width: img.naturalWidth || 800, height: img.naturalHeight || 600, optimizedDataUrl: dataUrl });
@@ -410,10 +413,13 @@ export async function downloadMaterialAsPdf(material: {
   const downloadFileName = safeBaseName.toLowerCase().endsWith('.pdf') ? safeBaseName : `${safeBaseName}.pdf`;
 
   const directPdfUrl =
+    (material as any).downloadUrl ||
     material.pdfUrl ||
-    (material.fileUrl && (material.fileUrl.toLowerCase().endsWith('.pdf') || material.fileUrl.startsWith('data:application/pdf'))
-      ? material.fileUrl
-      : null);
+    (material.fileUrl && (
+      material.fileUrl.toLowerCase().endsWith('.pdf') || 
+      material.fileUrl.startsWith('data:application/pdf') ||
+      material.fileUrl.includes('/api/materials/')
+    ) ? (material.fileUrl.endsWith('/file') ? material.fileUrl.replace(/\/file$/, '/download') : material.fileUrl) : null);
 
   if (directPdfUrl) {
     try {

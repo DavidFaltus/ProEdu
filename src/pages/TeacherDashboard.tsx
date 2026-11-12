@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Video, BarChart3, CreditCard } from 'lucide-react';
+import { Video, BarChart3, CreditCard, Bug } from 'lucide-react';
 import {
   BrainPinkIcon,
   MaterialYellowIcon,
@@ -18,6 +18,7 @@ import CoursesManager from '../components/admin/CoursesManager';
 import StudentsProgressManager from '../components/admin/StudentsProgressManager';
 import SurveyResponsesManager from '../components/admin/SurveyResponsesManager';
 import OrdersManager from '../components/admin/OrdersManager';
+import BugReportsManager from '../components/admin/BugReportsManager';
 import { getAllInquiries, QuestionInquiry } from '../services/inquiryService';
 import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
@@ -25,7 +26,7 @@ import { LiveLesson } from '../types';
 export default function TeacherDashboard() {
   const { profile: userProfile } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys', 'orders'];
+  const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys', 'orders', 'bugReports'];
   const tabParam = searchParams.get('tab');
   const activeTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'practices';
 
@@ -155,6 +156,13 @@ export default function TeacherDashboard() {
             <CreditCard size={16} />
             <span>Objednávky</span>
           </TabsTrigger>
+          <TabsTrigger 
+            value="bugReports" 
+            className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-rose-600 data-[state=active]:shadow-sm data-[state=active]:border-rose-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
+          >
+            <Bug size={16} />
+            <span>Hlášení chyb</span>
+          </TabsTrigger>
           </TabsList>
 
           <TabsContent value="practices">
@@ -190,6 +198,10 @@ export default function TeacherDashboard() {
 
           <TabsContent value="orders">
             <OrdersManager />
+          </TabsContent>
+
+          <TabsContent value="bugReports">
+            <BugReportsManager />
           </TabsContent>
         </Tabs>
     </div>

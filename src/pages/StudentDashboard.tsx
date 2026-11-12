@@ -8,6 +8,7 @@ import { Card } from '../components/ui/card';
 import { ArrowRight, Play, RotateCcw, Lock, Calendar, Sparkles, CheckCircle2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } from '../components/ui/dialog';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import DailyLimitExhaustedModal from '../components/common/DailyLimitExhaustedModal';
 import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import CustomIcon, { 
   StarPinkIcon, 
@@ -17,7 +18,8 @@ import CustomIcon, {
   CorrectCyanIcon, 
   CustomIconName 
 } from '../components/common/CustomIcon';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
+import { getGuestState } from '../services/jokerService';
 import QuickCalendar from '../components/QuickCalendar';
 import { getStudentInquiries, getAllInquiries, markInquiryAsRead, QuestionInquiry } from '../services/inquiryService';
 import StudentInquiriesSection from '../components/StudentInquiriesSection';
@@ -85,10 +87,27 @@ const TEACHER_HEADLINE_TEMPLATES = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile, isPremium, openAuthModal } = useAuth();
+  const { user, profile, isPremium, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isPaymentSuccessModalOpen, setIsPaymentSuccessModalOpen] = useState(false);
+  const [isDailyLimitModalOpen, setIsDailyLimitModalOpen] = useState(false);
+
+  // Kontrola vyčerpání limitu žolíků i videí pro dnešní den
+  const isGuest = !user;
+  const isTeacher = profile?.role === 'teacher';
+  const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
+  const isVideoLimitReached = videosWatchedToday >= 3;
+  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
+
+  // Zpracování návratu po redirectu z vyčerpaného procvičování
+  useEffect(() => {
+    if (location.state?.showDailyLimitModal) {
+      setIsDailyLimitModalOpen(true);
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, navigate, location.pathname]);
 
   // Zpracování návratu z platební brány Comgate
   useEffect(() => {
@@ -111,7 +130,6 @@ export default function StudentDashboard() {
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
-  const isTeacher = profile?.role === 'teacher';
   const isFreeOrGuest = (!user && !profile) || profile?.role === 'free' || (!isPremium && !isTeacher);
   const canViewTutorAndLessons = !isFreeOrGuest;
 
@@ -481,7 +499,11 @@ export default function StudentDashboard() {
                     const handleCardClick = () => {
                       if (isLockedForGuest) {
                         openAuthModal();
-                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 10 žolíků na každý den!');
+                        return;
+                      }
+                      if (isOutOfJokersAndVideos) {
+                        setIsDailyLimitModalOpen(true);
                         return;
                       }
                       trackSectionClick('dashboard_recommended_card', `/practice/session/${item.subtopicId}`, {
@@ -516,7 +538,11 @@ export default function StudentDashboard() {
                       e.stopPropagation();
                       if (isLockedForGuest) {
                         openAuthModal();
-                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                        toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 10 žolíků na každý den!');
+                        return;
+                      }
+                      if (isOutOfJokersAndVideos) {
+                        setIsDailyLimitModalOpen(true);
                         return;
                       }
                       trackSectionClick('dashboard_recommended_practice_btn', `/practice/session/${item.subtopicId}`, {
@@ -728,6 +754,22 @@ export default function StudentDashboard() {
         initialSubject={scheduleInitialSubject}
         initialSubtopics={scheduleInitialSubtopics}
         existingTodos={todos}
+      />
+
+      {/* Modal při vyčerpání všech denních žolíků a videí */}
+      <DailyLimitExhaustedModal
+        isOpen={isDailyLimitModalOpen}
+        onClose={() => setIsDailyLimitModalOpen(false)}
+        onOpenPaywall={() => {
+          setIsDailyLimitModalOpen(false);
+          setIsPaywallOpen(true);
+        }}
+        isGuest={isGuest}
+        onOpenAuthModal={() => {
+          setIsDailyLimitModalOpen(false);
+          openAuthModal();
+        }}
+        primaryButtonText="Rozumím"
       />
 
       {/* Oslavný dialog po úspěšném návratu z platební brány Comgate */}

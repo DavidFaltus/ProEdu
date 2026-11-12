@@ -130,8 +130,7 @@ export default function Terms() {
             <strong>5.2. Způsoby platby:</strong> Zákazník může platbu provést:
           </p>
           <ul className="list-disc list-inside space-y-1 pl-2 text-gray-600">
-            <li><strong>Online platební kartou, Apple Pay, Google Pay nebo rychlým bankovním převodem</strong> prostřednictvím zabezpečené platební brány Comgate poskytované společností Comgate a.s. (licencovaná platební instituce pod dohledem ČNB, <a href="https://www.comgate.cz/cz/platebni-brana" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">www.comgate.eu</a>).</li>
-            <li><strong>Bankovním převodem s QR kódem</strong> na bankovní účet poskytovatele na základě vystavených platebních instrukcí.</li>
+            <li><strong>Online platební kartou, Apple Pay nebo Google Pay</strong> prostřednictvím zabezpečené platební brány Comgate poskytované společností Comgate a.s. (licencovaná platební instituce pod dohledem ČNB, <a href="https://www.comgate.cz/cz/platebni-brana" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">www.comgate.eu</a>).</li>
           </ul>
           <p>
             <strong>5.3. Okamžik zaplacení:</strong> Závazek zákazníka uhradit cenu je splněn okamžikem připsání částky na účet poskytovatele nebo potvrzením úspěšné autorizace platební bránou.
@@ -175,7 +174,7 @@ export default function Terms() {
           </p>
           <ul className="list-disc list-inside space-y-1.5 pl-2 text-gray-600">
             <li>Zákazník je oprávněn opakované předplatné <strong>kdykoliv a bez udání důvodu zrušit</strong>.</li>
-            <li>Zrušení lze provést jednoduše v uživatelském rozhraní aplikace v sekci <strong>Nastavení &rarr; Předplatné</strong> kliknutím na tlačítko <em>„Zrušit předplatné“</em>, případně zasláním e-mailu na adresu <a href="mailto:info@pro-edu.cz" className="text-amber-700 underline font-bold">info@pro-edu.cz</a>.</li>
+            <li>Zrušení lze provést jednoduše v uživatelském rozhraní aplikace v sekci <strong>Nastavení &rarr; Předplatné</strong> kliknutím na tlačítko <em>„Zrušit předplatné“</em>, případně zasláním e-mailu na adresu <a href="mailto:info@pro-edu.eu" className="text-amber-700 underline font-bold">info@pro-edu.eu</a>.</li>
             <li>Po zrušení zůstává prémiový přístup aktivní až do konce již uhrazeného 30denního období. Po jeho skončení se účet automaticky přepne na bezplatný režim (Free) a žádné další poplatky se již nestrhnou. Poskytovatel neúčtuje žádné storno poplatky.</li>
           </ul>
         </section>

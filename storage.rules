@@ -29,6 +29,15 @@ service firebase.storage {
                     request.resource.size < 5 * 1024 * 1024 && 
                     request.resource.contentType.startsWith('image/');
     }
+
+    // Screenshots and attachments for bug reports
+    match /bugReports/{userId}/{fileId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && 
+                    isOwner(userId) && 
+                    request.resource.size < 10 * 1024 * 1024 && 
+                    request.resource.contentType.startsWith('image/');
+    }
     
     // Strict least privilege principle on unmanaged paths
     match /{allPaths=**} {

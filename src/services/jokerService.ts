@@ -2,14 +2,14 @@ import { doc, updateDoc, deleteField } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UserProfile } from '../types';
 
-export const DEFAULT_DAILY_JOKERS = 20;
-export const BASE_JOKER_CAP = 20;
+export const DEFAULT_DAILY_JOKERS = 10;
+export const BASE_JOKER_CAP = 10;
 export const MAX_STREAK_DAYS = 10;
-export const MAX_JOKER_CAP = 30; // 20 + 10 dní streaku
-export const DAILY_GRANT_JOKERS = 5;
+export const MAX_JOKER_CAP = 15; // 10 základ + 5 navýšený limit za 10denní streak
+export const DAILY_GRANT_JOKERS = 10;
 export const VIDEO_REWARD_JOKERS = 5;
-export const REFERRAL_REWARD_JOKERS = 50;
-export const SURVEY_REWARD_JOKERS = 20;
+export const REFERRAL_REWARD_JOKERS = 30;
+export const SURVEY_REWARD_JOKERS = 15;
 export const MAX_REFERRALS = 5;
 export const GUEST_MAX_VIDEOS = 3;
 
@@ -44,11 +44,10 @@ export function getYesterdayDateString(): string {
 }
 
 /**
- * Vypočítá maximální limit žolíků na základě streaku (20 až 30)
+ * Vypočítá maximální limit žolíků na základě streaku (10 nebo 15 při 10+ denním streaku)
  */
 export function calculateMaxJokersCap(streak: number = 0): number {
-  const safeStreak = Math.max(0, Math.min(MAX_STREAK_DAYS, streak || 0));
-  return Math.min(MAX_JOKER_CAP, BASE_JOKER_CAP + safeStreak);
+  return (streak || 0) >= MAX_STREAK_DAYS ? MAX_JOKER_CAP : BASE_JOKER_CAP;
 }
 
 /**
@@ -151,10 +150,10 @@ export async function checkAndResetDailyJokers(profile: UserProfile): Promise<Us
 
   if (isNewGrantDay || effectiveStreak !== (profile.streak || 0)) {
     const existingJokers = profile.jokers !== undefined ? profile.jokers : BASE_JOKER_CAP;
-    // Denní příděl +5 žolíků nepřekročí kapacitu danou streakem.
-    // Pokud uživatel má více žolíků (např. z bonusů), nic se mu nestrhává, ale +5 se již nepřičte.
+    // Denní obnova doplní žolíky do plné kapacity (10 nebo 15 dle streaku).
+    // Pokud uživatel má více žolíků (např. z bonusů), nic se mu nestrhává, ale další žolíky se nepřičtou.
     const newJokers = isNewGrantDay
-      ? (existingJokers >= currentCap ? existingJokers : Math.min(currentCap, existingJokers + DAILY_GRANT_JOKERS))
+      ? (existingJokers < currentCap ? currentCap : existingJokers)
       : existingJokers;
 
     const shouldResetStreakDate = effectiveStreak === 0 && profile.lastStreakPracticeDate !== today && profile.lastStreakPracticeDate !== yesterday;
@@ -271,13 +270,25 @@ export async function consumeJoker(
 }
 
 /**
- * Přičte žolíky po zhlédnutí 15s videa (+5 do limitu 20–30 dle streaku)
+ * Přičte žolíky po zhlédnutí 15s videa (+5 do limitu 10/15 dle streaku, max. 3x denně)
  */
 export async function rewardVideoJokers(
   profile: UserProfile
-): Promise<{ success: boolean; newJokers: number; reachedCap: boolean; cap: number; added: number }> {
+): Promise<{ success: boolean; newJokers: number; reachedCap: boolean; cap: number; added: number; limitReached?: boolean }> {
   const currentCap = calculateMaxJokersCap(profile.streak || 0);
   const currentJokers = profile.jokers !== undefined ? profile.jokers : BASE_JOKER_CAP;
+  const currentVideos = profile.dailyVideosWatched || 0;
+
+  if (currentVideos >= GUEST_MAX_VIDEOS) {
+    return {
+      success: false,
+      newJokers: currentJokers,
+      reachedCap: false,
+      cap: currentCap,
+      added: 0,
+      limitReached: true,
+    };
+  }
 
   if (currentJokers >= currentCap) {
     return {
@@ -291,7 +302,7 @@ export async function rewardVideoJokers(
 
   const newJokers = Math.min(currentCap, currentJokers + VIDEO_REWARD_JOKERS);
   const added = newJokers - currentJokers;
-  const newVideos = (profile.dailyVideosWatched || 0) + 1;
+  const newVideos = currentVideos + 1;
 
   try {
     const userRef = doc(db, 'users', profile.uid);

@@ -230,10 +230,10 @@ export default function DevMonetizationToolbar() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => handleSetJokers(20)}
+                  onClick={() => handleSetJokers(10)}
                   className="h-7 text-[10px] font-bold border-white/20 text-green-300"
                 >
-                  Reset 20
+                  Reset 10
                 </Button>
 
                 <Button

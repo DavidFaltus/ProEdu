@@ -56,6 +56,9 @@
 }
 
 @layer base {
+  html {
+    scrollbar-gutter: stable;
+  }
   body {
     @apply font-sans bg-[#FAF6EE] text-[#1E1B18];
   }
@@ -422,4 +425,27 @@
   font-size: 0.75rem;
   color: #6B7280;
   font-weight: 500;
+}
+
+/* Base UI Dialog smooth transitions without layout shift or flicker */
+[data-slot="dialog-overlay"] {
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 1;
+  will-change: opacity;
+}
+[data-slot="dialog-overlay"][data-starting-style],
+[data-slot="dialog-overlay"][data-ending-style] {
+  opacity: 0;
+}
+
+[data-slot="dialog-content"] {
+  transition: opacity 180ms cubic-bezier(0.16, 1, 0.3, 1), transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  opacity: 1;
+  transform: scale(1);
+  will-change: transform, opacity;
+}
+[data-slot="dialog-content"][data-starting-style],
+[data-slot="dialog-content"][data-ending-style] {
+  opacity: 0;
+  transform: scale(0.97);
 }

@@ -103,7 +103,7 @@ export default function OrdersManager() {
             Správa objednávek a předplatného
           </h2>
           <p className="text-xs sm:text-sm text-gray-500 font-medium">
-            Přehled plateb přes QR kód a platební bránu Comgate
+            Přehled objednávek a plateb přes platební bránu Comgate
           </p>
         </div>
 

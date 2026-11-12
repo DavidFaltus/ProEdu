@@ -1,13 +1,15 @@
 import { 
-  collection, doc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, writeBatch,
+  collection, doc, getDoc, getDocs, addDoc, setDoc, updateDoc, deleteDoc, writeBatch,
   query, where, Timestamp 
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, auth, storage } from '../lib/firebase';
 import { cacheManager } from '../lib/cacheManager';
 import { 
-  PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig 
+  PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig,
+  ExistingMaterialItem, MaterialStatus, ActivePracticeSession, ActivePracticeAnswerItem 
 } from '../types';
+export type { ExistingMaterialItem, MaterialStatus };
 import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
 
 export const PREDEFINED_SUBJECTS = [
@@ -29,7 +31,7 @@ export const PREDEFINED_SUBJECTS = [
 
 // Helper to get active authenticated teacher/user UID
 function getEffectiveUserId(userId?: string): string {
-  return userId || auth.currentUser?.uid || '';
+  return auth.currentUser?.uid || userId || '';
 }
 
 // -------------------------------------------------------------
@@ -509,21 +511,6 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
 
 export const LEARNING_SHEETS_COLLECTION = 'learningSheets';
 
-export interface ExistingMaterialItem {
-  id: string;
-  title: string;
-  subject: string;
-  topic: string;
-  svgUrl?: string | null;
-  thumbnailUrl?: string | null;
-  fileUrl?: string | null;
-  pdfUrl?: string | null;
-  svgContent?: string | null;
-  studyTheory?: string;
-  hasStudyMaterial: boolean;
-  createdAt?: any;
-}
-
 export interface MaterialInput {
   id?: string;
   title: string;
@@ -535,100 +522,35 @@ export interface MaterialInput {
   thumbnailUrl?: string | null;
   fileUrl?: string | null;
   pdfUrl?: string | null;
+  downloadUrl?: string | null;
   fileType?: string;
+  originalName?: string;
+  fileData?: string;
+  thumbnailDataUrl?: string;
 }
 
 /**
- * Nahraje soubory grafického listu (SVG, volitelně původní PDF a volitelně JPEG náhled).
- * Nejprve zkusí Firebase Storage; pokud není inicializován/dostupný, automaticky použije serverové API (/api/materials/upload).
+ * Zahájí rychlé asynchronní nahrání studijního materiálu přes serverové API.
+ * Server ihned vrátí HTTP 202 se statusem 'processing' a soubor uloží v podkolekci chunks.
  */
-export async function uploadMaterialAssets(
-  svgContent: string,
-  thumbnailDataUrl?: string,
-  userId?: string,
-  fileName?: string,
-  originalPdfFile?: File
-): Promise<{ svgUrl: string; thumbnailUrl?: string; pdfUrl?: string }> {
-  const cleanUserId = userId || auth.currentUser?.uid || 'teacher';
-  let svgUrl = '';
-  let thumbnailUrl = '';
-  let pdfUrl = '';
-
-  // 1. Zkusíme Firebase Storage
-  try {
-    const fileId = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}.svg`;
-    const storageRef = ref(storage, `learningSheets/${cleanUserId}/${fileId}`);
-    const blob = new Blob([svgContent], { type: 'image/svg+xml;charset=utf-8' });
-    const snapshot = await uploadBytes(storageRef, blob, {
-      contentType: 'image/svg+xml',
-      customMetadata: {
-        originalName: fileName || 'material.svg',
-        uploadedBy: cleanUserId
-      }
-    });
-    svgUrl = await getDownloadURL(snapshot.ref);
-
-    if (originalPdfFile && (originalPdfFile.type === 'application/pdf' || originalPdfFile.name.toLowerCase().endsWith('.pdf'))) {
-      try {
-        const pdfFileId = `${Date.now()}_orig_${Math.random().toString(36).substring(2, 9)}.pdf`;
-        const pdfStorageRef = ref(storage, `learningSheets/${cleanUserId}/${pdfFileId}`);
-        const pdfSnapshot = await uploadBytes(pdfStorageRef, originalPdfFile, {
-          contentType: 'application/pdf',
-          customMetadata: {
-            originalName: originalPdfFile.name,
-            uploadedBy: cleanUserId
-          }
-        });
-        pdfUrl = await getDownloadURL(pdfSnapshot.ref);
-      } catch (pdfErr) {
-        console.warn('Původní PDF se do Storage nenahrálo, pokračuji:', pdfErr);
-      }
-    }
-
-    if (thumbnailDataUrl) {
-      try {
-        const thumbFileId = `${Date.now()}_thumb_${Math.random().toString(36).substring(2, 9)}.jpg`;
-        const thumbStorageRef = ref(storage, `learningSheets/${cleanUserId}/${thumbFileId}`);
-        const response = await fetch(thumbnailDataUrl);
-        const thumbBlob = await response.blob();
-        const thumbSnapshot = await uploadBytes(thumbStorageRef, thumbBlob, {
-          contentType: 'image/jpeg',
-          customMetadata: {
-            uploadedBy: cleanUserId
-          }
-        });
-        thumbnailUrl = await getDownloadURL(thumbSnapshot.ref);
-      } catch (thumbErr) {
-        console.warn('Miniatura se do Storage nenahrála, pokračuji bez ní:', thumbErr);
-      }
-    }
-
-    if (svgUrl) {
-      return {
-        svgUrl,
-        thumbnailUrl: thumbnailUrl || undefined,
-        pdfUrl: pdfUrl || undefined
-      };
-    }
-  } catch (storageErr) {
-    console.warn('[Firebase Storage nedostupný, použijeme serverové úložiště API]:', storageErr);
-  }
-
-  // 2. Automatický fallback na serverové API /api/materials/upload
-  let pdfDataUrl: string | undefined;
-  if (originalPdfFile && (originalPdfFile.type === 'application/pdf' || originalPdfFile.name.toLowerCase().endsWith('.pdf'))) {
-    try {
-      pdfDataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error('Chyba při čtení PDF.'));
-        reader.readAsDataURL(originalPdfFile);
-      });
-    } catch (readErr) {
-      console.warn('Nepodařilo se načíst původní PDF pro serverový upload:', readErr);
-    }
-  }
-
+export async function uploadMaterial(payload: {
+  title: string;
+  subject?: string;
+  topic?: string;
+  studyTheory?: string;
+  fileData?: string;
+  fileType?: string;
+  originalName?: string;
+  thumbnailDataUrl?: string;
+}): Promise<{
+  success: boolean;
+  materialId: string;
+  status: 'processing' | 'ready';
+  thumbnailUrl?: string;
+  fileUrl?: string;
+  downloadUrl?: string;
+  message?: string;
+}> {
   const token = await auth.currentUser?.getIdToken();
   const res = await fetch('/api/materials/upload', {
     method: 'POST',
@@ -636,29 +558,63 @@ export async function uploadMaterialAssets(
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
-    body: JSON.stringify({
-      svgContent,
-      thumbnailDataUrl: thumbnailDataUrl || undefined,
-      pdfDataUrl: pdfDataUrl || undefined,
-      originalName: fileName || 'material.svg'
-    })
+    body: JSON.stringify(payload)
   });
 
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
-    throw new Error(errData.error || `Upload do serverového úložiště selhal (HTTP ${res.status})`);
+    throw new Error(errData.error || `Nahrávání materiálu selhalo (HTTP ${res.status})`);
   }
 
   const data = await res.json();
+  cacheManager.invalidate('materials');
+  return data;
+}
+
+/**
+ * Nahraje soubory grafického listu (SVG, PDF či obrázek s náhledem).
+ * Používá asynchronní serverové API s Firestore chunks.
+ */
+export async function uploadMaterialAssets(
+  svgContent: string,
+  thumbnailDataUrl?: string,
+  _userId?: string,
+  fileName?: string,
+  originalPdfFile?: File
+): Promise<{ svgUrl: string; thumbnailUrl?: string; pdfUrl?: string; materialId?: string }> {
+  let fileData: string | undefined;
+  let fileType = 'image/svg+xml';
+
+  if (originalPdfFile) {
+    fileType = 'application/pdf';
+    fileData = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Chyba při čtení souboru.'));
+      reader.readAsDataURL(originalPdfFile);
+    });
+  } else if (svgContent) {
+    fileData = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgContent)))}`;
+  }
+
+  const result = await uploadMaterial({
+    title: fileName || 'Studijní materiál',
+    originalName: fileName || (fileType === 'application/pdf' ? 'material.pdf' : 'material.svg'),
+    fileData,
+    fileType,
+    thumbnailDataUrl
+  });
+
   return {
-    svgUrl: data.svgUrl,
-    thumbnailUrl: data.thumbnailUrl || undefined,
-    pdfUrl: data.pdfUrl || undefined
+    svgUrl: result.fileUrl || `/api/materials/${result.materialId}/file`,
+    thumbnailUrl: result.thumbnailUrl || `/api/materials/${result.materialId}/thumbnail`,
+    pdfUrl: fileType === 'application/pdf' ? (result.fileUrl || `/api/materials/${result.materialId}/file`) : undefined,
+    materialId: result.materialId
   };
 }
 
 /**
- * Nahraje vygenerovaný SVG grafický list do Storage a vrátí trvalou veřejnou/autentizovanou URL.
+ * Nahraje vygenerovaný SVG grafický list.
  */
 export async function uploadLearningSheetSvg(
   svgContent: string,
@@ -670,51 +626,13 @@ export async function uploadLearningSheetSvg(
 }
 
 /**
- * Nahraje náhledovou miniaturu (JPEG z 1. strany) do Storage a vrátí URL.
+ * Nahraje náhledovou miniaturu (JPEG z 1. strany).
  */
 export async function uploadLearningSheetThumbnail(
   thumbnailDataUrl: string,
-  userId: string
+  _userId: string
 ): Promise<string> {
-  const cleanUserId = userId || auth.currentUser?.uid || 'teacher';
-
-  // 1. Zkusíme Firebase Storage
-  try {
-    const fileId = `${Date.now()}_thumb_${Math.random().toString(36).substring(2, 9)}.jpg`;
-    const storageRef = ref(storage, `learningSheets/${cleanUserId}/${fileId}`);
-    const response = await fetch(thumbnailDataUrl);
-    const blob = await response.blob();
-    const snapshot = await uploadBytes(storageRef, blob, {
-      contentType: 'image/jpeg',
-      customMetadata: {
-        uploadedBy: cleanUserId
-      }
-    });
-    return await getDownloadURL(snapshot.ref);
-  } catch (storageErr) {
-    console.warn('[Thumbnail storage upload failed, falling back to server API]:', storageErr);
-  }
-
-  // 2. Fallback na serverové API
-  const token = await auth.currentUser?.getIdToken();
-  const resp = await fetch('/api/materials/upload', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
-    },
-    body: JSON.stringify({
-      thumbnailDataUrl
-    })
-  });
-
-  if (!resp.ok) {
-    const errData = await resp.json().catch(() => ({}));
-    throw new Error(errData.error || `Upload miniatury selhal s kódem ${resp.status}`);
-  }
-
-  const data = await resp.json();
-  return data.thumbnailUrl;
+  return thumbnailDataUrl;
 }
 
 export function normalizeMaterialPayload(input: MaterialInput) {
@@ -724,8 +642,8 @@ export function normalizeMaterialPayload(input: MaterialInput) {
   const svgUrl = input.svgUrl?.trim() || null;
   const pdfUrl = input.pdfUrl?.trim() || (input.fileUrl?.trim()?.toLowerCase().endsWith('.pdf') ? input.fileUrl.trim() : null);
   const fileUrl = pdfUrl || input.fileUrl?.trim() || svgUrl || null;
+  const downloadUrl = input.downloadUrl?.trim() || null;
   
-  // Ochrana před příliš velkými inline base64 náhledy v dokumentu Firestore
   let thumbnailUrl = input.thumbnailUrl?.trim() || null;
   if (thumbnailUrl && thumbnailUrl.startsWith('data:') && thumbnailUrl.length > 100000) {
     thumbnailUrl = null;
@@ -733,8 +651,6 @@ export function normalizeMaterialPayload(input: MaterialInput) {
 
   const fileType = input.fileType || (pdfUrl ? 'application/pdf' : (svgUrl ? 'image/svg+xml' : 'application/pdf'));
 
-  // SVG ukládáme do Firestore content jen pokud je malé (např. < 200 KB) jako nouzový fallback,
-  // jinak se spoléhá na svgUrl v úložišti, aby se NIKDY nepřekročil tvrdý 1MB limit Firestore.
   let safeSvgContent = input.svgContent || null;
   if (safeSvgContent) {
     if (safeSvgContent.length > 200000) {
@@ -744,14 +660,6 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     }
   }
 
-  // Pokud byl nahrán velký soubor, ale nepodařilo se získat URL z úložiště a obsah byl oříznut:
-  if (!svgUrl && !fileUrl && !safeSvgContent && input.svgContent && input.svgContent.length > 200000) {
-    throw new Error(
-      `Grafický list má velikost ${(input.svgContent.length / 1024 / 1024).toFixed(1)} MB, což překračuje limit databáze Firestore (1 MB). Soubor musí být úspěšně nahrán do úložiště a mít platnou URL.`
-    );
-  }
-
-  // Zajistíme, že se do textového výkladu nedostane kód z .svg souboru
   let cleanStudyTheory = input.studyTheory?.trim() || '';
   if (cleanStudyTheory.startsWith('<svg') || cleanStudyTheory.includes('xmlns="http://www.w3.org/2000/svg"')) {
     cleanStudyTheory = '';
@@ -768,9 +676,12 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     subject,
     topic,
     fileUrl,
+    pdfUrl,
     svgUrl,
+    downloadUrl,
     thumbnailUrl,
     fileType,
+    hasStudyMaterial: true,
     content: JSON.stringify(contentObj)
   };
 }
@@ -779,6 +690,31 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
   const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
   const now = Timestamp.now();
   const effectiveUserId = getEffectiveUserId(userId);
+
+  // Pokud je předán soubor pro nový materiál, použijeme rychlý asynchronní endpoint na serveru
+  if (!materialData.id && (materialData.fileData || materialData.svgContent || materialData.studyTheory)) {
+    let fileData = materialData.fileData;
+    let fileType = materialData.fileType || 'application/pdf';
+
+    if (!fileData && materialData.svgContent) {
+      fileType = 'image/svg+xml';
+      fileData = `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(materialData.svgContent)))}`;
+    }
+
+    const res = await uploadMaterial({
+      title: materialData.title,
+      subject: materialData.subject || 'Matematika',
+      topic: materialData.topic || 'Obecné',
+      studyTheory: materialData.studyTheory || '',
+      fileData,
+      fileType,
+      originalName: materialData.originalName || (fileType === 'image/svg+xml' ? 'material.svg' : 'material.pdf'),
+      thumbnailDataUrl: materialData.thumbnailDataUrl || materialData.thumbnailUrl || undefined
+    });
+
+    return res.materialId;
+  }
+
   const normalized = normalizeMaterialPayload(materialData);
 
   if (materialData.id) {
@@ -787,7 +723,6 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
       ...normalized,
       updatedAt: now
     };
-    // Nikdy neměníme imutabilní pole při updateDoc
     delete updatePayload.createdBy;
     delete updatePayload.createdAt;
     await updateDoc(docRef, updatePayload);
@@ -796,6 +731,7 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
   } else {
     const payload: any = {
       ...normalized,
+      status: 'ready',
       createdBy: effectiveUserId,
       createdAt: now
     };
@@ -806,7 +742,20 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
 }
 
 export async function deleteMaterial(materialId: string): Promise<void> {
-  await deleteDoc(doc(db, LEARNING_SHEETS_COLLECTION, materialId));
+  try {
+    const token = await auth.currentUser?.getIdToken();
+    const res = await fetch(`/api/materials/${materialId}`, {
+      method: 'DELETE',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {})
+      }
+    });
+    if (!res.ok) {
+      await deleteDoc(doc(db, LEARNING_SHEETS_COLLECTION, materialId));
+    }
+  } catch {
+    await deleteDoc(doc(db, LEARNING_SHEETS_COLLECTION, materialId));
+  }
   cacheManager.invalidate('materials');
 }
 
@@ -843,13 +792,21 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
     subject: data.subject || 'Matematika',
     topic: data.topic || '',
     svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
-    thumbnailUrl: data.thumbnailUrl || null,
-    fileUrl: data.fileUrl || data.svgUrl || null,
+    thumbnailUrl: data.thumbnailUrl || `/api/materials/${snap.id}/thumbnail`,
+    fileUrl: data.fileUrl || `/api/materials/${snap.id}/file`,
+    downloadUrl: data.downloadUrl || `/api/materials/${snap.id}/download`,
     pdfUrl: pdfUrl,
     svgContent: svgContent,
     studyTheory: studyTheory,
     hasStudyMaterial: true,
-    createdAt: data.createdAt
+    status: data.status || 'ready',
+    errorMessage: data.errorMessage,
+    pageCount: data.pageCount,
+    originalName: data.originalName,
+    fileType: data.fileType,
+    fileSize: data.fileSize,
+    createdAt: data.createdAt,
+    updatedAt: data.updatedAt
   };
 }
 
@@ -888,13 +845,21 @@ export async function getAllMaterials(): Promise<ExistingMaterialItem[]> {
           subject: data.subject || 'Matematika',
           topic: data.topic || '',
           svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
-          thumbnailUrl: data.thumbnailUrl || null,
-          fileUrl: data.fileUrl || data.svgUrl || null,
+          thumbnailUrl: data.thumbnailUrl || `/api/materials/${d.id}/thumbnail`,
+          fileUrl: data.fileUrl || `/api/materials/${d.id}/file`,
+          downloadUrl: data.downloadUrl || `/api/materials/${d.id}/download`,
           pdfUrl: pdfUrl,
           svgContent: svgContent,
           studyTheory: studyTheory,
           hasStudyMaterial: true,
-          createdAt: data.createdAt
+          status: data.status || 'ready',
+          errorMessage: data.errorMessage,
+          pageCount: data.pageCount,
+          originalName: data.originalName,
+          fileType: data.fileType,
+          fileSize: data.fileSize,
+          createdAt: data.createdAt,
+          updatedAt: data.updatedAt
         };
       });
     } catch (err) {
@@ -940,6 +905,8 @@ function mapDocToQuestion(d: any): PracticeQuestion {
     subtopicId: data.subtopicId || '',
     imageUrl: data.imageUrl || '',
     svgContent: data.svgContent || '',
+    solutionImageUrl: data.solutionImageUrl || '',
+    solutionSvgContent: data.solutionSvgContent || '',
     caseSensitive: Boolean(data.caseSensitive),
     createdAt: data.createdAt,
     createdBy: data.createdBy
@@ -1006,15 +973,20 @@ export async function saveQuestion(questionData: Partial<PracticeQuestion>, user
   const qType = questionData.type || 'choice';
 
   // SECURITY & VALIDATION:
-  // Firestore rules require `options is list`. Open questions MUST have `options: []`!
+  // Firestore rules require `options is list`. Open and self_check questions MUST have `options: []`!
   const optionsList = qType === 'choice' 
     ? (questionData.options || []).map(o => String(o ?? '').trim()).filter(Boolean)
     : [];
 
+  let resolvedCorrectAnswer = questionData.correctAnswer?.trim() || '';
+  if (qType === 'self_check' && !resolvedCorrectAnswer) {
+    resolvedCorrectAnswer = 'self_check';
+  }
+
   const cleanData: any = {
     question: questionData.question?.trim() || '',
     type: qType,
-    correctAnswer: questionData.correctAnswer?.trim() || '',
+    correctAnswer: resolvedCorrectAnswer,
     options: optionsList,
     hint: questionData.hint?.trim() || '',
     explanation: questionData.explanation?.trim() || '',
@@ -1025,8 +997,24 @@ export async function saveQuestion(questionData: Partial<PracticeQuestion>, user
     subtopicId: questionData.subtopicId || '',
     imageUrl: questionData.imageUrl ? String(questionData.imageUrl).trim() : null,
     svgContent: questionData.svgContent ? String(questionData.svgContent).trim() : null,
+    solutionImageUrl: questionData.solutionImageUrl ? String(questionData.solutionImageUrl).trim() : null,
+    solutionSvgContent: questionData.solutionSvgContent ? String(questionData.solutionSvgContent).trim() : null,
     caseSensitive: Boolean(questionData.caseSensitive)
   };
+
+  // Client-side human-friendly size guards (Firestore rule limits)
+  if (cleanData.solutionImageUrl && cleanData.solutionImageUrl.length > 600000) {
+    throw new Error('Vzorový obrázek řešení je příliš velký (maximum cca 450 KB). Zvolte prosím menší nebo více komprimovaný obrázek.');
+  }
+  if (cleanData.solutionSvgContent && cleanData.solutionSvgContent.length > 500000) {
+    throw new Error('Vektorové SVG vzorového řešení je příliš velké (maximum cca 400 KB).');
+  }
+  if (cleanData.imageUrl && cleanData.imageUrl.length > 600000) {
+    throw new Error('Obrázek zadání je příliš velký (maximum cca 450 KB).');
+  }
+  if (cleanData.svgContent && cleanData.svgContent.length > 500000) {
+    throw new Error('SVG zadání je příliš velké (maximum cca 400 KB).');
+  }
 
   if (questionData.id) {
     const docRef = doc(db, 'questions', questionData.id);
@@ -1074,6 +1062,22 @@ export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' 
     if (!effectiveUserId) return '';
 
     const collRef = collection(db, 'tests');
+    const questionsPayload = attempt.detailedAnswers && attempt.detailedAnswers.length > 0
+      ? attempt.detailedAnswers.map(a => ({
+          id: a.questionId || '',
+          question: a.questionText || '',
+          userAnswer: a.userAnswer || '',
+          correctAnswer: a.correctAnswer || '',
+          isCorrect: Boolean(a.isCorrect),
+          correct: Boolean(a.isCorrect),
+          explanation: a.explanation || '',
+          errorCode: a.errorCode || null,
+          timeSpentMs: a.timeSpentMs || null,
+          options: a.options || [],
+          selfScore: typeof a.selfScore === 'number' ? a.selfScore : (a.isCorrect ? 1 : 0)
+        }))
+      : [];
+
     const newDoc = await addDoc(collRef, {
       title: `Procvičování (${attempt.percentage}%)`,
       description: JSON.stringify({
@@ -1082,13 +1086,18 @@ export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' 
         topicId: attempt.topicId,
         score: attempt.score,
         totalQuestions: attempt.totalQuestions,
-        percentage: attempt.percentage
+        percentage: attempt.percentage,
+        durationSeconds: attempt.durationSeconds || 0
       }),
       topic: attempt.subtopicId,
       studentId: effectiveUserId,
       createdBy: effectiveUserId,
       autoGrade: true,
-      questions: [],
+      questions: questionsPayload,
+      score: attempt.score,
+      totalQuestions: attempt.totalQuestions,
+      percentage: attempt.percentage,
+      durationSeconds: attempt.durationSeconds || 0,
       createdAt: Timestamp.now()
     });
     return newDoc.id;
@@ -1096,6 +1105,236 @@ export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' 
     console.warn('Practice attempt recording notice:', error);
     return '';
   }
+}
+
+// -------------------------------------------------------------
+// ACTIVE PRACTICE SESSIONS (Real-time preservation)
+// -------------------------------------------------------------
+
+const ACTIVE_PRACTICE_STORAGE_PREFIX = 'proedu_active_practice_';
+
+function getLocalStorage(): Storage | null {
+  try {
+    if (typeof localStorage !== 'undefined') return localStorage;
+    if (typeof window !== 'undefined' && window.localStorage) return window.localStorage;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function sanitizeFirestoreMap(obj: Record<string, any>): Record<string, any> {
+  const result: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined && v !== null) {
+      if (typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date)) {
+        result[k] = sanitizeFirestoreMap(v);
+      } else {
+        result[k] = v;
+      }
+    }
+  }
+  return result;
+}
+
+export async function saveActivePracticeSession(session: ActivePracticeSession): Promise<void> {
+  if (!session || !session.subtopicId) return;
+
+  const currentAuthUid = auth.currentUser?.uid;
+  const studentId = session.studentId || currentAuthUid || '';
+  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${session.subtopicId}`;
+
+  // 1. LocalStorage backup
+  try {
+    const localPayload = {
+      ...session,
+      studentId,
+      updatedAt: new Date().toISOString()
+    };
+    const storage = getLocalStorage();
+    if (storage) {
+      storage.setItem(storageKey, JSON.stringify(localPayload));
+    }
+  } catch (localErr) {
+    console.warn('Could not save active practice session to localStorage:', localErr);
+  }
+
+  // 2. Firestore persistence for authenticated students
+  if (currentAuthUid && studentId === currentAuthUid) {
+    try {
+      const docId = `${studentId}_${session.subtopicId}`;
+      const docRef = doc(db, 'activePracticeSessions', docId);
+
+      const firestorePayload = {
+        studentId,
+        subtopicId: session.subtopicId,
+        topicId: session.topicId || '',
+        subjectId: session.subjectId || '',
+        questionIds: Array.isArray(session.questionIds) ? session.questionIds : [],
+        currentIndex: Math.max(0, Number(session.currentIndex) || 0),
+        answeredCount: Math.max(0, Number(session.answeredCount) || 0),
+        totalCount: Math.max(0, Number(session.totalCount) || 0),
+        answersMap: sanitizeFirestoreMap(session.answersMap || {}),
+        openInputs: sanitizeFirestoreMap(session.openInputs || {}),
+        showHintMap: sanitizeFirestoreMap(session.showHintMap || {}),
+        bookmarkedIndices: Array.isArray(session.bookmarkedIndices) ? session.bookmarkedIndices : [],
+        updatedAt: Timestamp.now()
+      };
+
+      await setDoc(docRef, firestorePayload);
+    } catch (firestoreErr) {
+      console.warn('Could not save active practice session to Firestore:', firestoreErr);
+    }
+  }
+}
+
+export async function getActivePracticeSession(
+  subtopicId: string, 
+  studentId?: string
+): Promise<ActivePracticeSession | null> {
+  if (!subtopicId) return null;
+
+  const currentAuthUid = auth.currentUser?.uid;
+  const effectiveUserId = studentId || currentAuthUid;
+  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}`;
+
+  // Read local storage first (instant fallback)
+  let localCandidate: ActivePracticeSession | null = null;
+  try {
+    const storage = getLocalStorage();
+    if (storage) {
+      const raw = storage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.subtopicId === subtopicId) {
+          localCandidate = parsed;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Error reading local active practice session:', err);
+  }
+
+  // If authenticated, check Firestore for authoritative multi-device state
+  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+    try {
+      const docId = `${currentAuthUid}_${subtopicId}`;
+      const docRef = doc(db, 'activePracticeSessions', docId);
+      const snap = await getDoc(docRef);
+
+      if (snap.exists()) {
+        const data = snap.data();
+        return {
+          id: snap.id,
+          studentId: data.studentId,
+          subtopicId: data.subtopicId,
+          topicId: data.topicId || '',
+          subjectId: data.subjectId || '',
+          questionIds: Array.isArray(data.questionIds) ? data.questionIds : [],
+          currentIndex: typeof data.currentIndex === 'number' ? data.currentIndex : 0,
+          answersMap: data.answersMap || {},
+          openInputs: data.openInputs || {},
+          showHintMap: data.showHintMap || {},
+          bookmarkedIndices: Array.isArray(data.bookmarkedIndices) ? data.bookmarkedIndices : [],
+          answeredCount: typeof data.answeredCount === 'number' ? data.answeredCount : Object.keys(data.answersMap || {}).length,
+          totalCount: typeof data.totalCount === 'number' ? data.totalCount : (data.questionIds?.length || 0),
+          updatedAt: data.updatedAt
+        };
+      }
+    } catch (firestoreErr) {
+      console.warn('Error reading active practice session from Firestore, using local fallback:', firestoreErr);
+    }
+  }
+
+  return localCandidate;
+}
+
+export async function deleteActivePracticeSession(
+  subtopicId: string, 
+  studentId?: string
+): Promise<void> {
+  if (!subtopicId) return;
+
+  const currentAuthUid = auth.currentUser?.uid;
+  const effectiveUserId = studentId || currentAuthUid;
+  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}`;
+
+  try {
+    const storage = getLocalStorage();
+    if (storage) {
+      storage.removeItem(storageKey);
+    }
+  } catch (err) {
+    console.warn('Error removing local active practice session:', err);
+  }
+
+  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+    try {
+      const docId = `${currentAuthUid}_${subtopicId}`;
+      const docRef = doc(db, 'activePracticeSessions', docId);
+      await deleteDoc(docRef);
+    } catch (firestoreErr) {
+      console.warn('Error deleting active practice session from Firestore:', firestoreErr);
+    }
+  }
+}
+
+export async function getUserActivePracticeSessions(
+  studentId?: string
+): Promise<Record<string, { answeredCount: number; totalCount: number }>> {
+  const result: Record<string, { answeredCount: number; totalCount: number }> = {};
+  const currentAuthUid = auth.currentUser?.uid;
+  const effectiveUserId = studentId || currentAuthUid;
+
+  // 1. From localStorage
+  try {
+    const storage = getLocalStorage();
+    if (storage) {
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key && key.startsWith(ACTIVE_PRACTICE_STORAGE_PREFIX)) {
+          const raw = storage.getItem(key);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && parsed.subtopicId && parsed.answeredCount > 0) {
+              if (!effectiveUserId || !parsed.studentId || parsed.studentId === effectiveUserId) {
+                result[parsed.subtopicId] = {
+                  answeredCount: parsed.answeredCount,
+                  totalCount: parsed.totalCount || parsed.questionIds?.length || 0
+                };
+              }
+            }
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('Error reading active sessions from localStorage:', err);
+  }
+
+  // 2. From Firestore (authoritative)
+  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+    try {
+      const q = query(
+        collection(db, 'activePracticeSessions'),
+        where('studentId', '==', currentAuthUid)
+      );
+      const snap = await getDocs(q);
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.subtopicId && typeof data.answeredCount === 'number' && data.answeredCount > 0) {
+          result[data.subtopicId] = {
+            answeredCount: data.answeredCount,
+            totalCount: typeof data.totalCount === 'number' ? data.totalCount : (data.questionIds?.length || 0)
+          };
+        }
+      });
+    } catch (err) {
+      console.warn('Error reading active sessions from Firestore:', err);
+    }
+  }
+
+  return result;
 }
 
 // -------------------------------------------------------------

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Play, Plus, Calendar,
-  ArrowRight, ChevronRight, ChevronDown, Lock
+  ArrowRight, ChevronRight, ChevronDown, Lock, Clock
 } from 'lucide-react';
 import { BrainPinkIcon, BrainWhiteIcon, BookCyanIcon, BookWhiteIcon, CalendarBlueIcon } from '../components/common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
@@ -12,7 +12,7 @@ import {
   Dialog, DialogContent, DialogTitle, DialogDescription 
 } from '../components/ui/dialog';
 import { 
-  getTopics, getSubtopics, getQuestionsForSubtopic, 
+  getTopics, getSubtopics, getQuestionsForSubtopic, getUserActivePracticeSessions,
   PREDEFINED_SUBJECTS 
 } from '../services/practiceService';
 import { PracticeTopic, PracticeSubtopic, TodoItem } from '../types';
@@ -22,6 +22,7 @@ import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import { trackPracticeSubjectChange, trackSectionClick } from '../services/analyticsService';
 import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
+import { getGuestState } from '../services/jokerService';
 
 const getSubjectIcon = (id: string, isActive: boolean) => {
   if (id === 'Matematika') {
@@ -31,8 +32,14 @@ const getSubjectIcon = (id: string, isActive: boolean) => {
 };
 
 export default function Practice() {
-  const { user, profile, isPremium, openAuthModal } = useAuth();
+  const { user, profile, isPremium, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
+
+  const isTeacher = profile?.role === 'teacher';
+  const isGuest = !user;
+  const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
+  const isVideoLimitReached = videosWatchedToday >= 3;
+  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
 
   const [activeSubject, setActiveSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [topics, setTopics] = useState<PracticeTopic[]>([]);
@@ -47,6 +54,19 @@ export default function Practice() {
   const [scheduleInitialTopic, setScheduleInitialTopic] = useState<PracticeTopic | null>(null);
   const [scheduleInitialSubtopics, setScheduleInitialSubtopics] = useState<PracticeSubtopic[]>([]);
   const [studentTodos, setStudentTodos] = useState<TodoItem[]>([]);
+  const [activeSessions, setActiveSessions] = useState<Record<string, { answeredCount: number; totalCount: number }>>({});
+
+  useEffect(() => {
+    async function loadActiveSessions() {
+      try {
+        const sessions = await getUserActivePracticeSessions(user?.uid);
+        setActiveSessions(sessions);
+      } catch (err) {
+        console.warn('Failed to load active practice sessions:', err);
+      }
+    }
+    loadActiveSessions();
+  }, [user?.uid, activeSubject]);
 
   useEffect(() => {
     if (!user?.uid) {
@@ -90,8 +110,6 @@ export default function Practice() {
       [topicId]: !prev[topicId]
     }));
   };
-
-  const isTeacher = profile?.role === 'teacher';
 
   const visibleSubtopics = React.useMemo(
     () => subtopics.filter(s => !s.isHidden),
@@ -351,6 +369,7 @@ export default function Practice() {
                               const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
                               const isLockedForGuest = !user && !isFirstDemo;
                               const isStudyLocked = !isPremium;
+                              const subtopicActive = activeSessions[subtopic.id];
 
                               const handlePracticeClick = (e: React.MouseEvent) => {
                                 trackSectionClick('practice_start_btn', `/practice/session/${subtopic.id}`, {
@@ -363,7 +382,14 @@ export default function Practice() {
                                 if (isLockedForGuest) {
                                   e.preventDefault();
                                   openAuthModal();
-                                  toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 20 žolíků na každý den!');
+                                  toast.info('Toto cvičení je dostupné po bezplatné registraci. Zaregistruj se a získej 10 žolíků na každý den!');
+                                  return;
+                                }
+
+                                if (isOutOfJokersAndVideos) {
+                                  e.preventDefault();
+                                  navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+                                  return;
                                 }
                               };
 
@@ -413,6 +439,12 @@ export default function Practice() {
                                       {isLockedForGuest && (
                                         <span className="flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">
                                           <Lock size={12} /> Vyžaduje registraci
+                                        </span>
+                                      )}
+                                      {subtopicActive && subtopicActive.answeredCount > 0 && (
+                                        <span className="flex items-center gap-1 text-[11px] font-bold text-sky-800 bg-sky-100/90 border border-sky-300/80 px-2 py-0.5 rounded-md">
+                                          <Clock size={12} className="text-sky-700" />
+                                          <span>Rozpracováno ({subtopicActive.answeredCount}/{subtopicActive.totalCount})</span>
                                         </span>
                                       )}
                                     </div>
@@ -479,7 +511,7 @@ export default function Practice() {
                                         ) : (
                                           <Play size={14} className="fill-[#0F2942] text-[#0F2942]" />
                                         )}
-                                        <span>{isLockedForGuest ? 'Odemknout' : 'Procvičovat'}</span>
+                                        <span>{isLockedForGuest ? 'Odemknout' : (subtopicActive && subtopicActive.answeredCount > 0 ? 'Pokračovat' : 'Procvičovat')}</span>
                                       </Button>
                                     </Link>
                                   </div>
@@ -503,7 +535,7 @@ export default function Practice() {
         isOpen={isPremiumModalOpen}
         onClose={() => setIsPremiumModalOpen(false)}
         type="premium"
-        description="Kompletní výukové listy, vysvětlení látky krok za krokem, tipy lektora a vzorové řešené úlohy jsou dostupné pouze v balíčku Premium."
+        description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
         onSuccess={() => {
           if (selectedSubtopicForStudy) {
             navigate(`/study/${selectedSubtopicForStudy.id}`);

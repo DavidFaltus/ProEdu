@@ -48,7 +48,7 @@ export interface UserProfile {
   subscriptionExpiredAt?: string | null;
 }
 
-export type QuestionType = 'choice' | 'open'; // Výběr ze 4 možností | Volná odpověď
+export type QuestionType = 'choice' | 'open' | 'self_check'; // Výběr ze 4 možností | Volná odpověď | Self check (vlastní porovnání)
 
 export interface PracticeQuestion {
   id: string;
@@ -67,6 +67,8 @@ export interface PracticeQuestion {
   createdBy?: string;
   imageUrl?: string;
   svgContent?: string;
+  solutionImageUrl?: string;
+  solutionSvgContent?: string;
   caseSensitive?: boolean;
 }
 
@@ -138,6 +140,19 @@ export interface PracticeSubject {
   order?: number;
 }
 
+export interface PracticeAttemptAnswer {
+  questionId: string;
+  questionText: string;
+  userAnswer: string;
+  correctAnswer?: string;
+  isCorrect: boolean;
+  explanation?: string;
+  timeSpentMs?: number;
+  errorCode?: string;
+  options?: string[];
+  selfScore?: number;
+}
+
 export interface PracticeAttempt {
   id: string;
   studentId: string;
@@ -148,7 +163,38 @@ export interface PracticeAttempt {
   totalQuestions: number;
   percentage: number;
   answers: Record<string, string>;
+  detailedAnswers?: PracticeAttemptAnswer[];
+  durationSeconds?: number;
   completedAt: any;
+}
+
+export interface ActivePracticeAnswerItem {
+  userAnswer: string;
+  selectedOptionIndex?: number;
+  isCorrect: boolean;
+  usedHint: boolean;
+  isSubmitted: boolean;
+  tutorFeedback?: string;
+  selfScore?: number;
+  selfEvaluation?: 'correct' | 'partial' | 'wrong';
+  solutionRevealed?: boolean;
+}
+
+export interface ActivePracticeSession {
+  id?: string;
+  studentId: string;
+  subtopicId: string;
+  topicId: string;
+  subjectId: string;
+  questionIds: string[];
+  currentIndex: number;
+  answersMap: Record<string, ActivePracticeAnswerItem>;
+  openInputs?: Record<string, string>;
+  showHintMap?: Record<string, boolean>;
+  bookmarkedIndices?: number[];
+  answeredCount: number;
+  totalCount: number;
+  updatedAt: any;
 }
 
 export type LiveLessonStatus = 'scheduled' | 'live' | 'completed' | 'cancelled';
@@ -302,4 +348,33 @@ export interface GeneratedScheduleItem {
   repetitionIndex: number;
   totalRepetitions: number;
 }
+
+export type MaterialStatus = 'processing' | 'ready' | 'error';
+
+export interface ExistingMaterialItem {
+  id: string;
+  title: string;
+  subject: string;
+  topic: string;
+  svgUrl?: string | null;
+  thumbnailUrl?: string | null;
+  fileUrl?: string | null;
+  pdfUrl?: string | null;
+  downloadUrl?: string | null;
+  svgContent?: string | null;
+  studyTheory?: string;
+  hasStudyMaterial: boolean;
+  status?: MaterialStatus;
+  errorMessage?: string;
+  pageCount?: number;
+  originalName?: string;
+  fileType?: string;
+  fileSize?: number;
+  createdAt?: any;
+  updatedAt?: any;
+  createdBy?: string;
+}
+
+export * from './bugReport';
+
 

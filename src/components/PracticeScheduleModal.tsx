@@ -1132,7 +1132,8 @@ export default function PracticeScheduleModal({
         isOpen={isPaywallOpen}
         onClose={() => setIsPaywallOpen(false)}
         type="premium"
-        description="Vlastní plánování procvičování do kalendáře, rozvržení opakování témat a sledování plnění denní kvóty (zelené a červené dny) je exkluzivní funkcí balíčku ProEdu Premium."
+        title="Chytrý studijní plánovač v kalendáři"
+        description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
         onSuccess={() => {
           setIsPaywallOpen(false);
           executeSaveSchedule();

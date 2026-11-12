@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   BookOpen, Plus, Trash2, Eye, FileText, Search, Sparkles, 
-  Upload, Filter, CheckCircle2, ChevronRight, RefreshCw, X, Pencil 
+  Upload, Filter, CheckCircle2, ChevronRight, RefreshCw, X, Pencil,
+  AlertTriangle, ZoomIn, ZoomOut, Download, ExternalLink, Clock
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
@@ -11,10 +12,11 @@ import { toast } from 'sonner';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import { 
   getAllMaterials, saveMaterial, deleteMaterial, getMaterialById,
-  ExistingMaterialItem, PREDEFINED_SUBJECTS 
+  ExistingMaterialItem, PREDEFINED_SUBJECTS, LEARNING_SHEETS_COLLECTION 
 } from '../../services/practiceService';
 import { sanitizeSvg } from '../../utils/svgUtils';
-import { auth } from '../../lib/firebase';
+import { auth, db } from '../../lib/firebase';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { StudyStep } from '../../types';
 import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
 
@@ -36,6 +38,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [newSubject, setNewSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [newTopic, setNewTopic] = useState('');
   const [newTheory, setNewTheory] = useState('');
+  const [uploadedFileData, setUploadedFileData] = useState<string>('');
+  const [uploadedFileType, setUploadedFileType] = useState<string>('');
   const [uploadedSvgString, setUploadedSvgString] = useState<string>('');
   const [uploadedSvgUrl, setUploadedSvgUrl] = useState<string>('');
   const [uploadedPdfUrl, setUploadedPdfUrl] = useState<string>('');
@@ -59,23 +63,75 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [editSteps, setEditSteps] = useState<StudyStep[]>([]);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  // SVG Preview Modal state
+  // Preview Modal state
   const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
+  const [zoomLevel, setZoomLevel] = useState<number>(1);
 
   const loadData = async () => {
-    setLoading(true);
     try {
       const items = await getAllMaterials();
       setMaterials(items);
     } catch (err: any) {
-      toast.error('Chyba při načítání materiálů: ' + err.message);
-    } finally {
-      setLoading(false);
+      console.warn('loadData fallback error:', err);
     }
   };
 
+  // Real-time snapshot listener pro automatické sledování stavu nahrávání a zpracování
   useEffect(() => {
-    loadData();
+    setLoading(true);
+    try {
+      const q = query(collection(db, LEARNING_SHEETS_COLLECTION), orderBy('createdAt', 'desc'));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const items = snapshot.docs.map(d => {
+          const data = d.data();
+          let parsedContent: any = {};
+          if (data.content && typeof data.content === 'string') {
+            try { parsedContent = JSON.parse(data.content); } catch { /* ignore */ }
+          }
+          const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
+          return {
+            id: d.id,
+            title: data.title || 'Materiál',
+            subject: data.subject || 'Matematika',
+            topic: data.topic || '',
+            svgUrl: data.svgUrl || null,
+            thumbnailUrl: data.thumbnailUrl || `/api/materials/${d.id}/thumbnail`,
+            fileUrl: data.fileUrl || `/api/materials/${d.id}/file`,
+            downloadUrl: data.downloadUrl || `/api/materials/${d.id}/download`,
+            pdfUrl: pdfUrl,
+            svgContent: parsedContent.svgContent || null,
+            studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') ? data.content : ''),
+            hasStudyMaterial: true,
+            status: data.status || 'ready',
+            errorMessage: data.errorMessage,
+            pageCount: data.pageCount,
+            originalName: data.originalName,
+            fileType: data.fileType,
+            fileSize: data.fileSize,
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt
+          } as ExistingMaterialItem;
+        });
+        setMaterials(items);
+        setLoading(false);
+      }, (err) => {
+        console.warn('Realtime snapshot listener fallback to getAllMaterials:', err);
+        getAllMaterials().then(items => {
+          setMaterials(items);
+          setLoading(false);
+        }).catch(e => {
+          toast.error('Chyba při načítání materiálů: ' + e.message);
+          setLoading(false);
+        });
+      });
+
+      return () => unsubscribe();
+    } catch {
+      getAllMaterials().then(items => {
+        setMaterials(items);
+        setLoading(false);
+      });
+    }
   }, []);
 
   const handleOpenUpload = () => {
@@ -83,6 +139,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     setNewSubject('Matematika');
     setNewTopic('');
     setNewTheory('');
+    setUploadedFileData('');
+    setUploadedFileType('');
     setUploadedSvgString('');
     setUploadedSvgUrl('');
     setUploadedPdfUrl('');
@@ -98,10 +156,14 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       return;
     }
 
-    if (!uploadedSvgString && !uploadedSvgUrl && !newTheory.trim()) {
+    if (!uploadedFileData && !uploadedSvgString && !uploadedSvgUrl && !newTheory.trim()) {
       toast.error('Nahrajte soubor PDF/SVG nebo zadejte textový výklad.');
       return;
     }
+
+    // Okamžitě zavřeme nahrávací okno, aby admin nemusel čekat na zpracování!
+    setIsUploadModalOpen(false);
+    toast.info('Materiál byl zařazen ke zpracování na pozadí.');
 
     setIsSaving(true);
     try {
@@ -110,15 +172,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         subject: newSubject,
         topic: newTopic.trim() || 'Obecné',
         studyTheory: newTheory.trim(),
+        fileData: uploadedFileData || undefined,
+        fileType: uploadedFileType || (uploadedFileName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf'),
+        originalName: uploadedFileName || 'material.pdf',
+        thumbnailDataUrl: uploadedThumbnailUrl || undefined,
         svgUrl: uploadedSvgUrl || undefined,
         pdfUrl: uploadedPdfUrl || undefined,
-        thumbnailUrl: uploadedThumbnailUrl || undefined,
         svgContent: uploadedSvgString || undefined
       }, effectiveUserId);
 
-      toast.success('Studijní materiál úspěšně uložen do databáze!');
-      setIsUploadModalOpen(false);
-      await loadData();
+      toast.success('Materiál byl úspěšně zařazen! Zpracování probíhá na pozadí.');
     } catch (err: any) {
       toast.error('Chyba při ukládání: ' + err.message);
     } finally {
@@ -310,7 +373,9 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredMaterials.map(mat => {
-            const hasSvg = Boolean(mat.svgUrl || mat.svgContent);
+            const isProcessing = mat.status === 'processing';
+            const isError = mat.status === 'error';
+            const hasFile = Boolean(mat.fileUrl || mat.svgUrl || mat.pdfUrl || mat.svgContent);
 
             return (
               <div
@@ -319,10 +384,41 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
               >
                 {/* Visual Thumbnail Preview */}
                 <div 
-                  onClick={() => setPreviewMaterial(mat)}
-                  className="w-full h-44 bg-slate-50/80 rounded-2xl border border-gray-100 overflow-hidden flex items-center justify-center relative cursor-pointer group/thumb hover:border-amber-200 transition-all"
+                  onClick={() => {
+                    if (!isProcessing) {
+                      setZoomLevel(1);
+                      setPreviewMaterial(mat);
+                    }
+                  }}
+                  className={`w-full h-44 bg-slate-50/80 rounded-2xl border border-gray-100 overflow-hidden flex items-center justify-center relative transition-all ${
+                    isProcessing ? 'cursor-not-allowed opacity-90' : 'cursor-pointer group/thumb hover:border-amber-200'
+                  }`}
                 >
-                  {mat.thumbnailUrl ? (
+                  {isProcessing ? (
+                    <div className="flex flex-col items-center justify-center gap-2.5 p-4 text-center">
+                      <div className="w-9 h-9 border-3 border-amber-500 border-t-transparent rounded-full animate-spin" />
+                      <div className="space-y-0.5">
+                        <span className="text-xs font-bold text-amber-900 block">
+                          Zpracovává se na pozadí...
+                        </span>
+                        <span className="text-[10px] text-amber-700 font-medium block">
+                          Ukládám části souboru do databáze
+                        </span>
+                      </div>
+                    </div>
+                  ) : isError ? (
+                    <div className="flex flex-col items-center justify-center gap-2 p-4 text-center">
+                      <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shadow-xs">
+                        <AlertTriangle size={20} />
+                      </div>
+                      <span className="text-xs font-bold text-rose-800">
+                        Chyba zpracování
+                      </span>
+                      <span className="text-[10px] text-rose-600 font-medium line-clamp-1 max-w-[200px]" title={mat.errorMessage}>
+                        {mat.errorMessage || 'Soubor se nepodařilo zpracovat'}
+                      </span>
+                    </div>
+                  ) : mat.thumbnailUrl ? (
                     <img 
                       src={mat.thumbnailUrl} 
                       alt={mat.title} 
@@ -355,7 +451,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                   )}
 
                   {/* Hover Overlay */}
-                  {hasSvg && (
+                  {!isProcessing && !isError && hasFile && (
                     <div className="absolute inset-0 bg-black/25 opacity-0 group-hover/thumb:opacity-100 transition-opacity flex items-center justify-center">
                       <span className="bg-white/95 text-gray-900 px-3 py-1.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 backdrop-blur-xs">
                         <Eye size={12} /> Zvětšit náhled
@@ -371,6 +467,24 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     }`}>
                       {mat.subject}
                     </span>
+
+                    {/* Real-time Status Badge */}
+                    {isProcessing ? (
+                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-100 text-amber-900 border border-amber-300 animate-pulse">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping" />
+                        Zpracovává se...
+                      </span>
+                    ) : isError ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-rose-100 text-rose-900 border border-rose-300" title={mat.errorMessage}>
+                        <AlertTriangle size={11} className="text-rose-600" />
+                        Chyba
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                        <CheckCircle2 size={11} className="text-emerald-600" />
+                        Připraveno
+                      </span>
+                    )}
                   </div>
 
                   <div>
@@ -396,8 +510,12 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setPreviewMaterial(mat)}
-                      className="rounded-xl h-9 px-3 text-xs font-bold border-gray-300 hover:border-black flex items-center gap-1.5 cursor-pointer bg-white"
+                      onClick={() => {
+                        setZoomLevel(1);
+                        setPreviewMaterial(mat);
+                      }}
+                      disabled={isProcessing}
+                      className="rounded-xl h-9 px-3 text-xs font-bold border-gray-300 hover:border-black flex items-center gap-1.5 cursor-pointer bg-white disabled:opacity-50"
                     >
                       <Eye size={14} />
                       <span>Zobrazit</span>
@@ -493,15 +611,19 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                 fileName={uploadedFileName}
                 onChange={(res) => {
                   if (res) {
-                    setUploadedSvgString(res.svgString);
+                    setUploadedFileData(res.fileData || '');
+                    setUploadedFileType(res.fileType || '');
+                    setUploadedSvgString(res.svgString || '');
                     setUploadedSvgUrl(res.svgUrl || '');
                     setUploadedPdfUrl(res.pdfUrl || '');
-                    setUploadedThumbnailUrl(res.thumbnail || '');
+                    setUploadedThumbnailUrl(res.thumbnail || res.thumbnailDataUrl || '');
                     setUploadedFileName(res.fileName);
                     if (!newTitle) {
-                      setNewTitle(res.fileName.replace(/\.(pdf|svg)$/i, ''));
+                      setNewTitle(res.fileName.replace(/\.(pdf|svg|png|jpg|jpeg|webp)$/i, ''));
                     }
                   } else {
+                    setUploadedFileData('');
+                    setUploadedFileType('');
                     setUploadedSvgString('');
                     setUploadedSvgUrl('');
                     setUploadedPdfUrl('');
@@ -841,61 +963,153 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Preview Modal */}
-      {previewMaterial && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-3xl max-w-4xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-              <div className="flex items-center gap-2">
-                <MaterialYellowIcon size={20} />
-                <h4 className="font-bold text-gray-900 text-base truncate">
-                  {previewMaterial.title}
-                </h4>
-              </div>
-              <button
-                onClick={() => setPreviewMaterial(null)}
-                className="p-1.5 rounded-xl text-gray-400 hover:text-black hover:bg-gray-100 transition-colors cursor-pointer"
-              >
-                <X size={20} />
-              </button>
-            </div>
+      {/* Universal Preview Modal with PDF and Zoom */}
+      {previewMaterial && (() => {
+        const isPdf = Boolean(
+          previewMaterial.fileType === 'application/pdf' ||
+          previewMaterial.pdfUrl ||
+          previewMaterial.originalName?.toLowerCase().endsWith('.pdf') ||
+          (previewMaterial.fileUrl && !previewMaterial.fileUrl.toLowerCase().endsWith('.svg') && !previewMaterial.svgContent)
+        );
+        const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
+        const downloadSrc = previewMaterial.downloadUrl || previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
 
-            <div className="flex-1 overflow-auto p-6 bg-slate-50 flex items-center justify-center min-h-[300px]">
-              {previewMaterial.svgUrl ? (
-                <img 
-                  src={previewMaterial.svgUrl} 
-                  alt={previewMaterial.title || "Náhled"} 
-                  className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
-                />
-              ) : previewMaterial.svgContent ? (
-                <div 
-                  className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
-                  dangerouslySetInnerHTML={{ __html: sanitizeSvg(previewMaterial.svgContent) }}
-                />
-              ) : (
-                <div className="text-center p-8">
-                  <p className="text-gray-500 font-medium">Tento materiál nemá grafický list.</p>
-                  {previewMaterial.studyTheory && (
-                    <p className="text-sm text-gray-700 mt-2 bg-white p-4 rounded-xl border border-gray-200">
-                      {previewMaterial.studyTheory}
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <MaterialYellowIcon size={22} className="shrink-0" />
+                  <div className="min-w-0">
+                    <h4 className="font-bold text-gray-900 text-base truncate">
+                      {previewMaterial.title}
+                    </h4>
+                    <p className="text-[11px] text-gray-400 font-medium">
+                      {previewMaterial.subject} {previewMaterial.topic ? `• ${previewMaterial.topic}` : ''} {previewMaterial.originalName ? `• ${previewMaterial.originalName}` : ''}
                     </p>
-                  )}
+                  </div>
                 </div>
-              )}
-            </div>
+                <button
+                  onClick={() => setPreviewMaterial(null)}
+                  className="p-1.5 rounded-xl text-gray-400 hover:text-black hover:bg-gray-100 transition-colors cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
 
-            <div className="px-6 py-3 bg-white border-t border-gray-100 flex justify-end">
-              <Button
-                variant="outline"
-                onClick={() => setPreviewMaterial(null)}
-                className="rounded-xl font-bold text-xs"
-              >
-                Zavřít
-              </Button>
+              <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 flex items-center justify-center min-h-[350px]">
+                {isPdf && fileSrc ? (
+                  <iframe
+                    src={`${fileSrc}#toolbar=1`}
+                    className="w-full h-[70vh] border-0 rounded-2xl bg-white shadow-inner"
+                    title={previewMaterial.title}
+                  />
+                ) : fileSrc ? (
+                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
+                    <img
+                      src={fileSrc}
+                      alt={previewMaterial.title || "Náhled"}
+                      style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
+                      className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2"
+                    />
+                  </div>
+                ) : previewMaterial.svgContent ? (
+                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
+                    <div 
+                      style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
+                      className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(previewMaterial.svgContent) }}
+                    />
+                  </div>
+                ) : (
+                  <div className="text-center p-8 max-w-md">
+                    <p className="text-gray-500 font-medium">Tento materiál nemá grafický list.</p>
+                    {previewMaterial.studyTheory && (
+                      <p className="text-xs text-gray-700 mt-2 bg-white p-4 rounded-xl border border-gray-200 text-left">
+                        {previewMaterial.studyTheory}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
+                {/* Zoom controls for non-PDF image/SVG */}
+                {!isPdf && fileSrc && (
+                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.25))}
+                      className="h-8 w-8 p-0 rounded-lg cursor-pointer"
+                      title="Zmenšit"
+                    >
+                      <ZoomOut size={14} />
+                    </Button>
+                    <span className="text-[11px] font-bold px-2 text-gray-700 min-w-[50px] text-center">
+                      {Math.round(zoomLevel * 100)}%
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setZoomLevel(z => Math.min(3, z + 0.25))}
+                      className="h-8 w-8 p-0 rounded-lg cursor-pointer"
+                      title="Zvětšit"
+                    >
+                      <ZoomIn size={14} />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setZoomLevel(1)}
+                      className="h-8 px-2 text-[10px] font-bold rounded-lg cursor-pointer text-gray-600"
+                      title="Obnovit 100%"
+                    >
+                      100%
+                    </Button>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 ml-auto">
+                  {downloadSrc && (
+                    <a
+                      href={downloadSrc}
+                      download={previewMaterial.originalName || `${previewMaterial.title}.pdf`}
+                      className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
+                    >
+                      <Download size={14} />
+                      <span>Stáhnout</span>
+                    </a>
+                  )}
+
+                  {fileSrc && (
+                    <a
+                      href={fileSrc}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-xl border border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-10 px-4 flex items-center justify-center gap-1.5 cursor-pointer bg-white"
+                    >
+                      <ExternalLink size={14} />
+                      <span>Otevřít v novém okně</span>
+                    </a>
+                  )}
+
+                  <Button
+                    variant="outline"
+                    onClick={() => setPreviewMaterial(null)}
+                    className="rounded-xl font-bold text-xs h-10 px-4 cursor-pointer"
+                  >
+                    Zavřít
+                  </Button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

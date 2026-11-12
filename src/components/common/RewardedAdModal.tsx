@@ -23,6 +23,7 @@ interface RewardedAdModalProps {
   isGuest?: boolean;
   guestVideosWatched?: number;
   rewardAmount?: number;
+  isLimitReached?: boolean;
 }
 
 const TOTAL_SECONDS = 15;
@@ -34,6 +35,7 @@ export default function RewardedAdModal({
   isGuest = false,
   guestVideosWatched = 0,
   rewardAmount = 5,
+  isLimitReached = false,
 }: RewardedAdModalProps) {
   const { openAuthModal } = useAuth();
   const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
@@ -42,7 +44,7 @@ export default function RewardedAdModal({
 
   // Spuštění a reset odpočítávání při otevření
   useEffect(() => {
-    if (!open) {
+    if (!open || isLimitReached) {
       setSecondsLeft(TOTAL_SECONDS);
       setIsCompleted(false);
       setIsClaimed(false);
@@ -77,6 +79,32 @@ export default function RewardedAdModal({
 
   const progressPercent = Math.min(100, Math.round(((TOTAL_SECONDS - secondsLeft) / TOTAL_SECONDS) * 100));
   const guestReachedLimit = isGuest && guestVideosWatched >= GUEST_MAX_VIDEOS;
+
+  if (isLimitReached) {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent 
+          className="sm:max-w-md p-6 bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl text-center space-y-4"
+        >
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
+            <Clock className="w-7 h-7" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="text-lg font-black text-[#0F2942]">Limit videí vyčerpán</h3>
+            <p className="text-xs text-gray-500 font-medium leading-relaxed">
+              Dnes jsi již zhlédl/a maximální počet 3 videí pro dobití žolíků. Další videa budou k dispozici zítra o půlnoci!
+            </p>
+          </div>
+          <Button
+            onClick={() => onOpenChange(false)}
+            className="w-full h-11 bg-[#0F2942] hover:bg-[#1E1B18] text-white font-bold text-xs rounded-xl cursor-pointer"
+          >
+            Rozumím
+          </Button>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onOpenChange={(val) => {

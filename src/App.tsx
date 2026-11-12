@@ -7,6 +7,7 @@ import { Toaster } from './components/ui/sonner';
 import StudentSidebar from './components/StudentSidebar';
 import AuthModal from './components/AuthModal';
 import FloatingTimer from './components/FloatingTimer';
+import BugReportButton from './components/common/BugReportButton';
 import LiveLessonNotificationWatcher from './components/LiveLessonNotificationWatcher';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Menu, X, LayoutDashboard, Bell, Lock, LogIn, ShieldCheck } from 'lucide-react';
@@ -390,6 +391,7 @@ function AppContent() {
       </nav>
 
       <FloatingTimer />
+      <BugReportButton />
       <LiveLessonNotificationWatcher />
       <DevMonetizationToolbar />
       <AuthModal />

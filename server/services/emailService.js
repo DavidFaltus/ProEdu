@@ -7,7 +7,7 @@ const SMTP_SECURE = process.env.SMTP_SECURE !== 'false'; // true pro port 465, f
 const SMTP_USER = (process.env.SMTP_USER || '').trim();
 // Odstranění mezer z Google App Password (např. "omaq wevr ocqz dkhx" -> "omaqwevrocqzdkhx")
 const SMTP_PASS = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
-const SMTP_FROM = (process.env.SMTP_FROM || 'ProEdu <info@pro-edu.cz>').trim();
+const SMTP_FROM = (process.env.SMTP_FROM || 'ProEdu <info@pro-edu.eu>').trim();
 const APP_URL = process.env.APP_URL || 'http://localhost:3005';
 
 let transporter = null;
@@ -42,13 +42,16 @@ function getTransporter() {
  * Centrální metoda pro odeslání e-mailu.
  * Pokud nejsou nastaveny SMTP proměnné, zaloguje náhled do konzole pro lokální testování.
  */
-export async function sendEmail({ to, subject, html, text, logDetails = {} }) {
+export async function sendEmail({ to, subject, html, text, replyTo, logDetails = {} }) {
   const mailClient = getTransporter();
 
   if (!mailClient) {
     console.log('\n┌────────────────────────────────────────────────────────────────────────┐');
     console.log('│ 📧 [PROEDU EMAIL SIMULÁTOR / DEV LOG]');
     console.log(`│ Komu:     ${to}`);
+    if (replyTo) {
+      console.log(`│ Reply-To: ${replyTo}`);
+    }
     console.log(`│ Předmět:  ${subject}`);
     if (logDetails.code) {
       console.log(`│ 👉 KÓD:   ${logDetails.code}  (Platnost: 15 minut)`);
@@ -70,6 +73,7 @@ export async function sendEmail({ to, subject, html, text, logDetails = {} }) {
     const info = await mailClient.sendMail({
       from: SMTP_FROM,
       to,
+      replyTo: replyTo || undefined,
       subject,
       text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       html
@@ -140,7 +144,7 @@ function renderEmailLayout({ previewText, headline, subheadline, bodyHtml }) {
     </div>
     <div class="footer">
       <p style="margin: 0 0 6px 0;"><strong>ProEdu</strong> – Příprava na přijímací zkoušky Cermat</p>
-      <p style="margin: 0 0 10px 0;">Dotazy a podpora: <a href="mailto:info@pro-edu.cz">info@pro-edu.cz</a></p>
+      <p style="margin: 0 0 10px 0;">Dotazy a podpora: <a href="mailto:info@pro-edu.eu">info@pro-edu.eu</a></p>
       <p style="margin: 0; font-size: 11px; color: #94A3B8;">Tento e-mail byl vygenerován automaticky pro váš účet v platformě ProEdu. Pokud jste tento požadavek nezadali, můžete zprávu ignorovat.</p>
     </div>
   </div>
@@ -333,4 +337,102 @@ export async function sendRecurringChargeFailedEmail({ to, name, amount, reason 
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
   return sendEmail({ to, subject, html });
+}
+
+/**
+ * 6. Šablona: Hlášení chyby od studenta pro administrátory
+ */
+export async function sendBugReportEmail({
+  to = 'netkova.nela@gmail.com',
+  studentName,
+  studentEmail,
+  category,
+  categoryLabel,
+  description,
+  pageUrl,
+  userAgent,
+  screenResolution,
+  screenshotUrl,
+  reportId
+}) {
+  const displayCategory = categoryLabel || category || 'Chyba';
+  const subject = `🐞 [Chyba ProEdu] ${displayCategory}: ${studentName || studentEmail}`;
+  const headline = 'Nové hlášení chyby od studenta';
+  const subheadline = `Kategorie: ${displayCategory} | Student: ${studentName || studentEmail}`;
+  const previewText = `Nahlášena chyba (${displayCategory}): ${(description || '').slice(0, 100)}...`;
+
+  const safeDescription = (description || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/\n/g, '<br/>');
+
+  const bodyHtml = `
+    <p style="margin-top:0;">Ahoj Nelo,</p>
+    <p>student <strong>${studentName || 'Student'}</strong> (<code>${studentEmail}</code>) právě nahlásil chybu v aplikaci <strong>ProEdu</strong>.</p>
+
+    <div style="background-color: #FEF2F2; border-left: 4px solid #EF4444; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
+      <div style="font-size: 11px; font-weight: 800; text-transform: uppercase; color: #991B1B; margin-bottom: 6px;">
+        Kategorie: ${displayCategory}
+      </div>
+      <div style="font-size: 15px; color: #1E1B18; line-height: 1.6;">
+        ${safeDescription}
+      </div>
+    </div>
+
+    <table class="info-table">
+      <tr>
+        <td class="label">Odesílatel:</td>
+        <td class="value"><strong>${studentName || 'Student'}</strong> (${studentEmail})</td>
+      </tr>
+      <tr>
+        <td class="label">Stránka (URL):</td>
+        <td class="value"><a href="${pageUrl}" style="color:#2563EB; word-break: break-all;">${pageUrl}</a></td>
+      </tr>
+      <tr>
+        <td class="label">Zařízení / Prohlížeč:</td>
+        <td class="value" style="font-size:12px; color:#475569;">${userAgent || 'Neuvedeno'}</td>
+      </tr>
+      <tr>
+        <td class="label">Rozlišení obrazovky:</td>
+        <td class="value">${screenResolution || 'Neuvedeno'}</td>
+      </tr>
+      ${reportId ? `
+      <tr>
+        <td class="label">ID hlášení:</td>
+        <td class="value"><code>${reportId}</code></td>
+      </tr>
+      ` : ''}
+    </table>
+
+    ${screenshotUrl ? `
+      <div style="margin: 24px 0; text-align: center;">
+        <p style="font-weight: 700; color: #1E1B18; margin-bottom: 10px;">Přiložený snímek obrazovky:</p>
+        <a href="${screenshotUrl}" target="_blank" style="display:inline-block; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; max-width: 100%;">
+          <img src="${screenshotUrl}" alt="Screenshot chyby" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;" />
+        </a>
+        <p style="margin-top: 6px; font-size: 12px;"><a href="${screenshotUrl}" target="_blank" style="color: #2563EB;">Otevřít obrázek v plné velikosti ↗</a></p>
+      </div>
+    ` : ''}
+
+    <div style="text-align: center; margin: 28px 0 10px 0;">
+      <a href="mailto:${studentEmail}?subject=Re:%20Va%C5%A1e%20hl%C3%A1%C5%A1en%C3%AD%20chyby%20v%20ProEdu" class="btn" style="background-color: #B80053;">
+        Odpovědět studentovi na e-mail
+      </a>
+    </div>
+
+    <p style="font-size: 12px; color: #64748B; text-align: center;">
+      Nebo můžete hlášení spravovat přímo v <a href="${APP_URL}/teacher-dashboard?tab=bugReports" style="color: #2563EB;">Teacher Dashboardu</a>.
+    </p>
+  `;
+
+  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  return sendEmail({
+    to,
+    replyTo: studentEmail,
+    subject,
+    html,
+    logDetails: { reportId, studentEmail, category }
+  });
 }
