@@ -25,6 +25,7 @@ import {
   setTopicVisibility, setSubtopicVisibility,
   saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
   updateTopicsOrder,
+  uploadMaterial, fetchMaterialStatus, LEARNING_SHEETS_COLLECTION,
   ExistingMaterialItem, cleanStudyStep,
   parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
   parseStudyStepsExcelFile, importStudyStepsToFirestore,
@@ -32,11 +33,12 @@ import {
   PracticeImportStats, StudyImportStats
 } from '../../services/practiceService';
 import { PracticeTopic, PracticeSubtopic, PracticeQuestion, QuestionType, StudyStep, PracticeConfig } from '../../types';
-import { auth, storage } from '../../lib/firebase';
+import { auth, db, storage } from '../../lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
-import PdfSvgDropzone from './PdfSvgDropzone';
+import PdfSvgDropzone, { DropzoneFileResult } from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
-import { convertFileToSvg } from '../../utils/pdfToSvg';
+import { convertFileToSvg, svgStringToDataUrl, isPdfResource } from '../../utils/pdfToSvg';
 import { sanitizeSvg } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
 import QuickFormulaToolbar from './QuickFormulaToolbar';
@@ -74,6 +76,20 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
   const [isStudyContentModalOpen, setIsStudyContentModalOpen] = useState(false);
   const [editingStudySubtopic, setEditingStudySubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
+  const [studyDropFile, setStudyDropFile] = useState<DropzoneFileResult | null>(null);
+  const [studyFileCleared, setStudyFileCleared] = useState(false);
+  const [isSavingStudyContent, setIsSavingStudyContent] = useState(false);
+  const [studyUploadStatusBySubtopic, setStudyUploadStatusBySubtopic] = useState<
+    Record<string, { status: 'uploading' | 'processing' | 'error'; materialId?: string; message?: string }>
+  >({});
+  const studyListenersRef = React.useRef<Record<string, () => void>>({});
+
+  useEffect(() => {
+    return () => {
+      Object.values(studyListenersRef.current).forEach(unsub => unsub());
+      studyListenersRef.current = {};
+    };
+  }, []);
 
   const [isPracticeConfigModalOpen, setIsPracticeConfigModalOpen] = useState(false);
   const [configuringSubtopic, setConfiguringSubtopic] = useState<PracticeSubtopic | null>(null);
@@ -842,6 +858,8 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   );
 
   const handleOpenStudyContent = (sub: PracticeSubtopic) => {
+    setStudyDropFile(null);
+    setStudyFileCleared(false);
     setEditingStudySubtopic({
       ...sub,
       studySteps: sub.studySteps?.length
@@ -852,30 +870,229 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     setIsStudyContentModalOpen(true);
   };
 
+  /** Sleduje stav zpracování nahraného studijního materiálu na pozadí přes onSnapshot + fallback polling. */
+  const watchSubtopicMaterialProcessing = (subtopicId: string, materialId: string) => {
+    if (studyListenersRef.current[subtopicId]) {
+      studyListenersRef.current[subtopicId]();
+      delete studyListenersRef.current[subtopicId];
+    }
+
+    let settled = false;
+    let unsubSnapshot: (() => void) | null = null;
+    let pollTimer: number | null = null;
+
+    const cleanup = () => {
+      if (unsubSnapshot) {
+        unsubSnapshot();
+        unsubSnapshot = null;
+      }
+      if (pollTimer !== null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+      delete studyListenersRef.current[subtopicId];
+    };
+
+    const handleStatusUpdate = (status: string, errorMessage?: string | null) => {
+      if (settled) return;
+      if (status === 'ready') {
+        settled = true;
+        cleanup();
+        setStudyUploadStatusBySubtopic(prev => {
+          const next = { ...prev };
+          delete next[subtopicId];
+          return next;
+        });
+        toast.success('Studijní materiál byl zpracován a je připraven!');
+        loadData();
+      } else if (status === 'error') {
+        settled = true;
+        cleanup();
+        const errMsg = errorMessage || 'Nepodařilo se zpracovat materiál.';
+        setStudyUploadStatusBySubtopic(prev => ({
+          ...prev,
+          [subtopicId]: { status: 'error', materialId, message: errMsg }
+        }));
+        toast.error('Chyba při přípravě materiálu: ' + errMsg);
+      }
+    };
+
+    try {
+      unsubSnapshot = onSnapshot(
+        doc(db, LEARNING_SHEETS_COLLECTION, materialId),
+        (snap) => {
+          if (!snap.exists()) return;
+          const d = snap.data();
+          if (d?.status) {
+            handleStatusUpdate(d.status, d.errorMessage);
+          }
+        },
+        () => {
+          // Při výpadku listeneru zajistí dokončení polling interval níže
+        }
+      );
+    } catch {
+      // Fallback polling níže
+    }
+
+    pollTimer = window.setInterval(async () => {
+      try {
+        const res = await fetchMaterialStatus(materialId);
+        if (res?.status) {
+          handleStatusUpdate(res.status, res.errorMessage);
+        }
+      } catch {
+        // Ignorujeme dočasné síťové chyby při dotazování
+      }
+    }, 3000);
+
+    studyListenersRef.current[subtopicId] = cleanup;
+  };
+
   const handleSaveStudyContent = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingStudySubtopic?.id) return;
 
-    try {
-      const cleanSteps: StudyStep[] = (editingStudySubtopic.studySteps || [])
-        .filter(s => s.title?.trim() || s.content?.trim() || s.imageUrl || s.svgContent)
-        .map(cleanStudyStep);
+    const subSnapshot = editingStudySubtopic;
+    const subId = subSnapshot.id!;
+    const pendingDropFile = studyDropFile;
+    const clearedFile = studyFileCleared;
 
+    const cleanSteps: StudyStep[] = (subSnapshot.studySteps || [])
+      .filter(s => s.title?.trim() || s.content?.trim() || s.imageUrl || s.svgContent || s.fileUrl || s.pdfUrl || s.materialId)
+      .map(cleanStudyStep);
+
+    // Pokud uživatel nahrál nový soubor (PDF/SVG/obrázek), zavřeme okno ihned a zobrazíme točící se kolečko
+    if (pendingDropFile) {
+      setIsStudyContentModalOpen(false);
+      setEditingStudySubtopic(null);
+      setStudyDropFile(null);
+      setStudyFileCleared(false);
+      setStudyUploadStatusBySubtopic(prev => ({
+        ...prev,
+        [subId]: { status: 'uploading', message: 'Nahrávám soubor...' }
+      }));
+      toast.info('Nahrávám studijní materiál a připravuji jej na pozadí...');
+
+      try {
+        let effectiveFileData = pendingDropFile.fileData;
+        if (!effectiveFileData && pendingDropFile.svgString) {
+          effectiveFileData = svgStringToDataUrl(pendingDropFile.svgString);
+        }
+        const effectiveFileType = pendingDropFile.fileType || 'image/svg+xml';
+        const isPdf = effectiveFileType === 'application/pdf';
+        const isSvg = effectiveFileType === 'image/svg+xml';
+        const topicObj = topics.find(t => t.id === subSnapshot.topicId);
+
+        const uploadRes = await uploadMaterial({
+          title: `${subSnapshot.title || 'Studium'} — Studijní list`,
+          subject: subSnapshot.subjectId || activeSubject,
+          topic: topicObj?.title || 'Studium',
+          fileData: effectiveFileData,
+          fileType: effectiveFileType,
+          originalName: pendingDropFile.fileName || (isSvg ? 'material.svg' : 'material.pdf'),
+          thumbnailDataUrl: pendingDropFile.thumbnailDataUrl || pendingDropFile.thumbnail || undefined,
+          hiddenFromLibrary: true
+        });
+
+        const resolvedFileUrl = uploadRes.fileUrl || `/api/materials/${uploadRes.materialId}/file`;
+        const resolvedPdfUrl = isPdf ? (uploadRes.pdfUrl || resolvedFileUrl) : null;
+        const resolvedSvgUrl = isSvg ? (uploadRes.svgUrl || resolvedFileUrl) : null;
+        const inlineSvgCandidate =
+          isSvg && pendingDropFile.svgString && pendingDropFile.svgString.length <= 50000
+            ? pendingDropFile.svgString
+            : null;
+
+        await saveSubtopic({
+          id: subId,
+          hasStudyMaterial: true,
+          materialId: uploadRes.materialId,
+          fileUrl: resolvedFileUrl,
+          pdfUrl: resolvedPdfUrl,
+          downloadUrl: uploadRes.downloadUrl || `/api/materials/${uploadRes.materialId}/download`,
+          thumbnailUrl: uploadRes.thumbnailUrl || `/api/materials/${uploadRes.materialId}/thumbnail`,
+          fileType: uploadRes.fileType || effectiveFileType,
+          originalName: uploadRes.originalName || pendingDropFile.fileName,
+          svgUrl: resolvedSvgUrl,
+          svgContent: inlineSvgCandidate,
+          studyTheory: subSnapshot.studyTheory?.trim() || '',
+          sampleProblem: subSnapshot.sampleProblem,
+          studySteps: cleanSteps
+        }, effectiveUserId);
+
+        await loadData();
+
+        if (uploadRes.status === 'processing') {
+          setStudyUploadStatusBySubtopic(prev => ({
+            ...prev,
+            [subId]: {
+              status: 'processing',
+              materialId: uploadRes.materialId,
+              message: 'Připravuji materiál...'
+            }
+          }));
+          watchSubtopicMaterialProcessing(subId, uploadRes.materialId);
+        } else {
+          setStudyUploadStatusBySubtopic(prev => {
+            const next = { ...prev };
+            delete next[subId];
+            return next;
+          });
+          toast.success('Studijní materiál byl úspěšně nahrán!');
+        }
+      } catch (err: any) {
+        setStudyUploadStatusBySubtopic(prev => ({
+          ...prev,
+          [subId]: { status: 'error', message: err.message || 'Nahrávání selhalo' }
+        }));
+        toast.error('Chyba při nahrávání studijního materiálu: ' + (err.message || ''));
+      }
+      return;
+    }
+
+    setIsSavingStudyContent(true);
+    try {
       await saveSubtopic({
-        id: editingStudySubtopic.id,
+        id: subId,
         hasStudyMaterial: true,
-        svgUrl: editingStudySubtopic.svgUrl || null,
-        svgContent: editingStudySubtopic.svgContent || null,
-        studyTheory: editingStudySubtopic.studyTheory?.trim() || '',
-        sampleProblem: editingStudySubtopic.sampleProblem,
+        ...(clearedFile
+          ? {
+              materialId: null,
+              fileUrl: null,
+              pdfUrl: null,
+              downloadUrl: null,
+              thumbnailUrl: null,
+              fileType: null,
+              originalName: null,
+              svgUrl: null,
+              svgContent: null
+            }
+          : {
+              materialId: subSnapshot.materialId || null,
+              fileUrl: subSnapshot.fileUrl || null,
+              pdfUrl: subSnapshot.pdfUrl || null,
+              downloadUrl: subSnapshot.downloadUrl || null,
+              thumbnailUrl: subSnapshot.thumbnailUrl || null,
+              fileType: subSnapshot.fileType || null,
+              originalName: subSnapshot.originalName || null,
+              svgUrl: subSnapshot.svgUrl || null,
+              svgContent: subSnapshot.svgContent || null
+            }),
+        studyTheory: subSnapshot.studyTheory?.trim() || '',
+        sampleProblem: subSnapshot.sampleProblem,
         studySteps: cleanSteps
       }, effectiveUserId);
+
       toast.success('Studijní výklad byl úspěšně uložen');
       setIsStudyContentModalOpen(false);
       setEditingStudySubtopic(null);
+      setStudyDropFile(null);
+      setStudyFileCleared(false);
       await loadData();
     } catch (err: any) {
       toast.error('Chyba při ukládání: ' + err.message);
+    } finally {
+      setIsSavingStudyContent(false);
     }
   };
 
@@ -941,8 +1158,17 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   };
 
   const handleSelectMaterial = (mat: ExistingMaterialItem) => {
+    setStudyDropFile(null);
+    setStudyFileCleared(false);
     setEditingStudySubtopic(prev => ({
       ...prev,
+      materialId: mat.id,
+      fileUrl: mat.fileUrl || mat.pdfUrl || mat.svgUrl || null,
+      pdfUrl: mat.pdfUrl || null,
+      downloadUrl: mat.downloadUrl || null,
+      thumbnailUrl: mat.thumbnailUrl || null,
+      fileType: mat.fileType || null,
+      originalName: mat.originalName || mat.title || null,
       svgContent: mat.svgContent || '',
       svgUrl: mat.svgUrl || '',
       hasStudyMaterial: true,
@@ -1174,6 +1400,53 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [uploadingStepIdx, setUploadingStepIdx] = useState<number | null>(null);
   const [stepConversionMsg, setStepConversionMsg] = useState('');
 
+  const waitForMaterialReady = (materialId: string) =>
+    new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let unsub: (() => void) | null = null;
+      let pollId: number | null = null;
+      let timeoutId: number | null = null;
+
+      const finish = (err?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (unsub) unsub();
+        if (pollId !== null) window.clearInterval(pollId);
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const check = (status?: string, errMsg?: string | null) => {
+        if (status === 'ready') finish();
+        else if (status === 'error') finish(new Error(errMsg || 'Zpracování souboru selhalo.'));
+      };
+
+      try {
+        unsub = onSnapshot(doc(db, LEARNING_SHEETS_COLLECTION, materialId), (snap) => {
+          if (snap.exists()) {
+            const d = snap.data();
+            check(d?.status, d?.errorMessage);
+          }
+        });
+      } catch {
+        // Fallback polling níže
+      }
+
+      pollId = window.setInterval(async () => {
+        try {
+          const res = await fetchMaterialStatus(materialId);
+          check(res?.status, res?.errorMessage);
+        } catch {
+          // Pokračujeme v dalším intervalu
+        }
+      }, 2000);
+
+      timeoutId = window.setTimeout(() => {
+        finish(); // Povolit uložení kroku po limitu, backend doběhne
+      }, 120000);
+    });
+
   const handleStepImageUpload = async (stepIdx: number, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1185,34 +1458,81 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
-      toast.error('Soubor je příliš velký (maximum 15 MB).');
+    if (file.size > 40 * 1024 * 1024) {
+      toast.error('Soubor je příliš velký (maximum 40 MB).');
       return;
     }
 
+    const topicObj = topics.find(t => t.id === editingStudySubtopic?.topicId);
+
     setUploadingStepIdx(stepIdx);
-    setStepConversionMsg('Převádím soubor na vektorové SVG...');
+    setStepConversionMsg('Převádím soubor na SVG...');
     try {
-      const res = await convertFileToSvg(file, (msg) => setStepConversionMsg(msg));
-      setEditingStudySubtopic(prev => {
-        const updated = [...(prev?.studySteps || [])];
-        updated[stepIdx] = {
-          ...updated[stepIdx],
-          svgContent: res.svgString,
-          imageUrl: res.thumbnailDataUrl || ''
-        };
-        return {
-          ...prev,
-          studySteps: updated
-        };
-      });
-      toast.success(
-        ext === 'svg'
-          ? 'SVG soubor úspěšně načten a vložen ke kroku!'
-          : ext === 'pdf'
-            ? 'PDF úspěšně převedeno na vektorové SVG a vloženo ke kroku!'
-            : 'Obrázek byl úspěšně převeden do formátu SVG a vložen ke kroku!'
-      );
+      const converted = await convertFileToSvg(file, (msg) => setStepConversionMsg(msg));
+
+      if (converted.svgString && converted.svgString.length <= 140000) {
+        setEditingStudySubtopic(prev => {
+          const updated = [...(prev?.studySteps || [])];
+          updated[stepIdx] = {
+            ...updated[stepIdx],
+            svgContent: converted.svgString,
+            imageUrl: '',
+            materialId: undefined,
+            fileUrl: undefined,
+            pdfUrl: undefined,
+            fileType: undefined,
+            originalName: file.name
+          };
+          return {
+            ...prev,
+            studySteps: updated
+          };
+        });
+        toast.success(
+          ext === 'svg'
+            ? 'SVG soubor úspěšně načten a vložen ke kroku!'
+            : ext === 'pdf'
+              ? 'PDF úspěšně převedeno na čisté SVG a vloženo ke kroku!'
+              : 'Obrázek byl úspěšně převeden na SVG a vložen ke kroku!'
+        );
+      } else {
+        setStepConversionMsg('Nahrávám a připravuji převedené SVG pro krok...');
+        const svgDataUrl = svgStringToDataUrl(converted.svgString);
+        const uploadRes = await uploadMaterial({
+          title: `${editingStudySubtopic?.title || 'Studium'} — Krok ${stepIdx + 1}`,
+          subject: editingStudySubtopic?.subjectId || activeSubject,
+          topic: topicObj?.title || 'Studium',
+          fileData: svgDataUrl,
+          fileType: 'image/svg+xml',
+          originalName: file.name,
+          thumbnailDataUrl: converted.thumbnailDataUrl || undefined,
+          hiddenFromLibrary: true
+        });
+
+        if (uploadRes.status === 'processing') {
+          await waitForMaterialReady(uploadRes.materialId);
+        }
+
+        const resolvedFileUrl = uploadRes.fileUrl || `/api/materials/${uploadRes.materialId}/file`;
+        setEditingStudySubtopic(prev => {
+          const updated = [...(prev?.studySteps || [])];
+          updated[stepIdx] = {
+            ...updated[stepIdx],
+            materialId: uploadRes.materialId,
+            fileUrl: resolvedFileUrl,
+            pdfUrl: undefined,
+            fileType: 'image/svg+xml',
+            originalName: file.name,
+            imageUrl: '',
+            svgContent: ''
+          };
+          return {
+            ...prev,
+            studySteps: updated
+          };
+        });
+        toast.success('Soubor byl převeden na SVG a připraven ke kroku!');
+      }
     } catch (err: any) {
       console.error('Error processing step image/svg:', err);
       toast.error('Nepodařilo se zpracovat soubor: ' + (err.message || ''));
@@ -1229,7 +1549,12 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       updated[stepIdx] = {
         ...updated[stepIdx],
         svgContent: '',
-        imageUrl: ''
+        imageUrl: '',
+        materialId: undefined,
+        fileUrl: undefined,
+        pdfUrl: undefined,
+        fileType: undefined,
+        originalName: undefined
       };
       return {
         ...prev,
@@ -1936,6 +2261,23 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                     </span>
                                   </span>
                                 )}
+
+                                {studyUploadStatusBySubtopic[sub.id] && (
+                                  studyUploadStatusBySubtopic[sub.id].status === 'error' ? (
+                                    <span
+                                      className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-800 bg-rose-50 border border-rose-200 px-2.5 py-0.5 rounded-md"
+                                      title={studyUploadStatusBySubtopic[sub.id].message}
+                                    >
+                                      <AlertTriangle size={11} className="text-rose-600" />
+                                      <span>Chyba nahrávání materiálu</span>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2.5 py-0.5 rounded-md animate-pulse">
+                                      <Loader2 size={12} className="animate-spin text-amber-700" />
+                                      <span>{studyUploadStatusBySubtopic[sub.id].message || 'Připravuji materiál...'}</span>
+                                    </span>
+                                  )
+                                )}
                               </div>
 
                               {sub.description && (
@@ -2544,19 +2886,50 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
               <PdfSvgDropzone
                 userId={effectiveUserId}
-                valueSvgString={editingStudySubtopic?.svgContent}
-                valueSvgUrl={editingStudySubtopic?.svgUrl}
+                valueSvgString={studyDropFile ? (studyDropFile.svgString || '') : (studyFileCleared ? '' : (editingStudySubtopic?.svgContent || ''))}
+                valueSvgUrl={studyDropFile ? (studyDropFile.svgUrl || '') : (studyFileCleared ? '' : (editingStudySubtopic?.svgUrl || ''))}
+                valueFileUrl={
+                  studyDropFile
+                    ? (studyDropFile.fileData || studyDropFile.pdfUrl || studyDropFile.svgUrl || '')
+                    : (studyFileCleared ? '' : (editingStudySubtopic?.fileUrl || editingStudySubtopic?.pdfUrl || editingStudySubtopic?.svgUrl || ''))
+                }
+                valueFileType={studyDropFile ? (studyDropFile.fileType || '') : (studyFileCleared ? '' : (editingStudySubtopic?.fileType || ''))}
+                valueThumbnailUrl={
+                  studyDropFile
+                    ? (studyDropFile.thumbnailDataUrl || studyDropFile.thumbnail || '')
+                    : (studyFileCleared ? '' : (editingStudySubtopic?.thumbnailUrl || ''))
+                }
+                fileName={
+                  studyDropFile
+                    ? studyDropFile.fileName
+                    : (studyFileCleared ? '' : (editingStudySubtopic?.originalName || (editingStudySubtopic?.fileUrl || editingStudySubtopic?.svgUrl ? 'Přiřazený soubor' : '')))
+                }
+                isProcessing={Boolean(
+                  editingStudySubtopic?.id &&
+                  (studyUploadStatusBySubtopic[editingStudySubtopic.id]?.status === 'uploading' ||
+                    studyUploadStatusBySubtopic[editingStudySubtopic.id]?.status === 'processing')
+                )}
+                processingMessage={editingStudySubtopic?.id ? studyUploadStatusBySubtopic[editingStudySubtopic.id]?.message : undefined}
                 onChange={(res) => {
                   if (res) {
+                    setStudyDropFile(res);
+                    setStudyFileCleared(false);
                     setEditingStudySubtopic(prev => ({
                       ...prev,
-                      svgUrl: res.svgUrl || prev?.svgUrl || '',
-                      svgContent: res.svgUrl ? '' : res.svgString,
                       hasStudyMaterial: true
                     }));
                   } else {
+                    setStudyDropFile(null);
+                    setStudyFileCleared(true);
                     setEditingStudySubtopic(prev => ({
                       ...prev,
+                      materialId: null,
+                      fileUrl: null,
+                      pdfUrl: null,
+                      downloadUrl: null,
+                      thumbnailUrl: null,
+                      fileType: null,
+                      originalName: null,
                       svgContent: '',
                       svgUrl: ''
                     }));
@@ -2568,11 +2941,11 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             <div className="space-y-2">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                 <label className="text-xs font-bold text-gray-700 block">
-                  Teoretický výklad / Popis látky (zobrazí se, pokud není nahrán obrázek výše)
+                  Teoretický výklad / Popis látky (zobrazí se, pokud není nahrán soubor výše)
                 </label>
-                {(editingStudySubtopic?.svgContent || editingStudySubtopic?.svgUrl) ? (
+                {Boolean(studyDropFile || (!studyFileCleared && (editingStudySubtopic?.svgContent || editingStudySubtopic?.svgUrl || editingStudySubtopic?.fileUrl || editingStudySubtopic?.pdfUrl))) ? (
                   <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-lg shrink-0">
-                    Nahrán obrázek – žákům se zobrazí obrázek místo tohoto textu
+                    Nahrán soubor – žákům se zobrazí grafický list místo tohoto textu
                   </span>
                 ) : (
                   <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-lg shrink-0">
@@ -2749,18 +3122,41 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         {uploadingStepIdx === idx ? (
                           <div className="border-2 border-dashed border-amber-300 bg-amber-50/70 rounded-2xl p-5 text-center space-y-2 animate-pulse">
                             <div className="w-7 h-7 border-3 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
-                            <p className="font-bold text-xs text-amber-900">{stepConversionMsg || 'Zpracovávám soubor a převádím do SVG...'}</p>
+                            <p className="font-bold text-xs text-amber-900">{stepConversionMsg || 'Nahrávám a připravuji soubor pro krok...'}</p>
                           </div>
-                        ) : (step.svgContent || step.imageUrl) ? (
+                        ) : (step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl) ? (
                           <div className="rounded-xl border border-gray-200 bg-white p-3 flex flex-col items-center justify-center space-y-2.5 shadow-2xs">
-                            {step.svgContent ? (
+                            {isPdfResource(step) ? (
+                              <div className="w-full flex items-center justify-between gap-3 bg-rose-50/70 border border-rose-200 rounded-xl px-4 py-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <FileText size={20} className="text-rose-700 shrink-0" />
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-bold text-gray-900 truncate">
+                                      {step.originalName || 'PDF příloha ke kroku'}
+                                    </p>
+                                    <p className="text-[11px] text-rose-700 font-medium">PDF dokument připraven</p>
+                                  </div>
+                                </div>
+                                {(step.pdfUrl || step.fileUrl) && (
+                                  <a
+                                    href={step.pdfUrl || step.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-3 py-1.5 bg-white border border-gray-300 hover:border-black rounded-lg text-xs font-bold text-gray-800 inline-flex items-center gap-1.5 shrink-0"
+                                  >
+                                    <Eye size={13} />
+                                    Otevřít PDF
+                                  </a>
+                                )}
+                              </div>
+                            ) : step.svgContent ? (
                               <div 
                                 className="max-h-52 w-full overflow-hidden flex justify-center [&>svg]:max-h-52 [&>svg]:w-auto [&>svg]:max-w-full"
                                 dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
                               />
                             ) : (
                               <img
-                                src={step.imageUrl}
+                                src={step.imageUrl || step.fileUrl}
                                 alt={`Náhled ke kroku ${idx + 1}`}
                                 className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
                               />
@@ -2771,7 +3167,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 onClick={() => handleRemoveStepImage(idx)}
                                 className="px-2.5 py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                               >
-                                Změnit / Smazat obrázek
+                                Změnit / Smazat soubor
                               </button>
                             </div>
                           </div>
@@ -2958,8 +3354,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <Button type="button" variant="outline" onClick={() => setIsStudyContentModalOpen(false)} className="rounded-xl cursor-pointer">
                 Zrušit
               </Button>
-              <Button type="submit" className="rounded-xl bg-[#1E1B18] text-white font-bold cursor-pointer">
-                Uložit studium
+              <Button type="submit" disabled={isSavingStudyContent} className="rounded-xl bg-[#1E1B18] text-white font-bold cursor-pointer inline-flex items-center gap-2">
+                {isSavingStudyContent && <Loader2 size={14} className="animate-spin" />}
+                <span>{isSavingStudyContent ? 'Ukládám...' : 'Uložit studium'}</span>
               </Button>
             </DialogFooter>
           </form>

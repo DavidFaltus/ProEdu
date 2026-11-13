@@ -42,7 +42,7 @@ function getTransporter() {
  * Centrální metoda pro odeslání e-mailu.
  * Pokud nejsou nastaveny SMTP proměnné, zaloguje náhled do konzole pro lokální testování.
  */
-export async function sendEmail({ to, subject, html, text, replyTo, logDetails = {} }) {
+export async function sendEmail({ to, subject, html, text, replyTo, attachments = [], logDetails = {} }) {
   const mailClient = getTransporter();
 
   if (!mailClient) {
@@ -53,6 +53,9 @@ export async function sendEmail({ to, subject, html, text, replyTo, logDetails =
       console.log(`│ Reply-To: ${replyTo}`);
     }
     console.log(`│ Předmět:  ${subject}`);
+    if (attachments.length > 0) {
+      console.log(`│ Přílohy:  ${attachments.map(a => a.filename || 'soubor').join(', ')}`);
+    }
     if (logDetails.code) {
       console.log(`│ 👉 KÓD:   ${logDetails.code}  (Platnost: 15 minut)`);
     }
@@ -70,14 +73,20 @@ export async function sendEmail({ to, subject, html, text, replyTo, logDetails =
   }
 
   try {
-    const info = await mailClient.sendMail({
+    const mailOptions = {
       from: SMTP_FROM,
       to,
       replyTo: replyTo || undefined,
       subject,
       text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       html
-    });
+    };
+
+    if (Array.isArray(attachments) && attachments.length > 0) {
+      mailOptions.attachments = attachments;
+    }
+
+    const info = await mailClient.sendMail(mailOptions);
 
     console.log(`[EmailService] E-mail "${subject}" úspěšně odeslán na ${to}. MessageId: ${info.messageId}`);
     return {
@@ -231,7 +240,7 @@ export async function sendOrderQrEmail({ to, name, orderId, amount, variableSymb
 /**
  * 3. Šablona: Potvrzení platby a aktivace předplatného ProEducator Premium
  */
-export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, planTitle = 'ProEducator Premium', periodEnd }) {
+export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, planTitle = 'ProEducator Premium', periodEnd, invoiceNumber, attachments = [] }) {
   const subject = `Potvrzení platby – Váš balíček ${planTitle} je aktivní!`;
   const headline = 'Platba byla úspěšně přijata';
   const subheadline = `Balíček ${planTitle} byl aktivován`;
@@ -248,6 +257,12 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
         <td class="label">Číslo objednávky:</td>
         <td class="value">${orderId}</td>
       </tr>
+      ${invoiceNumber ? `
+      <tr>
+        <td class="label">Číslo faktury:</td>
+        <td class="value"><strong>${invoiceNumber}</strong></td>
+      </tr>
+      ` : ''}
       <tr>
         <td class="label">Uhrazená částka:</td>
         <td class="value"><strong>${amount} Kč</strong></td>
@@ -262,6 +277,8 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
       </tr>
     </table>
 
+    ${attachments.length > 0 ? `<p style="font-size:13px; color:#334155;">📄 Fakturu / daňový doklad naleznete přiloženou v příloze tohoto e-mailu (PDF).</p>` : ''}
+
     <div style="text-align: center; margin: 28px 0;">
       <a href="${APP_URL}/dashboard" class="btn">Vstoupit do aplikace ProEdu</a>
     </div>
@@ -272,14 +289,14 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, logDetails: { orderId, amount } });
+  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**
  * 4. Šablona: Notifikace o úspěšném automatickém stržení opakované platby (Comgate recurring)
  * Vyžadováno pravidly karetních asociací Visa/Mastercard.
  */
-export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amount, nextPeriodEnd }) {
+export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amount, nextPeriodEnd, invoiceNumber, attachments = [] }) {
   const subject = `Potvrzení o prodloužení předplatného ProEducator Premium (${amount} Kč)`;
   const headline = 'Předplatné bylo úspěšně prodlouženo';
   const subheadline = `Měsíční platba ${amount} Kč byla zprocesována`;
@@ -296,6 +313,12 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
         <td class="label">Číslo transakce:</td>
         <td class="value">${orderId}</td>
       </tr>
+      ${invoiceNumber ? `
+      <tr>
+        <td class="label">Číslo faktury:</td>
+        <td class="value"><strong>${invoiceNumber}</strong></td>
+      </tr>
+      ` : ''}
       <tr>
         <td class="label">Částka:</td>
         <td class="value"><strong>${amount} Kč</strong></td>
@@ -306,13 +329,15 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
       </tr>
     </table>
 
+    ${attachments.length > 0 ? `<p style="font-size:13px; color:#334155;">📄 Fakturu / daňový doklad za toto období naleznete v příloze (PDF).</p>` : ''}
+
     <p style="font-size:13px; color:#64748B;">
       Podrobnosti o předplatném nebo případné zrušení můžete kdykoliv provést přímo ve svém profilu v sekci <a href="${APP_URL}/settings">Nastavení účtu</a>.
     </p>
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, logDetails: { orderId, amount } });
+  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**

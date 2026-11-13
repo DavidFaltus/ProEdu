@@ -1,6 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { Order } from '../../types';
-import { getAllOrders, confirmOrderManual, deleteOrder } from '../../services/orderService';
+import {
+  getAllOrders,
+  confirmOrderManual,
+  deleteOrder,
+  downloadOrderInvoicePdf,
+  retryOrderIuctoSync,
+  refundOrderWithCreditNote,
+  getIuctoStatus
+} from '../../services/orderService';
 import { Button } from '../ui/button';
 import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
@@ -18,7 +26,10 @@ import {
   Calendar,
   Trash2,
   AlertTriangle,
-  Loader2
+  Loader2,
+  FileText,
+  RotateCcw,
+  Receipt
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -26,16 +37,33 @@ export default function OrdersManager() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'paid'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'paid' | 'refunded'>('all');
   const [confirmingOrderId, setConfirmingOrderId] = useState<string | null>(null);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
+  const [syncingIuctoOrderId, setSyncingIuctoOrderId] = useState<string | null>(null);
+  const [orderToRefund, setOrderToRefund] = useState<Order | null>(null);
+  const [refundReason, setRefundReason] = useState('Storno objednávky / vrácení platby');
+  const [isRefunding, setIsRefunding] = useState(false);
+  const [iuctoStatus, setIuctoStatus] = useState<{
+    configured?: boolean;
+    connected?: boolean;
+    companyName?: string | null;
+    isVatPayer?: boolean;
+    sandboxEnabled?: boolean;
+    comgateTestMode?: boolean;
+    error?: string;
+  } | null>(null);
 
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const data = await getAllOrders();
+      const [data, status] = await Promise.all([
+        getAllOrders(),
+        getIuctoStatus().catch(() => null)
+      ]);
       setOrders(data);
+      if (status) setIuctoStatus(status);
     } catch (err: any) {
       console.error('Failed to load orders:', err);
       toast.error(err.message || 'Nepodařilo se načíst objednávky.');
@@ -54,13 +82,43 @@ export default function OrdersManager() {
     try {
       const res = await confirmOrderManual(orderId);
       toast.success(res.message);
-      // Aktualizovat lokální stav
-      setOrders(prev => prev.map(o => (o.id === orderId || (o as any).orderId === orderId) ? { ...o, status: 'paid', paidAt: new Date().toISOString() } : o));
+      await fetchOrders();
     } catch (err: any) {
       console.error('Failed to confirm order:', err);
       toast.error(err.message || 'Nepodařilo se potvrdit platbu.');
     } finally {
       setConfirmingOrderId(null);
+    }
+  };
+
+  const handleRetryIucto = async (orderId?: string) => {
+    if (!orderId) return;
+    setSyncingIuctoOrderId(orderId);
+    try {
+      const res = await retryOrderIuctoSync(orderId, false);
+      toast.success(res.message);
+      await fetchOrders();
+    } catch (err: any) {
+      toast.error(err.message || 'Nepodařilo se synchronizovat objednávku s iÚčtem.');
+    } finally {
+      setSyncingIuctoOrderId(null);
+    }
+  };
+
+  const handleConfirmRefund = async () => {
+    if (!orderToRefund) return;
+    const orderId = (orderToRefund as any).orderId || orderToRefund.id;
+    if (!orderId) return;
+    setIsRefunding(true);
+    try {
+      const res = await refundOrderWithCreditNote(orderId, refundReason.trim() || 'Storno objednávky');
+      toast.success(res.message);
+      setOrderToRefund(null);
+      await fetchOrders();
+    } catch (err: any) {
+      toast.error(err.message || 'Nepodařilo se vystavit dobropis.');
+    } finally {
+      setIsRefunding(false);
     }
   };
 
@@ -121,6 +179,37 @@ export default function OrdersManager() {
         </div>
       </div>
 
+      {/* Stav napojení na iÚčto */}
+      {iuctoStatus && (
+        <div
+          className={`p-3.5 rounded-2xl border text-xs flex flex-wrap items-center justify-between gap-2 ${
+            iuctoStatus.connected
+              ? 'bg-emerald-50/70 border-emerald-200 text-emerald-900'
+              : iuctoStatus.configured
+                ? 'bg-rose-50 border-rose-200 text-rose-900'
+                : 'bg-amber-50/80 border-amber-200 text-amber-900'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-bold">
+            <Receipt size={15} />
+            {iuctoStatus.connected ? (
+              <span>
+                iÚčto API připojeno ({iuctoStatus.companyName || 'Firma'} • {iuctoStatus.isVatPayer ? 'Plátce DPH' : 'Neplátce DPH'})
+                {iuctoStatus.comgateTestMode && (
+                  <span className="ml-2 font-normal">
+                    • Sandbox iÚčta: {iuctoStatus.sandboxEnabled ? 'ZAPNUT (testovací doklady se vystavují)' : 'VYPNUT (testovací platby se neúčtují)'}
+                  </span>
+                )}
+              </span>
+            ) : iuctoStatus.configured ? (
+              <span>iÚčto API chyba připojení: {iuctoStatus.error}</span>
+            ) : (
+              <span>iÚčto API klíč (IUCTO_API_KEY) zatím není nastaven na serveru – fakturace běží v offline náhledu.</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Ovládací panel - Hledání a Záložky stavů */}
       <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 bg-white p-3 rounded-2xl border border-gray-100 shadow-xs">
         <div className="relative flex-1 max-w-md">
@@ -134,7 +223,7 @@ export default function OrdersManager() {
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-start md:self-auto bg-[#FAF7F0] p-1 rounded-xl border border-gray-200 text-xs font-bold">
+        <div className="flex items-center flex-wrap gap-1.5 self-start md:self-auto bg-[#FAF7F0] p-1 rounded-xl border border-gray-200 text-xs font-bold">
           <button
             type="button"
             onClick={() => setStatusFilter('all')}
@@ -162,6 +251,15 @@ export default function OrdersManager() {
           >
             Zaplacené ({orders.filter(o => o.status === 'paid').length})
           </button>
+          <button
+            type="button"
+            onClick={() => setStatusFilter('refunded')}
+            className={`px-3 py-1.5 rounded-lg transition-all ${
+              statusFilter === 'refunded' ? 'bg-white text-purple-900 shadow-xs' : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            Refundované ({orders.filter(o => o.status === 'refunded').length})
+          </button>
         </div>
       </div>
 
@@ -184,6 +282,7 @@ export default function OrdersManager() {
             const currentOrderId = (order as any).orderId || order.id;
             const isPending = order.status === 'pending';
             const isPaid = order.status === 'paid';
+            const isRefunded = order.status === 'refunded';
             const isQr = order.paymentMethod === 'qr_bank_transfer';
 
             return (
@@ -203,6 +302,11 @@ export default function OrdersManager() {
                         <CheckCircle2 size={12} />
                         <span>Zaplaceno</span>
                       </span>
+                    ) : isRefunded ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-0.5 rounded-full">
+                        <RotateCcw size={12} />
+                        <span>Refundováno</span>
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
                         <Clock size={12} />
@@ -214,6 +318,33 @@ export default function OrdersManager() {
                       {isQr ? <QrCode size={12} /> : <CreditCard size={12} />}
                       <span>{isQr ? 'QR Převod' : 'Comgate'}</span>
                     </span>
+
+                    {order.iuctoInvoiceNumber && (
+                      <span className="text-[11px] font-mono font-bold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                        iÚčto: {order.iuctoInvoiceNumber}
+                      </span>
+                    )}
+
+                    {order.iuctoCreditNoteNumber && (
+                      <span className="text-[11px] font-mono font-bold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md">
+                        Dobropis: {order.iuctoCreditNoteNumber}
+                      </span>
+                    )}
+
+                    {order.iuctoSyncStatus === 'failed' && (
+                      <span
+                        title={order.iuctoError || 'Synchronizace s iÚčtem selhala'}
+                        className="text-[11px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md"
+                      >
+                        iÚčto chyba
+                      </span>
+                    )}
+
+                    {order.iuctoSyncStatus === 'skipped_sandbox' && (
+                      <span className="text-[10px] font-bold text-gray-500 bg-gray-100 border border-gray-200 px-1.5 py-0.5 rounded">
+                        Sandbox (bez iÚčta)
+                      </span>
+                    )}
 
                     {order.newsletterConsent && (
                       <span className="text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
@@ -255,8 +386,8 @@ export default function OrdersManager() {
                 </div>
 
                 {/* Částka a Akce */}
-                <div className="flex items-center gap-4 self-end lg:self-center shrink-0">
-                  <div className="text-right">
+                <div className="flex flex-wrap items-center gap-2.5 self-end lg:self-center shrink-0">
+                  <div className="text-right mr-1">
                     <div className="text-xl font-display font-black text-[#B80053]">
                       {order.amount || 99} Kč
                     </div>
@@ -264,6 +395,50 @@ export default function OrdersManager() {
                       ProEdu Premium
                     </div>
                   </div>
+
+                  {(isPaid || isRefunded) && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        downloadOrderInvoicePdf(order).catch(err =>
+                          toast.error(err.message || 'Nepodařilo se otevřít PDF faktury.')
+                        )
+                      }
+                      className="border-gray-200 text-gray-700 hover:bg-gray-50 font-bold text-xs h-9 px-3 rounded-xl cursor-pointer flex items-center gap-1.5"
+                    >
+                      <FileText size={14} className="text-[#B80053]" />
+                      <span>{order.iuctoInvoiceId ? 'Faktura PDF' : 'Doklad'}</span>
+                    </Button>
+                  )}
+
+                  {isPaid && (!order.iuctoInvoiceId || order.iuctoSyncStatus === 'failed') && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleRetryIucto(currentOrderId)}
+                      disabled={syncingIuctoOrderId === currentOrderId}
+                      className="border-blue-200 text-blue-700 hover:bg-blue-50 font-bold text-xs h-9 px-3 rounded-xl cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RefreshCw size={13} className={syncingIuctoOrderId === currentOrderId ? 'animate-spin' : ''} />
+                      <span>{syncingIuctoOrderId === currentOrderId ? 'Vystavuji...' : 'Vystavit v iÚčtu'}</span>
+                    </Button>
+                  )}
+
+                  {isPaid && order.iuctoInvoiceId && !order.iuctoCreditNoteId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setRefundReason('Storno objednávky / vrácení platby');
+                        setOrderToRefund(order);
+                      }}
+                      className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs h-9 px-3 rounded-xl cursor-pointer flex items-center gap-1.5"
+                    >
+                      <RotateCcw size={13} />
+                      <span>Dobropis</span>
+                    </Button>
+                  )}
 
                   {isPending && (
                     <Button
@@ -296,6 +471,65 @@ export default function OrdersManager() {
           })}
         </div>
       )}
+
+      {/* POTVRZOVACÍ MODÁL PRO VYSTAVENÍ DOBROPISU / STORNO */}
+      <Dialog open={!!orderToRefund} onOpenChange={open => { if (!open && !isRefunding) setOrderToRefund(null); }}>
+        <DialogContent className="sm:max-w-md rounded-[2rem] p-6 sm:p-8 bg-white border border-gray-100 shadow-2xl space-y-5">
+          <div className="space-y-2">
+            <div className="w-12 h-12 rounded-2xl bg-purple-50 text-purple-700 flex items-center justify-center mb-2">
+              <RotateCcw size={24} />
+            </div>
+            <DialogTitle className="text-xl sm:text-2xl font-sans font-black text-gray-900">
+              Stornovat a vystavit dobropis?
+            </DialogTitle>
+            <DialogDescription className="text-xs sm:text-sm text-gray-600 leading-relaxed">
+              V iÚčtu se vytvoří opravný daňový doklad (dobropis) k faktuře{' '}
+              <strong>{orderToRefund?.iuctoInvoiceNumber || orderToRefund?.iuctoInvoiceId}</strong> a odešle se na e-mail klienta.
+            </DialogDescription>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-gray-700 block">Důvod opravy (povinné pro iÚčto)</label>
+            <input
+              type="text"
+              value={refundReason}
+              onChange={e => setRefundReason(e.target.value)}
+              placeholder="Storno objednávky / vrácení platby"
+              className="w-full px-3 py-2.5 text-xs rounded-xl border border-gray-200 bg-[#FAF7F0]/50 focus:bg-white focus:outline-hidden"
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isRefunding}
+              onClick={() => setOrderToRefund(null)}
+              className="flex-1 rounded-xl h-11 border-gray-200 text-gray-700 font-bold text-xs cursor-pointer"
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              disabled={isRefunding || !refundReason.trim()}
+              onClick={handleConfirmRefund}
+              className="flex-1 rounded-xl h-11 bg-purple-700 hover:bg-purple-800 text-white font-black text-xs cursor-pointer flex items-center justify-center gap-2"
+            >
+              {isRefunding ? (
+                <>
+                  <Loader2 size={15} className="animate-spin" />
+                  <span>Vystavuji dobropis...</span>
+                </>
+              ) : (
+                <>
+                  <RotateCcw size={15} />
+                  <span>Vystavit dobropis</span>
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* POTVRZOVACÍ MODÁL PRO SMAZÁNÍ OBJEDNÁVKY */}
       <Dialog open={!!orderToDelete} onOpenChange={open => { if (!open && !deletingOrderId) setOrderToDelete(null); }}>

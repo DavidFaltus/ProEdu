@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { sanitizeSvg } from '../utils/svgUtils';
-import { downloadMaterialAsPdf } from '../utils/pdfToSvg';
+import { downloadMaterialAsPdf, isPdfResource } from '../utils/pdfToSvg';
 import { useAuth } from '../context/AuthContext';
 import { getAllMaterials, ExistingMaterialItem } from '../services/practiceService';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../components/ui/dialog';
@@ -49,10 +49,12 @@ export default function LearningSheets() {
     try {
       await downloadMaterialAsPdf({
         title: mat.title,
+        downloadUrl: mat.downloadUrl,
         pdfUrl: mat.pdfUrl,
         fileUrl: mat.fileUrl,
         svgUrl: mat.svgUrl,
-        svgContent: mat.svgContent
+        svgContent: mat.svgContent,
+        fileType: mat.fileType
       });
       toast.success(`PDF „${mat.title}“ bylo staženo.`);
     } catch (err: any) {
@@ -81,6 +83,8 @@ export default function LearningSheets() {
   const topicsList = Array.from(new Set(materials.map(m => m.topic).filter(Boolean)));
 
   const filteredMaterials = materials.filter(m => {
+    // Skrýt materiály určené pouze pro sekci Studovat
+    if (m.hiddenFromLibrary) return false;
     // Studenti vidí pouze materiály se stavem 'ready'
     if (m.status === 'processing' || m.status === 'error') return false;
     const matchesSubject = selectedSubject === 'Vše' || m.subject === selectedSubject;
@@ -328,12 +332,7 @@ export default function LearningSheets() {
 
       {/* Universal Preview Modal with PDF and Zoom */}
       {previewMaterial && (() => {
-        const isPdf = Boolean(
-          previewMaterial.fileType === 'application/pdf' ||
-          previewMaterial.pdfUrl ||
-          previewMaterial.originalName?.toLowerCase().endsWith('.pdf') ||
-          (previewMaterial.fileUrl && !previewMaterial.fileUrl.toLowerCase().endsWith('.svg') && !previewMaterial.svgContent)
-        );
+        const isPdf = isPdfResource(previewMaterial);
         const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
 
         return (

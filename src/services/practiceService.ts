@@ -257,6 +257,11 @@ export function cleanStudyStep(s: Partial<StudyStep>): StudyStep {
   const img = s.imageUrl?.trim();
   if (img) step.imageUrl = img;
   if (s.svgContent?.trim()) step.svgContent = s.svgContent.trim();
+  if (s.materialId?.trim()) step.materialId = s.materialId.trim();
+  if (s.fileUrl?.trim()) step.fileUrl = s.fileUrl.trim();
+  if (s.pdfUrl?.trim()) step.pdfUrl = s.pdfUrl.trim();
+  if (s.fileType?.trim()) step.fileType = s.fileType.trim();
+  if (s.originalName?.trim()) step.originalName = s.originalName.trim();
   const tip = s.tutorTip?.trim();
   if (tip) step.tutorTip = tip;
   const question = s.testQuestion?.trim();
@@ -269,7 +274,49 @@ export function cleanStudyStep(s: Partial<StudyStep>): StudyStep {
   }
   const ans = s.correctAnswer?.trim();
   if (ans) step.correctAnswer = ans;
+
+  if (step.svgContent) {
+    if (step.svgContent.length > 150000) {
+      step.svgContent = '';
+    } else if ((step.imageUrl || step.fileUrl) && step.svgContent.length > 50000) {
+      step.svgContent = '';
+    }
+  }
   return step;
+}
+
+/** Normalizes subtopic attachment fields and enforces Firestore string size limits. */
+function normalizeSubtopicMedia(source: Partial<PracticeSubtopic>) {
+  const materialId = source.materialId?.trim() || null;
+  const pdfUrl = source.pdfUrl?.trim() || null;
+  const svgUrl = source.svgUrl?.trim() || null;
+  const fileUrl = source.fileUrl?.trim() || pdfUrl || svgUrl || null;
+  const downloadUrl = source.downloadUrl?.trim() || null;
+  const rawThumb = source.thumbnailUrl?.trim() || null;
+  const thumbnailUrl = rawThumb && rawThumb.length <= 2048 ? rawThumb : null;
+  const fileType = source.fileType?.trim() || (pdfUrl ? 'application/pdf' : (svgUrl ? 'image/svg+xml' : null));
+  const originalName = source.originalName?.trim() || null;
+
+  let safeSvgContent = source.svgContent || null;
+  if (safeSvgContent) {
+    if (safeSvgContent.length > 200000) {
+      safeSvgContent = null;
+    } else if ((svgUrl || fileUrl) && safeSvgContent.length > 50000) {
+      safeSvgContent = null;
+    }
+  }
+
+  return {
+    materialId,
+    fileUrl,
+    pdfUrl,
+    downloadUrl,
+    thumbnailUrl,
+    fileType,
+    originalName,
+    svgUrl,
+    svgContent: safeSvgContent
+  };
 }
 
 export function cleanPracticeConfig(cfg?: any): PracticeConfig | null {
@@ -298,16 +345,17 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     ? subtopicData.studySteps.map(cleanStudyStep)
     : [];
   const sampleProblem = subtopicData.sampleProblem || null;
-  const svgUrl = subtopicData.svgUrl || null;
-  let safeSvgContent = subtopicData.svgContent || null;
-  if (safeSvgContent) {
-    if (safeSvgContent.length > 200000) {
-      safeSvgContent = null;
-    } else if (svgUrl && safeSvgContent.length > 50000) {
-      safeSvgContent = null;
-    }
-  }
-  const hasStudyMaterial = !!(svgUrl || safeSvgContent || studyTheory || studySteps.length > 0 || sampleProblem);
+  const media = normalizeSubtopicMedia(subtopicData);
+  const hasStudyMaterial = !!(
+    media.materialId ||
+    media.fileUrl ||
+    media.pdfUrl ||
+    media.svgUrl ||
+    media.svgContent ||
+    studyTheory ||
+    studySteps.length > 0 ||
+    sampleProblem
+  );
   const practiceConfig = subtopicData.practiceConfig ? cleanPracticeConfig(subtopicData.practiceConfig) : null;
 
   return {
@@ -318,8 +366,7 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     order,
     isHidden,
     hasStudyMaterial,
-    svgUrl,
-    svgContent: safeSvgContent,
+    ...media,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -343,9 +390,21 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
   const sampleProblem = data.sampleProblem ?? (parsedContent.sampleProblem || null);
   const description = data.description ?? (parsedContent.description || '');
   const order = typeof data.order === 'number' ? data.order : (typeof parsedContent.order === 'number' ? parsedContent.order : 0);
-  const svgUrl = data.svgUrl ?? (data.fileUrl || null);
+  const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || null;
+  const fileUrl = data.fileUrl || pdfUrl || data.svgUrl || null;
+  const svgUrl = data.svgUrl || (fileUrl && data.fileType !== 'application/pdf' && !pdfUrl ? fileUrl : null);
   const svgContent = data.svgContent ?? (parsedContent.svgContent || null);
-  const hasStudyMaterial = !!(data.hasStudyMaterial || svgUrl || svgContent || studyTheory || studySteps.length > 0 || sampleProblem);
+  const hasStudyMaterial = !!(
+    data.hasStudyMaterial ||
+    data.materialId ||
+    fileUrl ||
+    pdfUrl ||
+    svgUrl ||
+    svgContent ||
+    studyTheory ||
+    studySteps.length > 0 ||
+    sampleProblem
+  );
   const practiceConfig = data.practiceConfig ? cleanPracticeConfig(data.practiceConfig) : undefined;
 
   return {
@@ -357,6 +416,13 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     order: order,
     isHidden: Boolean(data.isHidden),
     hasStudyMaterial: hasStudyMaterial,
+    materialId: data.materialId || null,
+    fileUrl: fileUrl,
+    pdfUrl: pdfUrl,
+    downloadUrl: data.downloadUrl || null,
+    thumbnailUrl: data.thumbnailUrl || null,
+    fileType: data.fileType || null,
+    originalName: data.originalName || null,
     svgUrl: svgUrl,
     svgContent: svgContent,
     studyTheory: studyTheory,
@@ -419,19 +485,30 @@ export function buildSubtopicUpdatePayload(
   }
 
   const sampleProblem = updates.sampleProblem !== undefined ? updates.sampleProblem : (existing.sampleProblem || null);
-  const svgUrl = updates.svgUrl !== undefined ? updates.svgUrl : (existing.svgUrl || null);
-  let safeSvgContent = updates.svgContent !== undefined ? updates.svgContent : (existing.svgContent || null);
-  if (safeSvgContent) {
-    if (safeSvgContent.length > 200000) {
-      safeSvgContent = null;
-    } else if (svgUrl && safeSvgContent.length > 50000) {
-      safeSvgContent = null;
-    }
-  }
+  const media = normalizeSubtopicMedia({
+    materialId: updates.materialId !== undefined ? updates.materialId : existing.materialId,
+    fileUrl: updates.fileUrl !== undefined ? updates.fileUrl : existing.fileUrl,
+    pdfUrl: updates.pdfUrl !== undefined ? updates.pdfUrl : existing.pdfUrl,
+    downloadUrl: updates.downloadUrl !== undefined ? updates.downloadUrl : existing.downloadUrl,
+    thumbnailUrl: updates.thumbnailUrl !== undefined ? updates.thumbnailUrl : existing.thumbnailUrl,
+    fileType: updates.fileType !== undefined ? updates.fileType : existing.fileType,
+    originalName: updates.originalName !== undefined ? updates.originalName : existing.originalName,
+    svgUrl: updates.svgUrl !== undefined ? updates.svgUrl : existing.svgUrl,
+    svgContent: updates.svgContent !== undefined ? updates.svgContent : existing.svgContent
+  });
 
   const hasStudyMaterial = updates.hasStudyMaterial !== undefined
     ? updates.hasStudyMaterial
-    : !!(svgUrl || safeSvgContent || studyTheory || (studySteps && studySteps.length > 0) || sampleProblem);
+    : !!(
+        media.materialId ||
+        media.fileUrl ||
+        media.pdfUrl ||
+        media.svgUrl ||
+        media.svgContent ||
+        studyTheory ||
+        (studySteps && studySteps.length > 0) ||
+        sampleProblem
+      );
 
   const isHidden = typeof updates.isHidden === 'boolean'
     ? updates.isHidden
@@ -450,8 +527,7 @@ export function buildSubtopicUpdatePayload(
     order,
     isHidden,
     hasStudyMaterial,
-    svgUrl,
-    svgContent: safeSvgContent,
+    ...media,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -517,6 +593,7 @@ export interface MaterialInput {
   subject?: string;
   topic?: string;
   studyTheory?: string;
+  hiddenFromLibrary?: boolean;
   svgContent?: string | null;
   svgUrl?: string | null;
   thumbnailUrl?: string | null;
@@ -529,6 +606,20 @@ export interface MaterialInput {
   thumbnailDataUrl?: string;
 }
 
+export interface MaterialApiResponse {
+  success: boolean;
+  materialId: string;
+  status: 'processing' | 'ready' | 'error';
+  thumbnailUrl?: string | null;
+  fileUrl?: string | null;
+  pdfUrl?: string | null;
+  svgUrl?: string | null;
+  downloadUrl?: string | null;
+  fileType?: string | null;
+  originalName?: string | null;
+  message?: string;
+}
+
 /**
  * Zahájí rychlé asynchronní nahrání studijního materiálu přes serverové API.
  * Server ihned vrátí HTTP 202 se statusem 'processing' a soubor uloží v podkolekci chunks.
@@ -538,19 +629,12 @@ export async function uploadMaterial(payload: {
   subject?: string;
   topic?: string;
   studyTheory?: string;
+  hiddenFromLibrary?: boolean;
   fileData?: string;
   fileType?: string;
   originalName?: string;
   thumbnailDataUrl?: string;
-}): Promise<{
-  success: boolean;
-  materialId: string;
-  status: 'processing' | 'ready';
-  thumbnailUrl?: string;
-  fileUrl?: string;
-  downloadUrl?: string;
-  message?: string;
-}> {
+}): Promise<MaterialApiResponse> {
   const token = await auth.currentUser?.getIdToken();
   const res = await fetch('/api/materials/upload', {
     method: 'POST',
@@ -569,6 +653,68 @@ export async function uploadMaterial(payload: {
   const data = await res.json();
   cacheManager.invalidate('materials');
   return data;
+}
+
+/**
+ * Aktualizuje existující studijní materiál přes serverové API (včetně nahrazení či smazání souboru).
+ */
+export async function updateMaterialViaApi(
+  materialId: string,
+  payload: {
+    title?: string;
+    subject?: string;
+    topic?: string;
+    studyTheory?: string;
+    hiddenFromLibrary?: boolean;
+    fileData?: string;
+    fileType?: string;
+    originalName?: string;
+    thumbnailDataUrl?: string;
+    svgContent?: string;
+    clearFile?: boolean;
+  }
+): Promise<MaterialApiResponse> {
+  const token = await auth.currentUser?.getIdToken();
+  const res = await fetch(`/api/materials/${materialId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw new Error(errData.error || `Úprava materiálu selhala (HTTP ${res.status})`);
+  }
+
+  const data = await res.json();
+  cacheManager.invalidate('materials');
+  return data;
+}
+
+/**
+ * Ověří stav zpracování materiálu přes serverové API (fallback k real-time listeneru).
+ */
+export async function fetchMaterialStatus(materialId: string): Promise<{
+  materialId: string;
+  status: 'processing' | 'ready' | 'error';
+  errorMessage?: string | null;
+  fileSize?: number | null;
+  fileUrl?: string | null;
+  pdfUrl?: string | null;
+  svgUrl?: string | null;
+  thumbnailUrl?: string | null;
+  downloadUrl?: string | null;
+  fileType?: string | null;
+  originalName?: string | null;
+}> {
+  const res = await fetch(`/api/materials/${materialId}/status`);
+  if (!res.ok) {
+    throw new Error(`Nepodařilo se ověřit stav materiálu (HTTP ${res.status})`);
+  }
+  return res.json();
 }
 
 /**
@@ -682,6 +828,7 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     thumbnailUrl,
     fileType,
     hasStudyMaterial: true,
+    ...(typeof input.hiddenFromLibrary === 'boolean' ? { hiddenFromLibrary: input.hiddenFromLibrary } : {}),
     content: JSON.stringify(contentObj)
   };
 }
@@ -706,6 +853,7 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
       subject: materialData.subject || 'Matematika',
       topic: materialData.topic || 'Obecné',
       studyTheory: materialData.studyTheory || '',
+      hiddenFromLibrary: materialData.hiddenFromLibrary,
       fileData,
       fileType,
       originalName: materialData.originalName || (fileType === 'image/svg+xml' ? 'material.svg' : 'material.pdf'),
@@ -759,11 +907,8 @@ export async function deleteMaterial(materialId: string): Promise<void> {
   cacheManager.invalidate('materials');
 }
 
-export async function getMaterialById(materialId: string): Promise<ExistingMaterialItem | null> {
-  const docRef = doc(db, LEARNING_SHEETS_COLLECTION, materialId);
-  const snap = await getDoc(docRef);
-  if (!snap.exists()) return null;
-  const data = snap.data();
+/** Maps a Firestore `learningSheets` document to ExistingMaterialItem, classifying PDF vs image/SVG URLs safely. */
+export function mapDocToMaterial(id: string, data: Record<string, any>): ExistingMaterialItem {
   let parsedContent: any = {};
   if (data.content && typeof data.content === 'string') {
     try {
@@ -777,96 +922,80 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
     }
   }
 
-  let studyTheory = parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') && !data.content.startsWith('<svg') ? data.content : '');
+  let studyTheory =
+    data.studyTheory ||
+    parsedContent.studyTheory ||
+    (typeof data.content === 'string' && !data.content.startsWith('{') && !data.content.startsWith('<svg')
+      ? data.content
+      : '');
   let svgContent = parsedContent.svgContent || null;
   if (typeof studyTheory === 'string' && (studyTheory.startsWith('<svg') || studyTheory.includes('xmlns="http://www.w3.org/2000/svg"'))) {
     if (!svgContent) svgContent = studyTheory;
     studyTheory = '';
   }
 
-  const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
+  const isPdfFile =
+    data.fileType === 'application/pdf' ||
+    Boolean(data.originalName && String(data.originalName).toLowerCase().endsWith('.pdf')) ||
+    Boolean(data.fileUrl && String(data.fileUrl).toLowerCase().endsWith('.pdf'));
+
+  const hasStoredFileHint = Boolean(data.fileType || data.originalName || data.chunkCount || data.fileSize || data.status === 'processing');
+  const resolvedFileUrl =
+    data.fileUrl !== undefined ? data.fileUrl : (hasStoredFileHint ? `/api/materials/${id}/file` : null);
+  const resolvedDownloadUrl =
+    data.downloadUrl !== undefined ? data.downloadUrl : (hasStoredFileHint ? `/api/materials/${id}/download` : null);
+  const resolvedThumbUrl =
+    data.thumbnailUrl !== undefined ? data.thumbnailUrl : (hasStoredFileHint ? `/api/materials/${id}/thumbnail` : null);
+
+  const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (isPdfFile ? resolvedFileUrl : null);
+  const svgUrl = data.svgUrl || (!isPdfFile && resolvedFileUrl ? resolvedFileUrl : null);
 
   return {
-    id: snap.id,
-    title: data.title || '',
+    id,
+    title: data.title || 'Materiál',
     subject: data.subject || 'Matematika',
     topic: data.topic || '',
-    svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
-    thumbnailUrl: data.thumbnailUrl || `/api/materials/${snap.id}/thumbnail`,
-    fileUrl: data.fileUrl || `/api/materials/${snap.id}/file`,
-    downloadUrl: data.downloadUrl || `/api/materials/${snap.id}/download`,
-    pdfUrl: pdfUrl,
-    svgContent: svgContent,
-    studyTheory: studyTheory,
+    svgUrl,
+    thumbnailUrl: resolvedThumbUrl,
+    fileUrl: resolvedFileUrl,
+    downloadUrl: resolvedDownloadUrl,
+    pdfUrl,
+    svgContent,
+    studyTheory,
     hasStudyMaterial: true,
+    hiddenFromLibrary: Boolean(data.hiddenFromLibrary),
     status: data.status || 'ready',
-    errorMessage: data.errorMessage,
+    errorMessage: data.errorMessage || undefined,
     pageCount: data.pageCount,
-    originalName: data.originalName,
-    fileType: data.fileType,
+    originalName: data.originalName || undefined,
+    fileType: data.fileType || undefined,
     fileSize: data.fileSize,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt
   };
 }
 
-export async function getAllMaterials(): Promise<ExistingMaterialItem[]> {
-  return cacheManager.getOrFetch('materials:all', async () => {
+export async function getMaterialById(materialId: string): Promise<ExistingMaterialItem | null> {
+  const docRef = doc(db, LEARNING_SHEETS_COLLECTION, materialId);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) return null;
+  return mapDocToMaterial(snap.id, snap.data());
+}
+
+export async function getAllMaterials(options?: { includeHidden?: boolean }): Promise<ExistingMaterialItem[]> {
+  const includeHidden = Boolean(options?.includeHidden);
+  const items = await cacheManager.getOrFetch('materials:all', async () => {
     try {
       const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
       const snap = await getDocs(collRef);
-      return snap.docs.map(d => {
-        const data = d.data();
-        let parsedContent: any = {};
-        if (data.content && typeof data.content === 'string') {
-          try {
-            parsedContent = JSON.parse(data.content);
-          } catch {
-            if (data.content.startsWith('<svg') || data.content.includes('<svg')) {
-              parsedContent = { svgContent: data.content, studyTheory: '' };
-            } else {
-              parsedContent = { studyTheory: data.content };
-            }
-          }
-        }
-
-        let studyTheory = parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') && !data.content.startsWith('<svg') ? data.content : '');
-        let svgContent = parsedContent.svgContent || null;
-        if (typeof studyTheory === 'string' && (studyTheory.startsWith('<svg') || studyTheory.includes('xmlns="http://www.w3.org/2000/svg"'))) {
-          if (!svgContent) svgContent = studyTheory;
-          studyTheory = '';
-        }
-
-        const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
-
-        return {
-          id: d.id,
-          title: data.title || 'Materiál',
-          subject: data.subject || 'Matematika',
-          topic: data.topic || '',
-          svgUrl: data.svgUrl || (data.fileUrl && !data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null),
-          thumbnailUrl: data.thumbnailUrl || `/api/materials/${d.id}/thumbnail`,
-          fileUrl: data.fileUrl || `/api/materials/${d.id}/file`,
-          downloadUrl: data.downloadUrl || `/api/materials/${d.id}/download`,
-          pdfUrl: pdfUrl,
-          svgContent: svgContent,
-          studyTheory: studyTheory,
-          hasStudyMaterial: true,
-          status: data.status || 'ready',
-          errorMessage: data.errorMessage,
-          pageCount: data.pageCount,
-          originalName: data.originalName,
-          fileType: data.fileType,
-          fileSize: data.fileSize,
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt
-        };
-      });
+      return snap.docs.map(d => mapDocToMaterial(d.id, d.data()));
     } catch (err) {
       console.error('Error fetching materials:', err);
       return [];
     }
   }, 10 * 60 * 1000);
+
+  return includeHidden ? items : items.filter(m => !m.hiddenFromLibrary);
 }
 
 export async function deleteSubtopic(subtopicId: string): Promise<void> {

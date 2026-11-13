@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { onRequest } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { user as authUserTrigger } from 'firebase-functions/v1/auth';
 import { GoogleGenAI, Type } from '@google/genai';
 import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
@@ -19,6 +20,7 @@ import {
   sendRecurringChargeFailedEmail,
   sendBugReportEmail
 } from './services/emailService.js';
+import { iuctoService, formatPragueDate } from './services/iuctoService.js';
 
 console.log('--- SERVER STARTING ---');
 
@@ -181,8 +183,8 @@ async function getDevDb() {
 }
 
 async function startServer() {
-  app.use(express.json({ limit: '50mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+  app.use(express.json({ limit: '75mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '75mb' }));
 
   // Normalizace URL pro Cloud Functions (pokud požadavek přijde bez prefixu /api)
   // Pouze v prostředí Cloud Functions - v standalone/dev serveru musí frontendové cesty (/, /src/...) zůstat nedotčeny
@@ -1332,15 +1334,22 @@ app.post('/api/bug-reports/submit', requireAuth, async (req, res) => {
     };
 
     let reportId = null;
+    let savedViaAdmin = false;
 
-    try {
-      const docRef = await Promise.race([
-        db.collection('bugReports').add(reportData),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
-      ]);
-      reportId = docRef.id;
-    } catch (adminErr) {
-      console.warn('[BugReport submit] Admin SDK fallback to dev client:', adminErr?.message || adminErr);
+    if (hasAdminCredentials) {
+      try {
+        const docRef = await Promise.race([
+          db.collection('bugReports').add(reportData),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+        ]);
+        reportId = docRef.id;
+        savedViaAdmin = true;
+      } catch (adminErr) {
+        console.warn('[BugReport submit] Admin SDK fallback to dev client:', adminErr?.message || adminErr);
+      }
+    }
+
+    if (!savedViaAdmin) {
       try {
         const { clientDb, collection: cCollection, addDoc: cAddDoc, serverTimestamp: cTimestamp } = await getDevDb();
         const clientRef = await cAddDoc(cCollection(clientDb, 'bugReports'), {
@@ -1398,14 +1407,22 @@ app.post('/api/bug-reports/submit', requireAuth, async (req, res) => {
 app.get('/api/admin/bug-reports', requireAuth, requireTeacher, async (req, res) => {
   try {
     let reports = [];
-    try {
-      const snap = await Promise.race([
-        db.collection('bugReports').orderBy('createdAt', 'desc').get(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
-      ]);
-      reports = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    } catch (adminErr) {
-      console.log('[Admin BugReports fallback to dev client]:', adminErr?.message || adminErr);
+    let readViaAdmin = false;
+
+    if (hasAdminCredentials) {
+      try {
+        const snap = await Promise.race([
+          db.collection('bugReports').orderBy('createdAt', 'desc').get(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+        ]);
+        reports = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        readViaAdmin = true;
+      } catch (adminErr) {
+        console.log('[Admin BugReports fallback to dev client]:', adminErr?.message || adminErr);
+      }
+    }
+
+    if (!readViaAdmin) {
       try {
         const { clientDb, collection: cCollection, getDocs: cGetDocs } = await getDevDb();
         const cSnap = await cGetDocs(cCollection(clientDb, 'bugReports'));
@@ -1468,10 +1485,17 @@ app.patch('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req,
       });
     }
 
-    try {
-      await db.collection('bugReports').doc(id).update(updates);
-    } catch (adminErr) {
-      console.warn('[Admin BugReport Update fallback]:', adminErr?.message || adminErr);
+    let updatedViaAdmin = false;
+    if (hasAdminCredentials) {
+      try {
+        await db.collection('bugReports').doc(id).update(updates);
+        updatedViaAdmin = true;
+      } catch (adminErr) {
+        console.warn('[Admin BugReport Update fallback]:', adminErr?.message || adminErr);
+      }
+    }
+
+    if (!updatedViaAdmin) {
       try {
         const { clientDb, doc: cDoc, updateDoc: cUpdateDoc, serverTimestamp: cTimestamp } = await getDevDb();
         if (updates.resolvedAt) {
@@ -1496,10 +1520,17 @@ app.delete('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req
     const { id } = req.params;
     inMemoryBugReports.delete(id);
 
-    try {
-      await db.collection('bugReports').doc(id).delete();
-    } catch (adminErr) {
-      console.warn('[Admin BugReport Delete fallback]:', adminErr?.message || adminErr);
+    let deletedViaAdmin = false;
+    if (hasAdminCredentials) {
+      try {
+        await db.collection('bugReports').doc(id).delete();
+        deletedViaAdmin = true;
+      } catch (adminErr) {
+        console.warn('[Admin BugReport Delete fallback]:', adminErr?.message || adminErr);
+      }
+    }
+
+    if (!deletedViaAdmin) {
       try {
         const { clientDb, doc: cDoc, deleteDoc: cDeleteDoc } = await getDevDb();
         await cDeleteDoc(cDoc(clientDb, 'bugReports', id));
@@ -1525,6 +1556,51 @@ const BANK_RECIPIENT = process.env.BANK_RECIPIENT || 'ProEdu vzdělávání';
 const COMGATE_MERCHANT_ID = process.env.COMGATE_MERCHANT_ID || '';
 const COMGATE_SECRET = process.env.COMGATE_SECRET || '';
 const COMGATE_TEST_MODE = process.env.COMGATE_TEST_MODE !== 'false';
+
+const PREMIUM_PLANS = {
+  'premium-monthly': {
+    amount: 99,
+    currency: 'CZK',
+    title: 'ProEducator Premium (měsíční tarif)'
+  }
+};
+
+async function getUserDocServer(userId) {
+  if (!userId) return null;
+  try {
+    const snap = await Promise.race([
+      db.collection('users').doc(userId).get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 1500))
+    ]);
+    if (snap.exists) return snap.data();
+  } catch {
+    // Dev fallback
+  }
+  try {
+    const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
+    const snap = await cGetDoc(cDoc(clientDb, 'users', userId));
+    if (snap.exists()) return snap.data();
+  } catch (devErr) {
+    console.warn('[getUserDocServer fallback warning]:', devErr?.message || devErr);
+  }
+  return null;
+}
+
+async function updateUserDocServer(userId, updateData) {
+  if (!userId) return false;
+  try {
+    const userRef = db.collection('users').doc(userId);
+    await Promise.race([
+      userRef.set(updateData, { merge: true }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2000))
+    ]);
+    return true;
+  } catch {
+    const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
+    await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+    return true;
+  }
+}
 
 function serverCzechAccountToIban(accountNumberRaw, bankCodeRaw) {
   const bankCode = (bankCodeRaw || '2010').trim().padStart(4, '0');
@@ -1613,10 +1689,16 @@ async function getOrderDoc(orderId) {
 }
 
 async function activatePremiumForUser(userId, options = {}) {
-  const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const existingUser = options.existingUser || (options.extendFromExisting ? await getUserDocServer(userId) : null);
+  const existingEndMs = existingUser?.subscriptionPeriodEnd ? new Date(existingUser.subscriptionPeriodEnd).getTime() : 0;
+  const baseMs = options.extendFromExisting && !isNaN(existingEndMs) && existingEndMs > Date.now()
+    ? existingEndMs
+    : Date.now();
+  const periodEnd = new Date(baseMs + 30 * 24 * 60 * 60 * 1000).toISOString();
+
   const updateData = {
     role: 'premium',
-    premiumSince: new Date().toISOString(),
+    premiumSince: existingUser?.premiumSince || new Date().toISOString(),
     subscriptionStatus: 'active',
     subscriptionPeriodEnd: periodEnd,
     subscriptionCancelledAt: null,
@@ -1627,20 +1709,136 @@ async function activatePremiumForUser(userId, options = {}) {
     updateData.initRecurringTransId = options.initRecurringTransId;
   }
 
+  await updateUserDocServer(userId, updateData);
+  userRoleCache.delete(userId);
+  console.log(`[Premium Activation] Úspěšně aktivováno pro ${userId} (do ${periodEnd})`);
+  return { periodEnd };
+}
+
+/**
+ * Synchronizuje uhrazenou objednávku s iÚčto API (zákazník, faktura, platba, PDF).
+ * Nikdy nevyhodí výjimku tak, aby zablokovala aktivaci Premium nebo webhook Comgate.
+ */
+async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
   try {
-    const userRef = db.collection('users').doc(userId);
-    await Promise.race([
-      userRef.set(updateData, { merge: true }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout, using fallback')), 1200))
-    ]);
-    console.log(`[Premium Activation] Úspěšně aktivováno pro ${userId}`);
-    return true;
-  } catch (adminErr) {
-    console.log('[Premium Activation fallback to dev client]:', adminErr?.message || adminErr);
-    const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
-    await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
-    return true;
+    const resolvedUserDoc = userDoc || (order?.userId ? await getUserDocServer(order.userId) : null) || {};
+    const result = await iuctoService.issuePaidInvoice({
+      orderId,
+      order,
+      userDoc: resolvedUserDoc
+    });
+
+    if (result.skipped) {
+      const nextStatus = result.reason === 'sandbox_skipped' ? 'skipped_sandbox' : 'pending';
+      await updateOrderDoc(orderId, {
+        iuctoSyncStatus: nextStatus,
+        iuctoError: null
+      });
+      return { skipped: true, reason: result.reason, invoiceNumber: null, attachments: [] };
+    }
+
+    if (order?.userId && result.iuctoCustomerId && resolvedUserDoc.iuctoCustomerId !== result.iuctoCustomerId) {
+      await updateUserDocServer(order.userId, { iuctoCustomerId: result.iuctoCustomerId }).catch(err => {
+        console.warn('[iÚčto] Nepodařilo se uložit iuctoCustomerId k uživateli:', err?.message || err);
+      });
+    }
+
+    await updateOrderDoc(orderId, {
+      iuctoInvoiceId: result.iuctoInvoiceId,
+      iuctoInvoiceNumber: result.iuctoInvoiceNumber,
+      iuctoPaymentId: result.iuctoPaymentId,
+      iuctoSyncStatus: 'synced',
+      iuctoError: null,
+      iuctoSyncedAt: new Date().toISOString()
+    });
+
+    const attachments = result.pdfBuffer
+      ? [{ filename: result.pdfFilename, content: result.pdfBuffer, contentType: 'application/pdf' }]
+      : [];
+
+    console.log(`[iÚčto] Faktura ${result.iuctoInvoiceNumber} (ID ${result.iuctoInvoiceId}) úspěšně vystavena pro objednávku ${orderId}.`);
+    return {
+      skipped: false,
+      invoiceNumber: result.iuctoInvoiceNumber,
+      iuctoInvoiceId: result.iuctoInvoiceId,
+      attachments
+    };
+  } catch (err) {
+    console.warn(`[iÚčto Sync Error] Objednávka ${orderId}:`, err?.message || err);
+    await updateOrderDoc(orderId, {
+      iuctoSyncStatus: 'failed',
+      iuctoError: String(err?.message || err).slice(0, 500)
+    }).catch(() => {});
+    return { failed: true, error: err?.message || String(err), invoiceNumber: null, attachments: [] };
   }
+}
+
+/**
+ * Sdílený tok po potvrzení úhrady objednávky:
+ * 1) Označí objednávku jako paid
+ * 2) Aktivuje / prodlouží Premium uživateli
+ * 3) Vystaví fakturu v iÚčtu a stáhne PDF
+ * 4) Odešle potvrzovací e-mail (s PDF fakturou v příloze, pokud byla vystavena)
+ */
+async function finalizePaidOrderAndInvoice({
+  orderId,
+  order,
+  comgateTransId = null,
+  initRecurringTransId = null,
+  confirmedBy = null,
+  isSandbox = undefined,
+  isRecurringRenewal = false,
+  extendFromExisting = false
+}) {
+  const paidAtIso = order?.paidAt || new Date().toISOString();
+  const orderUpdate = {
+    status: 'paid',
+    paidAt: paidAtIso
+  };
+  if (comgateTransId) orderUpdate.comgateTransId = comgateTransId;
+  if (confirmedBy) orderUpdate.confirmedBy = confirmedBy;
+  if (typeof isSandbox === 'boolean') orderUpdate.isSandbox = isSandbox;
+
+  await updateOrderDoc(orderId, orderUpdate);
+
+  const mergedOrder = { ...order, ...orderUpdate };
+  const userDoc = mergedOrder.userId ? await getUserDocServer(mergedOrder.userId) : null;
+
+  let periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  if (mergedOrder.userId) {
+    const activation = await activatePremiumForUser(mergedOrder.userId, {
+      initRecurringTransId: initRecurringTransId || undefined,
+      existingUser: userDoc,
+      extendFromExisting
+    });
+    periodEnd = activation.periodEnd;
+  }
+
+  const iuctoRes = await syncIuctoForPaidOrder({
+    orderId,
+    order: mergedOrder,
+    userDoc
+  });
+
+  const targetEmail = mergedOrder.invoiceEmail || userDoc?.email;
+  if (targetEmail) {
+    const emailPayload = {
+      to: targetEmail,
+      name: mergedOrder.clientName || userDoc?.name || 'zákazníku',
+      orderId,
+      amount: mergedOrder.amount || 99,
+      invoiceNumber: iuctoRes.invoiceNumber || undefined,
+      attachments: iuctoRes.attachments || []
+    };
+
+    const emailPromise = isRecurringRenewal
+      ? sendRecurringChargeSuccessEmail({ ...emailPayload, nextPeriodEnd: periodEnd })
+      : sendPaymentConfirmedEmail({ ...emailPayload, periodEnd });
+
+    emailPromise.catch(err => console.warn('[Payment Email Error]:', err?.message || err));
+  }
+
+  return { periodEnd, iuctoRes };
 }
 
 // 1. Vytvoření objednávky
@@ -1652,15 +1850,19 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
       clientName,
       billingAddress,
       invoiceEmail,
+      ico = '',
+      dic = '',
       paymentMethod = 'comgate',
       termsAccepted,
       newsletterConsent = false,
-      planId = 'premium-monthly',
-      amount = 99
+      planId = 'premium-monthly'
     } = req.body || {};
 
     const userId = req.user.uid;
     const userEmail = req.user.email || invoiceEmail || '';
+    const planConfig = PREMIUM_PLANS[planId] || PREMIUM_PLANS['premium-monthly'];
+    const amount = planConfig.amount;
+    const currency = planConfig.currency;
 
     if (!clientName || typeof clientName !== 'string' || clientName.trim().length < 2) {
       return res.status(400).json({ error: 'Zadejte prosím platné jméno a příjmení klienta.' });
@@ -1680,7 +1882,7 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
 
     // Generování 9místného variabilního symbolu (nebo použití klientského pro idempotenci)
     const variableSymbol = clientVariableSymbol && typeof clientVariableSymbol === 'string'
-      ? clientVariableSymbol
+      ? clientVariableSymbol.replace(/\D/g, '').slice(0, 10) || String(Date.now()).slice(-9)
       : String(Date.now()).slice(-9);
     const orderId = clientOrderId && typeof clientOrderId === 'string'
       ? clientOrderId
@@ -1698,24 +1900,28 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
     );
 
     const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=260x260&margin=10&format=svg&data=${encodeURIComponent(spaydString)}`;
+    const isTest = COMGATE_TEST_MODE === 'true' || COMGATE_TEST_MODE === true;
 
     const orderData = {
       orderId,
       userId,
       userEmail,
-      clientName: clientName.trim(),
+      clientName: clientName.trim().slice(0, 128),
       billingAddress: {
-        street: billingAddress.street.trim(),
-        city: billingAddress.city.trim(),
-        zip: billingAddress.zip.trim(),
-        country: billingAddress.country || 'Česká republika'
+        street: billingAddress.street.trim().slice(0, 150),
+        city: billingAddress.city.trim().slice(0, 100),
+        zip: billingAddress.zip.trim().slice(0, 20),
+        country: (billingAddress.country || 'Česká republika').trim().slice(0, 64)
       },
-      invoiceEmail: invoiceEmail.trim(),
-      amount: Number(amount),
-      currency: 'CZK',
-      planId,
+      invoiceEmail: invoiceEmail.trim().slice(0, 256),
+      ico: String(ico || '').trim().slice(0, 20),
+      dic: String(dic || '').trim().slice(0, 20),
+      amount,
+      currency,
+      planId: PREMIUM_PLANS[planId] ? planId : 'premium-monthly',
       paymentMethod,
       status: 'pending',
+      isSandbox: isTest || !(COMGATE_MERCHANT_ID && COMGATE_SECRET),
       termsAccepted: Boolean(termsAccepted),
       newsletterConsent: Boolean(newsletterConsent),
       variableSymbol,
@@ -1729,7 +1935,6 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
       if (COMGATE_MERCHANT_ID && COMGATE_SECRET) {
         try {
           const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
-          const isTest = COMGATE_TEST_MODE === 'true' || COMGATE_TEST_MODE === true;
 
           // Oficiální Comgate REST API v2.0 (POST /v2.0/payment.json dle apidoc.comgate.cz)
           const comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
@@ -1765,7 +1970,8 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
             const redirectUrl = comgateJson.redirect;
             orderData.comgateTransId = transId;
             orderData.comgateRedirectUrl = redirectUrl;
-            comgateData = { transId, redirectUrl, isLive: true };
+            orderData.isSandbox = isTest;
+            comgateData = { transId, redirectUrl, isLive: true, testMode: isTest };
           } else {
             console.warn('[Comgate REST v2.0 Warning]:', comgateJson);
             comgateData = { 
@@ -1783,7 +1989,7 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
         comgateData = {
           isSandbox: true,
           testMode: true,
-          message: 'Platební brána Comgate je nastavena v testovacím režimu (čeká se na finální schválení smlouvy).'
+          message: 'Platební brána Comgate je nastavena v testovacím režimu (čeká se na zadání klíčů Comgate).'
         };
       }
     }
@@ -1815,7 +2021,7 @@ app.post('/api/orders/create', requireAuth, async (req, res) => {
         bankName: BANK_NAME,
         recipientName: BANK_RECIPIENT,
         amount,
-        currency: 'CZK',
+        currency,
         variableSymbol,
         message: paymentMessage,
         spaydString,
@@ -1853,26 +2059,21 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
     }
 
     if (status === 'PAID') {
-      await updateOrderDoc(refId, {
-        status: 'paid',
-        paidAt: new Date().toISOString(),
-        comgateTransId: transId || null
+      // Idempotence: pokud už je objednávka uhrazena a má i fakturu v iÚčtu, znovu nespouštět
+      if (order.status === 'paid' && order.iuctoInvoiceId) {
+        console.log(`[Comgate Webhook] Objednávka ${refId} už byla zpracována (faktura ${order.iuctoInvoiceId}).`);
+        return res.send('code=0&message=OK');
+      }
+
+      const webhookIsSandbox = test === true || test === 'true' || test === '1' || test === 1;
+      await finalizePaidOrderAndInvoice({
+        orderId: refId,
+        order,
+        comgateTransId: transId || order.comgateTransId || null,
+        initRecurringTransId: transId || null,
+        isSandbox: webhookIsSandbox || Boolean(order.isSandbox),
+        isRecurringRenewal: Boolean(order.isRecurringRenewal)
       });
-
-      if (order.userId) {
-        await activatePremiumForUser(order.userId, { initRecurringTransId: transId || null });
-      }
-
-      if (order.invoiceEmail) {
-        const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-        sendPaymentConfirmedEmail({
-          to: order.invoiceEmail,
-          name: order.clientName || 'zákazníku',
-          orderId: refId,
-          amount: order.amount || 99,
-          periodEnd
-        }).catch(err => console.warn('[Payment Confirmed Email Error]:', err?.message || err));
-      }
 
       console.log(`[Comgate Webhook] Objednávka ${refId} označena jako ZAPLACENÁ.`);
     } else if (status === 'CANCELLED') {
@@ -1895,25 +2096,30 @@ app.post('/api/payments/comgate/sandbox-simulate-pay', requireAuth, async (req, 
   try {
     const { orderId } = req.body || {};
     const targetUserId = req.user.uid;
+    const sandboxTransId = `SANDBOX_${Date.now()}`;
 
     if (orderId) {
-      try {
-        const order = await getOrderDoc(orderId);
-        if (order) {
-          await updateOrderDoc(orderId, {
-            status: 'paid',
-            paidAt: new Date().toISOString(),
-            comgateTransId: `SANDBOX_${Date.now()}`
-          });
+      const order = await getOrderDoc(orderId);
+      if (order) {
+        if (order.userId && order.userId !== targetUserId && req.user.role !== 'teacher' && req.user.role !== 'admin') {
+          return res.status(403).json({ error: 'Nemáte oprávnění potvrdit cizí objednávku.' });
         }
-      } catch (orderErr) {
-        console.warn('[Sandbox Simulate Order Update Warning]:', orderErr?.message || orderErr);
+        const { iuctoRes } = await finalizePaidOrderAndInvoice({
+          orderId,
+          order,
+          comgateTransId: sandboxTransId,
+          initRecurringTransId: sandboxTransId,
+          isSandbox: true
+        });
+        return res.json({
+          success: true,
+          iuctoInvoiceNumber: iuctoRes?.invoiceNumber || null,
+          message: 'Platba byla v testovacím režimu úspěšně potvrzena a balíček Premium byl aktivován.'
+        });
       }
     }
 
-    await activatePremiumForUser(targetUserId);
-    userRoleCache.delete(targetUserId);
-
+    await activatePremiumForUser(targetUserId, { initRecurringTransId: sandboxTransId });
     return res.json({
       success: true,
       message: 'Platba byla v testovacím režimu úspěšně potvrzena a balíček Premium byl aktivován.'
@@ -2229,6 +2435,193 @@ app.post('/api/subscription/check-expiry', requireAuth, async (req, res) => {
   }
 });
 
+async function processRecurringChargeForUser(targetUserId, existingUserDoc = null) {
+  const userDoc = existingUserDoc || await getUserDocServer(targetUserId);
+  if (!userDoc) {
+    const err = new Error('Uživatelský profil nenalezen.');
+    err.statusCode = 404;
+    throw err;
+  }
+
+  if (!userDoc.initRecurringTransId) {
+    const err = new Error('Uživatel nemá zaznamenanou žádnou iniciační platbu (initRecurringTransId). Nejprve je nutné provést první platbu kartou s povolením opakování.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  if (userDoc.subscriptionStatus === 'cancelled_at_period_end' || userDoc.subscriptionStatus === 'inactive') {
+    const err = new Error('Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const newOrderId = `ORD_REC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+  const variableSymbol = String(Date.now()).slice(-9);
+  const plan = PREMIUM_PLANS['premium-monthly'];
+  const amount = plan.amount;
+  const isLiveComgate = Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE);
+  let comgateTransId = null;
+
+  if (isLiveComgate) {
+    const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+    const response = await fetch('https://payments.comgate.cz/v2.0/recurring', {
+      method: 'POST',
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        merchant: COMGATE_MERCHANT_ID,
+        initTransId: userDoc.initRecurringTransId,
+        price: Math.round(amount * 100),
+        curr: 'CZK',
+        label: 'ProEdu Premium (obnovení předplatného)',
+        refId: newOrderId,
+        test: false
+      })
+    });
+
+    const json = await response.json().catch(() => null);
+    if (json && json.code === 0) {
+      comgateTransId = json.transId;
+    } else {
+      console.warn('[Comgate Recurring Charge Failed]:', json);
+      const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
+      if (notifyEmail) {
+        sendRecurringChargeFailedEmail({
+          to: notifyEmail,
+          name: userDoc.billingDetails?.clientName || userDoc.name,
+          amount,
+          reason: json?.message || 'Platba byla zamítnuta vydavatelem karty'
+        }).catch(console.warn);
+      }
+      const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
+      err.statusCode = 400;
+      err.details = json?.message || JSON.stringify(json);
+      throw err;
+    }
+  } else {
+    comgateTransId = `SANDBOX_REC_${Date.now()}`;
+    console.log(`[Comgate Recurring Simulation] Provedeno testovací opakované stržení ${amount} Kč pro uživatele ${targetUserId}`);
+  }
+
+  const billing = userDoc.billingDetails || {};
+  const recOrderData = {
+    id: newOrderId,
+    orderId: newOrderId,
+    userId: targetUserId,
+    userEmail: userDoc.email || '',
+    clientName: billing.clientName || userDoc.name || 'Zákazník ProEdu',
+    billingAddress: {
+      street: billing.street || '-',
+      city: billing.city || '-',
+      zip: billing.zip || '00000',
+      country: billing.country || 'Česká republika'
+    },
+    invoiceEmail: billing.invoiceEmail || userDoc.email || '',
+    ico: billing.ico || '',
+    dic: billing.dic || '',
+    amount,
+    currency: plan.currency,
+    planId: 'premium-monthly',
+    planTitle: 'ProEducator Premium (opakované předplatné)',
+    paymentMethod: 'comgate',
+    status: 'pending',
+    isSandbox: !isLiveComgate,
+    termsAccepted: true,
+    newsletterConsent: false,
+    variableSymbol,
+    comgateTransId,
+    isRecurringRenewal: true,
+    createdAt: new Date().toISOString()
+  };
+
+  await saveOrderDoc(newOrderId, recOrderData);
+
+  const { periodEnd, iuctoRes } = await finalizePaidOrderAndInvoice({
+    orderId: newOrderId,
+    order: recOrderData,
+    comgateTransId,
+    initRecurringTransId: userDoc.initRecurringTransId,
+    isSandbox: !isLiveComgate,
+    isRecurringRenewal: true,
+    extendFromExisting: true
+  });
+
+  return {
+    orderId: newOrderId,
+    subscriptionPeriodEnd: periodEnd,
+    iuctoInvoiceNumber: iuctoRes?.invoiceNumber || null
+  };
+}
+
+/**
+ * Denní automatika obnovení předplatného a vypršení zrušených tarifů.
+ */
+async function runDueRecurringSubscriptions() {
+  const todayPrague = formatPragueDate(new Date());
+  const nowMs = Date.now();
+  const summary = { checked: 0, renewed: 0, expired: 0, failed: 0 };
+
+  let premiumUsers = [];
+  try {
+    const snap = await Promise.race([
+      db.collection('users').where('role', '==', 'premium').get(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 3000))
+    ]);
+    premiumUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() }));
+  } catch {
+    try {
+      const { clientDb, collection: cCollection, query: cQuery, where: cWhere, getDocs: cGetDocs } = await getDevDb();
+      const cSnap = await cGetDocs(cQuery(cCollection(clientDb, 'users'), cWhere('role', '==', 'premium')));
+      premiumUsers = cSnap.docs.map(d => ({ uid: d.id, ...d.data() }));
+    } catch (devErr) {
+      console.warn('[Subscription Scheduler] Nepodařilo se načíst premium uživatele:', devErr?.message || devErr);
+      return summary;
+    }
+  }
+
+  for (const userDoc of premiumUsers) {
+    const uid = userDoc.uid;
+    if (!uid) continue;
+    summary.checked++;
+
+    const endMs = userDoc.subscriptionPeriodEnd ? new Date(userDoc.subscriptionPeriodEnd).getTime() : 0;
+    if (!endMs || isNaN(endMs) || endMs > nowMs) {
+      continue;
+    }
+
+    if (userDoc.subscriptionStatus === 'cancelled_at_period_end') {
+      await updateUserDocServer(uid, {
+        role: 'free',
+        subscriptionStatus: 'inactive',
+        subscriptionExpiredAt: new Date().toISOString()
+      }).catch(err => console.warn(`[Subscription Expiry Error] ${uid}:`, err?.message || err));
+      userRoleCache.delete(uid);
+      summary.expired++;
+      continue;
+    }
+
+    if (
+      userDoc.subscriptionStatus === 'active' &&
+      userDoc.initRecurringTransId &&
+      userDoc.lastRecurringAttemptDate !== todayPrague
+    ) {
+      await updateUserDocServer(uid, { lastRecurringAttemptDate: todayPrague }).catch(() => {});
+      try {
+        await processRecurringChargeForUser(uid, userDoc);
+        summary.renewed++;
+      } catch (err) {
+        summary.failed++;
+        console.warn(`[Subscription Auto-Renewal Error] ${uid}:`, err?.message || err);
+      }
+    }
+  }
+
+  console.log('[Subscription Scheduler Summary]:', summary);
+  return summary;
+}
+
 // 5c. Zpracování opakované platby Comgate (Subsequent Recurring Charge dle https://help.comgate.eu/docs/opakovane-platby)
 app.post('/api/payments/comgate/charge-recurring', requireAuth, async (req, res) => {
   try {
@@ -2240,118 +2633,21 @@ app.post('/api/payments/comgate/charge-recurring', requireAuth, async (req, res)
       return res.status(403).json({ error: 'Nemáte oprávnění iniciovat opakovanou platbu pro jiného uživatele.' });
     }
 
-    let userDoc = null;
-    try {
-      const snap = await db.collection('users').doc(targetUserId).get();
-      if (snap.exists) userDoc = snap.data();
-    } catch (e) {
-      const { clientDb, doc: cDoc, getDoc: cGetDoc } = await getDevDb();
-      const snap = await cGetDoc(cDoc(clientDb, 'users', targetUserId));
-      if (snap.exists()) userDoc = snap.data();
-    }
-
-    if (!userDoc) {
-      return res.status(404).json({ error: 'Uživatelský profil nenalezen.' });
-    }
-
-    if (!userDoc.initRecurringTransId) {
-      return res.status(400).json({ error: 'Uživatel nemá zaznamenanou žádnou iniciační platbu (initRecurringTransId). Nejprve je nutné provést první platbu kartou s povolením opakování.' });
-    }
-
-    if (userDoc.subscriptionStatus === 'cancelled_at_period_end' || userDoc.subscriptionStatus === 'inactive') {
-      return res.status(400).json({ error: 'Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.' });
-    }
-
-    const newOrderId = `ORD_REC_${Date.now()}_${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
-    const amount = 99;
-    let recurringSuccess = false;
-    let comgateTransId = null;
-
-    if (COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE) {
-      const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
-      const response = await fetch('https://payments.comgate.cz/v2.0/recurring', {
-        method: 'POST',
-        headers: {
-          'Authorization': authHeader,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          merchant: COMGATE_MERCHANT_ID,
-          initTransId: userDoc.initRecurringTransId,
-          price: Math.round(amount * 100),
-          curr: 'CZK',
-          label: 'ProEdu Premium (obnovení předplatného)',
-          refId: newOrderId,
-          test: false
-        })
-      });
-
-      const json = await response.json().catch(() => null);
-      if (json && json.code === 0) {
-        recurringSuccess = true;
-        comgateTransId = json.transId;
-      } else {
-        console.warn('[Comgate Recurring Charge Failed]:', json);
-        if (userDoc.email) {
-          sendRecurringChargeFailedEmail({
-            to: userDoc.email,
-            name: userDoc.name,
-            amount,
-            reason: json?.message || 'Platba byla zamítnuta vydavatelem karty'
-          }).catch(console.warn);
-        }
-        return res.status(400).json({
-          error: 'Opakovaná platba byla platební bránou zamítnuta.',
-          details: json?.message || JSON.stringify(json)
-        });
-      }
-    } else {
-      // Testovací / Sandbox režim
-      recurringSuccess = true;
-      comgateTransId = `SANDBOX_REC_${Date.now()}`;
-      console.log(`[Comgate Recurring Simulation] Provedeno testovací opakované stržení 99 Kč pro uživatele ${targetUserId}`);
-    }
-
-    const nextPeriodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await activatePremiumForUser(targetUserId, { initRecurringTransId: userDoc.initRecurringTransId });
-
-    const recOrderData = {
-      id: newOrderId,
-      userId: targetUserId,
-      amount,
-      currency: 'CZK',
-      planTitle: 'ProEducator Premium (opakované předplatné)',
-      paymentMethod: 'comgate',
-      status: 'paid',
-      paidAt: new Date().toISOString(),
-      comgateTransId,
-      invoiceEmail: userDoc.email,
-      clientName: userDoc.name,
-      isRecurringRenewal: true,
-      createdAt: new Date().toISOString()
-    };
-    await saveOrderDoc(newOrderId, recOrderData);
-
-    // Dle pravidel karetních asociací odešleme potvrzovací e-mail o stržení opakované platby
-    if (userDoc.email) {
-      sendRecurringChargeSuccessEmail({
-        to: userDoc.email,
-        name: userDoc.name,
-        orderId: newOrderId,
-        amount,
-        nextPeriodEnd
-      }).catch(console.warn);
-    }
+    const result = await processRecurringChargeForUser(targetUserId);
 
     return res.json({
       success: true,
-      orderId: newOrderId,
-      subscriptionPeriodEnd: nextPeriodEnd,
+      orderId: result.orderId,
+      subscriptionPeriodEnd: result.subscriptionPeriodEnd,
+      iuctoInvoiceNumber: result.iuctoInvoiceNumber,
       message: 'Opakovaná platba byla úspěšně zpracována a předplatné bylo prodlouženo.'
     });
   } catch (err) {
     console.error('Chyba při zpracování opakované platby:', err);
-    return res.status(500).json({ error: err.message || 'Nepodařilo se zpracovat opakovanou platbu.' });
+    return res.status(err.statusCode || 500).json({
+      error: err.message || 'Nepodařilo se zpracovat opakovanou platbu.',
+      details: err.details
+    });
   }
 });
 
@@ -2379,17 +2675,21 @@ app.put('/api/subscription/billing', requireAuth, async (req, res) => {
       };
     }
 
-    // TODO (iÚčto API): Při napojení klíče IUCTO_API_KEY zde synchronizovat adresář kontaktu v iÚčto.
+    await updateUserDocServer(userId, updateData);
 
-    try {
-      const userRef = db.collection('users').doc(userId);
-      await Promise.race([
-        userRef.set(updateData, { merge: true }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Admin SDK timeout')), 2500))
-      ]);
-    } catch (adminErr) {
-      const { clientDb, doc: cDoc, setDoc: cSetDoc } = await getDevDb();
-      await cSetDoc(cDoc(clientDb, 'users', userId), updateData, { merge: true });
+    // Synchronizace kontaktu v iÚčtu na pozadí (pouze pokud je API klíč a uživatel je již v iÚčtu nebo má Premium)
+    if (process.env.IUCTO_API_KEY && updateData.billingDetails) {
+      getUserDocServer(userId)
+        .then(async userDoc => {
+          if (!userDoc) return;
+          const shouldSync = Boolean(userDoc.iuctoCustomerId) || userDoc.role === 'premium';
+          if (!shouldSync) return;
+          const customerId = await iuctoService.syncCustomer({ userId, userDoc });
+          if (customerId && userDoc.iuctoCustomerId !== customerId) {
+            await updateUserDocServer(userId, { iuctoCustomerId: customerId });
+          }
+        })
+        .catch(err => console.warn('[iÚčto Billing Sync Warning]:', err?.message || err));
     }
 
     return res.json({
@@ -2412,32 +2712,196 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
       return res.status(404).json({ error: 'Objednávka nenalezena.' });
     }
 
-    await updateOrderDoc(orderId, {
-      status: 'paid',
-      paidAt: new Date().toISOString(),
-      confirmedBy: req.user.email || 'teacher'
+    const { iuctoRes } = await finalizePaidOrderAndInvoice({
+      orderId,
+      order,
+      confirmedBy: req.user.email || 'teacher',
+      isSandbox: Boolean(order.isSandbox)
     });
 
-    if (order.userId) {
-      await activatePremiumForUser(order.userId);
-    }
-
-    if (order.invoiceEmail) {
-      const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      sendPaymentConfirmedEmail({
-        to: order.invoiceEmail,
-        name: order.clientName || 'zákazníku',
-        orderId,
-        amount: order.amount || 99,
-        periodEnd
-      }).catch(err => console.warn('[Payment Confirmed Email Error]:', err?.message || err));
-    }
-
-    return res.json({ success: true, message: 'Platba byla potvrzena a Premium bylo studentovi aktivováno.' });
+    return res.json({
+      success: true,
+      iuctoInvoiceNumber: iuctoRes?.invoiceNumber || null,
+      message: 'Platba byla potvrzena a Premium bylo studentovi aktivováno.'
+    });
   } catch (err) {
     console.error('Chyba při manuálním potvrzení platby:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se potvrdit platbu.' });
   }
+});
+
+// 6c. Stažení PDF faktury z iÚčta přes autorizovaný backend proxy (vlastník objednávky nebo učitel)
+app.get('/api/orders/:orderId/invoice.pdf', requireAuth, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const order = await getOrderDoc(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nenalezena.' });
+    }
+
+    const isTeacherUser = req.user.role === 'teacher' || req.user.role === 'admin';
+    if (!isTeacherUser && order.userId !== req.user.uid) {
+      return res.status(403).json({ error: 'Nemáte oprávnění stáhnout fakturu k cizí objednávce.' });
+    }
+
+    if (!order.iuctoInvoiceId) {
+      return res.status(404).json({ error: 'K této objednávce zatím nebyla vystavena faktura v iÚčtu.' });
+    }
+
+    const pdfBuffer = await iuctoService.downloadInvoicePdf(order.iuctoInvoiceId);
+    const safeFilename = String(order.iuctoInvoiceNumber || order.variableSymbol || orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="faktura-${safeFilename}.pdf"`);
+    return res.send(pdfBuffer);
+  } catch (err) {
+    console.error('Chyba při stahování PDF faktury z iÚčta:', err);
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Nepodařilo se stáhnout PDF faktury.' });
+  }
+});
+
+// 6d. Ruční opakování / dovystavení faktury v iÚčtu (pro učitele / admina)
+app.post('/api/orders/:orderId/iucto-retry', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { sendEmail: shouldSendEmail = false } = req.body || {};
+    const order = await getOrderDoc(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nenalezena.' });
+    }
+    if (order.status !== 'paid') {
+      return res.status(400).json({ error: 'Fakturu lze vystavit pouze k uhrazené objednávce.' });
+    }
+
+    const iuctoRes = await syncIuctoForPaidOrder({ orderId, order });
+    if (iuctoRes.failed) {
+      return res.status(502).json({ error: iuctoRes.error || 'Synchronizace s iÚčtem selhala.' });
+    }
+    if (iuctoRes.skipped) {
+      return res.status(400).json({
+        error: iuctoRes.reason === 'sandbox_skipped'
+          ? 'Objednávka je testovací (sandbox) a IUCTO_SANDBOX_ENABLED není zapnuto.'
+          : 'Chybí IUCTO_API_KEY v konfiguraci serveru.'
+      });
+    }
+
+    if (shouldSendEmail && order.invoiceEmail) {
+      const userDoc = order.userId ? await getUserDocServer(order.userId) : null;
+      await sendPaymentConfirmedEmail({
+        to: order.invoiceEmail,
+        name: order.clientName || userDoc?.name || 'zákazníku',
+        orderId,
+        amount: order.amount || 99,
+        periodEnd: userDoc?.subscriptionPeriodEnd || undefined,
+        invoiceNumber: iuctoRes.invoiceNumber,
+        attachments: iuctoRes.attachments
+      }).catch(err => console.warn('[iÚčto Retry Email Error]:', err?.message || err));
+    }
+
+    return res.json({
+      success: true,
+      iuctoInvoiceId: iuctoRes.iuctoInvoiceId,
+      iuctoInvoiceNumber: iuctoRes.iuctoInvoiceNumber,
+      message: `Faktura ${iuctoRes.iuctoInvoiceNumber} byla úspěšně vystavena v iÚčtu.`
+    });
+  } catch (err) {
+    console.error('Chyba při iÚčto retry:', err);
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Nepodařilo se synchronizovat objednávku s iÚčtem.' });
+  }
+});
+
+// 6e. Storno / refundace zaplacené objednávky + vystavení dobropisu v iÚčtu (pro učitele / admina)
+app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const { reason, sendEmailViaIucto = true } = req.body || {};
+    const order = await getOrderDoc(orderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nenalezena.' });
+    }
+    if (order.status !== 'paid' && order.status !== 'refunded') {
+      return res.status(400).json({ error: 'Dobropis / refund lze provést pouze u zaplacené objednávky.' });
+    }
+
+    const safeReason = String(reason || `Storno a vrácení platby objednávky #${orderId}`).trim().slice(0, 500);
+    let creditNoteResult = null;
+
+    if (order.iuctoInvoiceId) {
+      const userDoc = order.userId ? await getUserDocServer(order.userId) : {};
+      creditNoteResult = await iuctoService.issueCreditNote({
+        orderId,
+        order,
+        userDoc: userDoc || {},
+        reason: safeReason,
+        sendEmailViaIucto: Boolean(sendEmailViaIucto)
+      });
+    }
+
+    const nowIso = new Date().toISOString();
+    const orderUpdate = {
+      status: 'refunded',
+      refundedAt: nowIso,
+      refundReason: safeReason,
+      refundedBy: req.user.email || 'teacher'
+    };
+
+    if (creditNoteResult && !creditNoteResult.skipped) {
+      orderUpdate.iuctoCreditNoteId = creditNoteResult.iuctoCreditNoteId;
+      orderUpdate.iuctoCreditNoteNumber = creditNoteResult.iuctoCreditNoteNumber;
+      orderUpdate.iuctoCreditNoteShareUrl = creditNoteResult.iuctoCreditNoteShareUrl || null;
+      orderUpdate.iuctoSyncStatus = 'refunded';
+      orderUpdate.iuctoError = null;
+    }
+
+    await updateOrderDoc(orderId, orderUpdate);
+
+    return res.json({
+      success: true,
+      creditNote: creditNoteResult && !creditNoteResult.skipped ? creditNoteResult : null,
+      message: creditNoteResult && !creditNoteResult.skipped
+        ? `Objednávka byla stornována a v iÚčtu byl vystaven dobropis ${creditNoteResult.iuctoCreditNoteNumber}.`
+        : 'Objednávka byla označena jako refundovaná / stornovaná.'
+    });
+  } catch (err) {
+    console.error('Chyba při refundaci objednávky / dobropisu:', err);
+    return res.status(err.statusCode || 500).json({ error: err.message || 'Nepodařilo se vystavit dobropis.' });
+  }
+});
+
+// 6f. Diagnostika napojení na iÚčto (pro učitele / admina)
+app.get('/api/iucto/status', requireAuth, requireTeacher, async (_req, res) => {
+  try {
+    const status = await iuctoService.checkConnection();
+    return res.json({
+      ...status,
+      sandboxEnabled: String(process.env.IUCTO_SANDBOX_ENABLED || 'false').toLowerCase() === 'true',
+      comgateTestMode: COMGATE_TEST_MODE
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({
+      configured: Boolean(process.env.IUCTO_API_KEY),
+      connected: false,
+      error: err.message || 'Nepodařilo se ověřit spojení s iÚčtem.'
+    });
+  }
+});
+
+// 6g. Manuální nebo externí cron spouštěč pro denní obnovení předplatného
+app.post('/api/cron/process-subscriptions', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const headerSecret = req.headers['x-cron-secret'];
+
+  if (cronSecret && headerSecret === cronSecret) {
+    const summary = await runDueRecurringSubscriptions();
+    return res.json({ success: true, summary });
+  }
+
+  return requireAuth(req, res, () =>
+    requireTeacher(req, res, async () => {
+      const summary = await runDueRecurringSubscriptions();
+      return res.json({ success: true, summary });
+    })
+  );
 });
 
 // 6b. Smazání jednotlivé objednávky (pro učitele / administraci)
@@ -2720,24 +3184,39 @@ async function getAllMaterialChunks(materialId) {
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-async function deleteMaterialWithChunks(materialId) {
+async function deleteMaterialChunksOnly(materialId) {
   if (hasAdminCredentials) {
     try {
       const chunksSnap = await db.collection('learningSheets').doc(materialId).collection('chunks').get();
-      const batch = db.batch();
-      chunksSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
-      batch.delete(db.collection('learningSheets').doc(materialId));
-      await batch.commit();
+      if (!chunksSnap.empty) {
+        const batch = db.batch();
+        chunksSnap.docs.forEach(docSnap => batch.delete(docSnap.ref));
+        await batch.commit();
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Admin SDK deleteMaterialChunksOnly error, falling back]:', e.message);
+    }
+  }
+  const { clientDb, collection: cColl, getDocs: cGetDocs, deleteDoc: cDeleteDoc } = await getDevDb();
+  const snap = await cGetDocs(cColl(clientDb, 'learningSheets', materialId, 'chunks'));
+  for (const d of snap.docs) {
+    await cDeleteDoc(d.ref);
+  }
+  return true;
+}
+
+async function deleteMaterialWithChunks(materialId) {
+  await deleteMaterialChunksOnly(materialId);
+  if (hasAdminCredentials) {
+    try {
+      await db.collection('learningSheets').doc(materialId).delete();
       return true;
     } catch (e) {
       console.warn('[Admin SDK deleteMaterialWithChunks error, falling back]:', e.message);
     }
   }
-  const { clientDb, doc: cDoc, collection: cColl, getDocs: cGetDocs, deleteDoc: cDeleteDoc } = await getDevDb();
-  const snap = await cGetDocs(cColl(clientDb, 'learningSheets', materialId, 'chunks'));
-  for (const d of snap.docs) {
-    await cDeleteDoc(d.ref);
-  }
+  const { clientDb, doc: cDoc, deleteDoc: cDeleteDoc } = await getDevDb();
   await cDeleteDoc(cDoc(clientDb, 'learningSheets', materialId));
   return true;
 }
@@ -2797,6 +3276,10 @@ async function processMaterialInBackground(materialId, options) {
   }
 }
 
+function isAllowedMaterialMimeType(fileType) {
+  return fileType === 'application/pdf' || (typeof fileType === 'string' && fileType.startsWith('image/'));
+}
+
 // 7.1 Zahájení nahrávání materiálu s okamžitou odpovědí (asynchronní zpracování na pozadí)
 app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) => {
   try {
@@ -2810,7 +3293,8 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       originalName, 
       thumbnailDataUrl,
       svgContent,
-      pdfDataUrl
+      pdfDataUrl,
+      hiddenFromLibrary
     } = req.body || {};
 
     const effectiveFileData = fileData || pdfDataUrl || (svgContent ? Buffer.from(svgContent, 'utf8').toString('base64') : null);
@@ -2820,23 +3304,32 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       return res.status(400).json({ error: 'Chybí obsah souboru nebo textový výklad.' });
     }
 
+    if (effectiveFileData && !isAllowedMaterialMimeType(effectiveFileType)) {
+      return res.status(400).json({ error: 'Nepodporovaný formát souboru. Povoleny jsou soubory PDF, SVG a obrázky.' });
+    }
+
     const cleanTitle = (title || 'Nový studijní materiál').trim().slice(0, 256);
     const cleanSubject = (subject || 'Matematika').trim().slice(0, 128);
     const cleanTopic = (topic || 'Obecné').trim().slice(0, 128);
     const cleanOriginalName = (originalName || (effectiveFileType === 'image/svg+xml' ? 'material.svg' : 'material.pdf')).slice(0, 256);
     const materialId = `mat_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const isPdf = effectiveFileType === 'application/pdf';
+    const isSvg = effectiveFileType === 'image/svg+xml';
 
     const initialDoc = {
       title: cleanTitle,
       subject: cleanSubject,
       topic: cleanTopic,
-      studyTheory: (studyTheory || '').trim(),
+      studyTheory: (studyTheory || '').trim().slice(0, 50000),
+      hiddenFromLibrary: Boolean(hiddenFromLibrary),
       status: effectiveFileData ? 'processing' : 'ready',
-      originalName: cleanOriginalName,
-      fileType: effectiveFileType,
-      thumbnailUrl: `/api/materials/${materialId}/thumbnail`,
-      fileUrl: `/api/materials/${materialId}/file`,
-      downloadUrl: `/api/materials/${materialId}/download`,
+      originalName: effectiveFileData ? cleanOriginalName : null,
+      fileType: effectiveFileData ? effectiveFileType : null,
+      thumbnailUrl: effectiveFileData ? `/api/materials/${materialId}/thumbnail` : null,
+      fileUrl: effectiveFileData ? `/api/materials/${materialId}/file` : null,
+      pdfUrl: effectiveFileData && isPdf ? `/api/materials/${materialId}/file` : null,
+      svgUrl: effectiveFileData && isSvg ? `/api/materials/${materialId}/file` : null,
+      downloadUrl: effectiveFileData ? `/api/materials/${materialId}/download` : null,
       hasStudyMaterial: true,
       createdBy: req.user.uid
     };
@@ -2859,9 +3352,13 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       success: true,
       materialId,
       status: effectiveFileData ? 'processing' : 'ready',
-      thumbnailUrl: `/api/materials/${materialId}/thumbnail`,
-      fileUrl: `/api/materials/${materialId}/file`,
-      downloadUrl: `/api/materials/${materialId}/download`,
+      thumbnailUrl: initialDoc.thumbnailUrl,
+      fileUrl: initialDoc.fileUrl,
+      pdfUrl: initialDoc.pdfUrl,
+      svgUrl: initialDoc.svgUrl,
+      downloadUrl: initialDoc.downloadUrl,
+      fileType: initialDoc.fileType,
+      originalName: initialDoc.originalName,
       message: effectiveFileData 
         ? 'Materiál byl zařazen ke zpracování na pozadí.' 
         : 'Materiál byl úspěšně vytvořen.'
@@ -2869,6 +3366,133 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
   } catch (err) {
     console.error('Chyba při inicializaci uploadu materiálu:', err);
     return res.status(500).json({ error: err.message || 'Nepodařilo se zahájit nahrávání.' });
+  }
+});
+
+// 7.1b Úprava existujícího materiálu (včetně volitelného nahrazení či smazání souboru)
+app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const existing = await getMaterialDoc(id);
+    if (!existing) {
+      return res.status(404).json({ error: 'Materiál nenalezen.' });
+    }
+
+    const {
+      title,
+      subject,
+      topic,
+      studyTheory,
+      fileData,
+      fileType,
+      originalName,
+      thumbnailDataUrl,
+      svgContent,
+      pdfDataUrl,
+      clearFile,
+      hiddenFromLibrary
+    } = req.body || {};
+
+    const effectiveFileData = fileData || pdfDataUrl || (svgContent ? Buffer.from(svgContent, 'utf8').toString('base64') : null);
+    const effectiveFileType = fileType || (svgContent ? 'image/svg+xml' : 'application/pdf');
+
+    if (effectiveFileData && !isAllowedMaterialMimeType(effectiveFileType)) {
+      return res.status(400).json({ error: 'Nepodporovaný formát souboru. Povoleny jsou soubory PDF, SVG a obrázky.' });
+    }
+
+    const updates = {};
+    if (typeof title === 'string' && title.trim()) updates.title = title.trim().slice(0, 256);
+    if (typeof subject === 'string' && subject.trim()) updates.subject = subject.trim().slice(0, 128);
+    if (typeof topic === 'string') updates.topic = (topic.trim() || 'Obecné').slice(0, 128);
+    if (typeof studyTheory === 'string') updates.studyTheory = studyTheory.trim().slice(0, 50000);
+    if (typeof hiddenFromLibrary === 'boolean') updates.hiddenFromLibrary = hiddenFromLibrary;
+
+    if (effectiveFileData) {
+      const cleanOriginalName = (originalName || (effectiveFileType === 'image/svg+xml' ? 'material.svg' : 'material.pdf')).slice(0, 256);
+      const isPdf = effectiveFileType === 'application/pdf';
+      const isSvg = effectiveFileType === 'image/svg+xml';
+
+      await deleteMaterialChunksOnly(id);
+
+      updates.status = 'processing';
+      updates.errorMessage = null;
+      updates.originalName = cleanOriginalName;
+      updates.fileType = effectiveFileType;
+      updates.thumbnailUrl = `/api/materials/${id}/thumbnail?v=${Date.now()}`;
+      updates.fileUrl = `/api/materials/${id}/file?v=${Date.now()}`;
+      updates.pdfUrl = isPdf ? updates.fileUrl : null;
+      updates.svgUrl = isSvg ? updates.fileUrl : null;
+      updates.downloadUrl = `/api/materials/${id}/download`;
+      updates.hasStudyMaterial = true;
+
+      await updateMaterialDoc(id, updates);
+
+      processMaterialInBackground(id, {
+        fileData: effectiveFileData,
+        fileType: effectiveFileType,
+        originalName: cleanOriginalName,
+        thumbnailDataUrl
+      }).catch(err => console.error('[Background replace process unhandled error]:', err));
+
+      return res.status(202).json({
+        success: true,
+        materialId: id,
+        status: 'processing',
+        ...updates
+      });
+    }
+
+    if (clearFile) {
+      await deleteMaterialChunksOnly(id);
+      updates.fileUrl = null;
+      updates.pdfUrl = null;
+      updates.svgUrl = null;
+      updates.downloadUrl = null;
+      updates.thumbnailUrl = null;
+      updates.fileType = null;
+      updates.originalName = null;
+      updates.status = 'ready';
+      updates.errorMessage = null;
+    }
+
+    await updateMaterialDoc(id, updates);
+
+    return res.json({
+      success: true,
+      materialId: id,
+      status: updates.status || existing.status || 'ready',
+      ...updates
+    });
+  } catch (err) {
+    console.error(`Chyba při úpravě materiálu ${id}:`, err);
+    return res.status(500).json({ error: err.message || 'Nepodařilo se upravit materiál.' });
+  }
+});
+
+// 7.1c Stav zpracování materiálu (pro real-time dotazování / fallback)
+app.get('/api/materials/:id/status', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const mat = await getMaterialDoc(id);
+    if (!mat) {
+      return res.status(404).json({ error: 'Materiál nenalezen.' });
+    }
+    return res.json({
+      materialId: id,
+      status: mat.status || 'ready',
+      errorMessage: mat.errorMessage || null,
+      fileSize: mat.fileSize || null,
+      fileUrl: mat.fileUrl || null,
+      pdfUrl: mat.pdfUrl || null,
+      svgUrl: mat.svgUrl || null,
+      thumbnailUrl: mat.thumbnailUrl || null,
+      downloadUrl: mat.downloadUrl || null,
+      fileType: mat.fileType || null,
+      originalName: mat.originalName || null
+    });
+  } catch (err) {
+    console.error(`Chyba při čtení stavu materiálu ${id}:`, err);
+    return res.status(500).json({ error: 'Nepodařilo se ověřit stav materiálu.' });
   }
 });
 
@@ -2921,7 +3545,9 @@ async function serveMaterialFile(req, res, asDownload = false) {
     if (dataChunks.length === 0) {
       if (mat.svgContent) {
         const buf = Buffer.from(mat.svgContent, 'utf8');
-        res.setHeader('Content-Type', 'image/svg+xml');
+        res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline';");
+        res.setHeader('X-Content-Type-Options', 'nosniff');
         res.setHeader('Content-Disposition', `${asDownload ? 'attachment' : 'inline'}; filename="${encodeURIComponent(mat.originalName || 'material.svg')}"`);
         res.setHeader('Content-Length', buf.length);
         return res.send(buf);
@@ -2936,7 +3562,11 @@ async function serveMaterialFile(req, res, asDownload = false) {
     const contentType = mat.fileType || (mat.originalName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf');
     const filename = mat.originalName || (contentType === 'image/svg+xml' ? 'material.svg' : 'material.pdf');
 
-    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Type', contentType === 'image/svg+xml' ? 'image/svg+xml; charset=utf-8' : contentType);
+    if (contentType === 'image/svg+xml') {
+      res.setHeader('Content-Security-Policy', "default-src 'none'; img-src data: blob:; style-src 'unsafe-inline';");
+    }
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Disposition', `${asDownload ? 'attachment' : 'inline'}; filename="${encodeURIComponent(filename)}"`);
     res.setHeader('Content-Length', buf.length);
     res.setHeader('Cache-Control', 'public, max-age=3600');
@@ -2976,7 +3606,7 @@ if (isDirectExecution) {
         middlewareMode: true, 
         hmr: true,
         watch: {
-          ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
+          ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**', '**/scratch/**'],
         },
       },
       appType: 'spa',
@@ -3007,6 +3637,13 @@ if (isDirectExecution) {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`ProEdu Server running on http://0.0.0.0:${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
+    if (process.env.DISABLE_LOCAL_CRON !== 'true' && process.env.ENABLE_LOCAL_SUBSCRIPTION_CRON === 'true') {
+      const intervalMs = 6 * 60 * 60 * 1000;
+      const timer = setInterval(() => {
+        runDueRecurringSubscriptions().catch(err => console.warn('[Local Subscription Cron Error]:', err?.message || err));
+      }, intervalMs);
+      timer.unref?.();
+    }
   });
 } else {
   // Globální ošetření chyb v Cloud Function
@@ -3032,6 +3669,19 @@ export const api = onRequest(
     timeoutSeconds: 60,
   },
   app
+);
+
+// Denní automatické obnovení Comgate předplatného a vystavení faktur v iÚčtu
+export const scheduledSubscriptionRenewal = onSchedule(
+  {
+    schedule: 'every day 03:00',
+    timeZone: 'Europe/Prague',
+    region: 'europe-west1',
+    timeoutSeconds: 300
+  },
+  async () => {
+    await runDueRecurringSubscriptions();
+  }
 );
 
 // Automatický trigger při smazání uživatele ve Firebase Authentication (propíše se do Firestore)

@@ -4,7 +4,7 @@ import {
   Sparkles, RefreshCw, ZoomIn, X 
 } from 'lucide-react';
 import { Button } from '../ui/button';
-import { sanitizeSvg } from '../../utils/svgUtils';
+import { convertFileToSvg, svgStringToDataUrl, isPdfResource, sanitizeSvg } from '../../utils/pdfToSvg';
 import { toast } from 'sonner';
 import { MaterialYellowIcon, StarYellowIcon } from '../common/CustomIcon';
 
@@ -22,9 +22,13 @@ export interface DropzoneFileResult {
 interface PdfSvgDropzoneProps {
   valueSvgString?: string;
   valueSvgUrl?: string;
+  valueFileUrl?: string;
+  valueFileType?: string;
   valueThumbnailUrl?: string;
   fileName?: string;
   userId?: string;
+  isProcessing?: boolean;
+  processingMessage?: string;
   onChange: (result: DropzoneFileResult | null) => void;
   className?: string;
 }
@@ -32,9 +36,13 @@ interface PdfSvgDropzoneProps {
 export default function PdfSvgDropzone({
   valueSvgString,
   valueSvgUrl,
+  valueFileUrl,
+  valueFileType,
   valueThumbnailUrl,
   fileName,
   userId,
+  isProcessing = false,
+  processingMessage,
   onChange,
   className = ''
 }: PdfSvgDropzoneProps) {
@@ -44,7 +52,16 @@ export default function PdfSvgDropzone({
   const [previewOpen, setPreviewOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const hasContent = Boolean(fileName || valueSvgString || valueSvgUrl || valueThumbnailUrl);
+  const effectiveFileUrl = valueFileUrl || valueSvgUrl || '';
+  const isPdfPreview = isPdfResource({
+    fileType: valueFileType,
+    fileUrl: effectiveFileUrl,
+    svgUrl: valueSvgUrl,
+    originalName: fileName,
+    svgContent: valueSvgString
+  });
+
+  const hasContent = Boolean(fileName || valueSvgString || valueSvgUrl || valueFileUrl || valueThumbnailUrl);
 
   const processFile = async (file: File) => {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
@@ -60,81 +77,31 @@ export default function PdfSvgDropzone({
     }
 
     setIsConverting(true);
-    setProgressMsg('Připravuji soubor a generuji rychlý náhled...');
+    setProgressMsg('Převádím soubor do SVG a generuji náhled...');
 
     try {
-      let fileData: string = '';
-      let thumbnailDataUrl: string = '';
-      let fileType: string = file.type || (ext === 'pdf' ? 'application/pdf' : ext === 'svg' ? 'image/svg+xml' : 'image/jpeg');
-      let svgString: string | undefined = undefined;
-
-      // 1. Načtení základního DataURL souboru
-      fileData = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error('Chyba při čtení souboru.'));
-        reader.readAsDataURL(file);
-      });
-
-      // 2. Rychlá generace miniatury 1. strany
-      if (ext === 'pdf' || file.type === 'application/pdf') {
-        fileType = 'application/pdf';
-        try {
-          const pdfjsLib = await import('pdfjs-dist');
-          if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
-            try {
-              pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-                'pdfjs-dist/build/pdf.worker.mjs',
-                import.meta.url
-              ).href;
-            } catch {
-              pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
-            }
-          }
-          const arrayBuffer = await file.arrayBuffer();
-          const loadingTask = pdfjsLib.getDocument({
-            data: new Uint8Array(arrayBuffer),
-            useSystemFonts: true
-          });
-          const pdf = await loadingTask.promise;
-          const page = await pdf.getPage(1);
-          const viewport = page.getViewport({ scale: 1.0 });
-          const maxDim = 600;
-          const scale = Math.min(1.0, maxDim / Math.max(viewport.width, viewport.height));
-          const thumbViewport = page.getViewport({ scale: scale || 1.0 });
-          const canvas = document.createElement('canvas');
-          canvas.width = thumbViewport.width;
-          canvas.height = thumbViewport.height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            await (page.render as any)({ canvasContext: ctx, canvas, viewport: thumbViewport }).promise;
-            thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.85);
-          }
-        } catch (pdfErr) {
-          console.warn('Rychlý náhled PDF se nepodařilo vykreslit, pokračuji bez něj:', pdfErr);
-        }
-      } else if (ext === 'svg' || file.type === 'image/svg+xml') {
-        fileType = 'image/svg+xml';
-        const rawText = await file.text();
-        svgString = sanitizeSvg(rawText);
-        thumbnailDataUrl = `data:image/svg+xml;utf8,${encodeURIComponent(svgString)}`;
-      } else {
-        thumbnailDataUrl = fileData;
-      }
+      const converted = await convertFileToSvg(file, (msg) => setProgressMsg(msg));
+      const fileData = svgStringToDataUrl(converted.svgString);
 
       onChange({
         fileData,
         fileName: file.name,
-        fileType,
-        thumbnail: thumbnailDataUrl,
-        thumbnailDataUrl,
-        svgString
+        fileType: 'image/svg+xml',
+        thumbnail: converted.thumbnailDataUrl,
+        thumbnailDataUrl: converted.thumbnailDataUrl,
+        svgString: converted.svgString
       });
 
-      toast.success(`Soubor „${file.name}“ je připraven k nahrání.`);
+      toast.success(
+        ext === 'pdf'
+          ? `PDF „${file.name}“ bylo převedeno na SVG (${converted.pageCount} ${converted.pageCount === 1 ? 'strana' : converted.pageCount < 5 ? 'strany' : 'stran'}) a je připraveno!`
+          : ext === 'svg'
+            ? `SVG soubor „${file.name}“ je připraven!`
+            : `Obrázek „${file.name}“ byl převeden na SVG a je připraven!`
+      );
     } catch (err: any) {
       console.error('File processing error:', err);
-      toast.error('Chyba při přípravě souboru: ' + (err.message || 'Neznámá chyba'));
+      toast.error('Chyba při převodu souboru do SVG: ' + (err.message || 'Neznámá chyba'));
     } finally {
       setIsConverting(false);
       setProgressMsg('');
@@ -188,12 +155,18 @@ export default function PdfSvgDropzone({
         className="hidden"
       />
 
-      {isConverting ? (
+      {isConverting || isProcessing ? (
         <div className="border-2 border-dashed border-amber-300 bg-amber-50/70 rounded-2xl p-6 text-center space-y-3 animate-pulse">
           <div className="w-10 h-10 border-4 border-amber-600 border-t-transparent rounded-full animate-spin mx-auto" />
           <div className="space-y-1">
-            <p className="font-bold text-sm text-amber-900">Připravuji soubor...</p>
-            <p className="text-xs text-amber-700 font-medium">{progressMsg || 'Generuji náhled...'}</p>
+            <p className="font-bold text-sm text-amber-900">
+              {isProcessing ? 'Materiál se připravuje...' : 'Připravuji soubor...'}
+            </p>
+            <p className="text-xs text-amber-700 font-medium">
+              {isProcessing
+                ? (processingMessage || 'Soubor se ukládá a připravuje pro studenty na pozadí.')
+                : (progressMsg || 'Generuji náhled...')}
+            </p>
           </div>
         </div>
       ) : hasContent ? (
@@ -214,7 +187,7 @@ export default function PdfSvgDropzone({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm text-gray-900 truncate">
-                  {fileName || (valueSvgUrl ? 'Přiřazený soubor' : 'Vybraný materiál')}
+                  {fileName || (effectiveFileUrl ? 'Přiřazený soubor' : 'Vybraný materiál')}
                 </span>
                 <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-200/80 text-emerald-900 px-2 py-0.5 rounded-md shrink-0">
                   Připraveno
@@ -227,7 +200,7 @@ export default function PdfSvgDropzone({
           </div>
 
           <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-            {(valueSvgString || valueThumbnailUrl || valueSvgUrl) && (
+            {(valueSvgString || valueThumbnailUrl || effectiveFileUrl) && (
               <Button
                 type="button"
                 variant="outline"
@@ -284,7 +257,7 @@ export default function PdfSvgDropzone({
               {isDragging ? 'Pusťte soubor sem...' : 'Přetáhněte sem soubor PDF, SVG nebo obrázek'}
             </p>
             <p className="text-xs text-gray-400 font-medium">
-              nebo klikněte pro výběr z počítače (asynchronní zpracování na pozadí)
+              nebo klikněte pro výběr z počítače (automatický převod PDF a obrázků do SVG)
             </p>
           </div>
           <div className="flex items-center justify-center gap-2 mt-3">
@@ -298,7 +271,7 @@ export default function PdfSvgDropzone({
               .PNG / .JPG
             </span>
             <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md flex items-center gap-1">
-              <StarYellowIcon size={12} /> Zpracování na pozadí
+              <StarYellowIcon size={12} /> Převod do SVG na pozadí
             </span>
           </div>
         </div>
@@ -329,15 +302,21 @@ export default function PdfSvgDropzone({
                   className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
                   dangerouslySetInnerHTML={{ __html: sanitizeSvg(valueSvgString) }}
                 />
-              ) : valueThumbnailUrl ? (
+              ) : isPdfPreview && effectiveFileUrl ? (
+                <iframe
+                  src={effectiveFileUrl.startsWith('data:') ? effectiveFileUrl : `${effectiveFileUrl}#toolbar=1`}
+                  className="w-full h-[65vh] min-h-[420px] rounded-xl border border-gray-200 bg-white shadow-md"
+                  title={fileName || 'Náhled PDF'}
+                />
+              ) : effectiveFileUrl ? (
                 <img 
-                  src={valueThumbnailUrl} 
+                  src={effectiveFileUrl} 
                   alt="Náhled" 
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
                 />
-              ) : valueSvgUrl ? (
+              ) : valueThumbnailUrl ? (
                 <img 
-                  src={valueSvgUrl} 
+                  src={valueThumbnailUrl} 
                   alt="Náhled" 
                   className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2" 
                 />

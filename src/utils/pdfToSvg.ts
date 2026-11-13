@@ -1,4 +1,4 @@
-async function getPdfJs() {
+export async function getPdfJs() {
   const pdfjsLib = await import('pdfjs-dist');
   if (typeof window !== 'undefined' && !pdfjsLib.GlobalWorkerOptions.workerSrc) {
     try {
@@ -11,6 +11,40 @@ async function getPdfJs() {
     }
   }
   return pdfjsLib;
+}
+
+/** Encodes a UTF-8 SVG string safely to a Base64 Data URL without stack overflow on large documents. */
+export function svgStringToDataUrl(svg: string): string {
+  const bytes = new TextEncoder().encode(svg);
+  const chunkSize = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return `data:image/svg+xml;base64,${btoa(binary)}`;
+}
+
+/** Determines whether a material or step attachment represents a raw PDF rather than SVG or raster image. */
+export function isPdfResource(item?: {
+  fileType?: string | null;
+  pdfUrl?: string | null;
+  svgUrl?: string | null;
+  fileUrl?: string | null;
+  originalName?: string | null;
+  svgContent?: string | null;
+} | null): boolean {
+  if (!item) return false;
+  const ft = (item.fileType || '').toLowerCase();
+  if (ft === 'application/pdf') return true;
+  if (ft.startsWith('image/')) return false;
+  if (item.pdfUrl) return true;
+  const name = (item.originalName || '').toLowerCase();
+  if (name.endsWith('.pdf')) return true;
+  if (/\.(svg|png|jpe?g|webp|gif)$/i.test(name)) return false;
+  const url = (item.fileUrl || '').toLowerCase();
+  if (url.endsWith('.pdf') || url.startsWith('data:application/pdf')) return true;
+  if (item.svgUrl && !url.endsWith('.pdf')) return false;
+  return Boolean(url.includes('/api/materials/') && !item.svgContent && !item.svgUrl);
 }
 
 export interface ConvertedSvgResult {
@@ -115,7 +149,7 @@ export async function convertFileToSvg(
       img.src = dataUrl;
     });
 
-    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="100%" height="auto" style="border-radius: 8px; max-width: 100%;">
+    const svgString = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="100%" height="auto">
   <image width="${width}" height="${height}" href="${optimizedDataUrl}" />
 </svg>`.trim();
 
@@ -154,8 +188,8 @@ export async function convertFileToSvg(
     imgDataUrl: string;
   }> = [];
 
-  // Convert each page (up to max 10 pages for a study sheet)
-  const maxPages = Math.min(numPages, 10);
+  // Convert each page (up to max 25 pages for a study sheet)
+  const maxPages = Math.min(numPages, 25);
   for (let i = 1; i <= maxPages; i++) {
     onProgress?.(`Vykresluji stranu ${i} z ${maxPages}...`);
     const page = await pdf.getPage(i);
@@ -200,9 +234,9 @@ export async function convertFileToSvg(
     if (idx < pagesData.length - 1) totalHeight += pageGap;
   });
 
-  // Build composite SVG
+  // Build composite SVG bez rámečků, pozadí a oddělovacích čar
   let currentY = 0;
-  const svgPagesMarkup = pagesData.map((p, idx) => {
+  const svgPagesMarkup = pagesData.map((p) => {
     const xOffset = Math.floor((maxWidth - p.width) / 2);
     const yPos = currentY;
     currentY += p.height + pageGap;
@@ -210,14 +244,13 @@ export async function convertFileToSvg(
     return `
       <!-- Strana ${p.pageNumber} -->
       <g id="pdf-page-${p.pageNumber}" transform="translate(${xOffset}, ${yPos})">
-        <rect width="${p.width}" height="${p.height}" fill="#ffffff" rx="4" />
+        <rect width="${p.width}" height="${p.height}" fill="#ffffff" />
         <image width="${p.width}" height="${p.height}" href="${p.imgDataUrl}" />
       </g>
-      ${idx < pagesData.length - 1 ? `<line x1="0" y1="${currentY - pageGap / 2}" x2="${maxWidth}" y2="${currentY - pageGap / 2}" stroke="#e2e8f0" stroke-width="2" stroke-dasharray="6,6" />` : ''}
     `;
   }).join('\n');
 
-  const compositeSvg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${maxWidth} ${totalHeight}" width="100%" height="100%" style="background-color: #f8fafc; border-radius: 8px;">
+  const compositeSvg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${maxWidth} ${totalHeight}" width="100%" height="auto">
     ${svgPagesMarkup}
   </svg>`.trim();
 
@@ -401,10 +434,12 @@ function buildPdfFromJpegPages(pages: Array<{ width: number; height: number; jpe
  */
 export async function downloadMaterialAsPdf(material: {
   title: string;
+  downloadUrl?: string | null;
   pdfUrl?: string | null;
   fileUrl?: string | null;
   svgUrl?: string | null;
   svgContent?: string | null;
+  fileType?: string | null;
 }): Promise<void> {
   const safeBaseName = (material.title || 'Studijni_material')
     .trim()
@@ -412,30 +447,39 @@ export async function downloadMaterialAsPdf(material: {
     .replace(/\s+/g, '_') || 'Studijni_material';
   const downloadFileName = safeBaseName.toLowerCase().endsWith('.pdf') ? safeBaseName : `${safeBaseName}.pdf`;
 
-  const directPdfUrl =
-    (material as any).downloadUrl ||
-    material.pdfUrl ||
-    (material.fileUrl && (
-      material.fileUrl.toLowerCase().endsWith('.pdf') || 
-      material.fileUrl.startsWith('data:application/pdf') ||
-      material.fileUrl.includes('/api/materials/')
-    ) ? (material.fileUrl.endsWith('/file') ? material.fileUrl.replace(/\/file$/, '/download') : material.fileUrl) : null);
+  const storedAsSvg = (material.fileType || '').toLowerCase() === 'image/svg+xml';
+  const directPdfUrl = storedAsSvg
+    ? null
+    : (material.downloadUrl ||
+        material.pdfUrl ||
+        (material.fileUrl && (
+          material.fileUrl.toLowerCase().endsWith('.pdf') ||
+          material.fileUrl.startsWith('data:application/pdf') ||
+          material.fileUrl.includes('/api/materials/')
+        ) ? (material.fileUrl.endsWith('/file') ? material.fileUrl.replace(/\/file$/, '/download') : material.fileUrl) : null));
+
+  let svgText = material.svgContent || '';
 
   if (directPdfUrl) {
     try {
       const response = await fetch(directPdfUrl);
       if (response.ok) {
-        const blob = await response.blob();
-        const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
-        const blobUrl = URL.createObjectURL(pdfBlob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = downloadFileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-        return;
+        const contentType = (response.headers.get('content-type') || '').toLowerCase();
+        if (contentType.includes('svg')) {
+          svgText = await response.text();
+        } else {
+          const blob = await response.blob();
+          const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
+          const blobUrl = URL.createObjectURL(pdfBlob);
+          const link = document.createElement('a');
+          link.href = blobUrl;
+          link.download = downloadFileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+          return;
+        }
       }
     } catch {
       // Fallback to direct anchor click if CORS blocks fetch
@@ -450,14 +494,16 @@ export async function downloadMaterialAsPdf(material: {
     }
   }
 
-  // Reconstruct PDF from SVG content or SVG URL
-  let svgText = material.svgContent || '';
-  if (!svgText && material.svgUrl) {
-    const resp = await fetch(material.svgUrl);
-    if (!resp.ok) {
-      throw new Error('Nepodařilo se načíst podklad pro stažení PDF.');
+  // Reconstruct PDF from SVG content or SVG/file URL
+  if (!svgText) {
+    const svgSourceUrl = material.svgUrl || (storedAsSvg ? material.fileUrl : null);
+    if (svgSourceUrl) {
+      const resp = await fetch(svgSourceUrl);
+      if (!resp.ok) {
+        throw new Error('Nepodařilo se načíst podklad pro stažení PDF.');
+      }
+      svgText = await resp.text();
     }
-    svgText = await resp.text();
   }
 
   if (!svgText) {

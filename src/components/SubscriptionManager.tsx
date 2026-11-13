@@ -16,7 +16,9 @@ import {
   Clock,
   CreditCard,
   QrCode,
-  Receipt
+  Receipt,
+  FileText,
+  ExternalLink
 } from 'lucide-react';
 import { StarYellowIcon, CorrectCyanIcon, CapIcon } from './common/CustomIcon';
 import UnifiedPaywallModal from './common/UnifiedPaywallModal';
@@ -24,7 +26,8 @@ import {
   cancelSubscription,
   reactivateSubscription,
   saveBillingAndPaymentSettings,
-  getMyOrders
+  getMyOrders,
+  downloadOrderInvoicePdf
 } from '../services/orderService';
 import { Order } from '../types';
 import { toast } from 'sonner';
@@ -569,8 +572,9 @@ export default function SubscriptionManager() {
           <div className="space-y-3">
             {orders.map(order => {
               const isPaid = order.status === 'paid';
+              const isRefunded = order.status === 'refunded';
               const isCancelled = order.status === 'cancelled';
-              const isPending = !isPaid && !isCancelled;
+              const isPending = !isPaid && !isRefunded && !isCancelled;
               const orderKey = (order as any).orderId || order.id || order.variableSymbol;
               const createdDate = order.createdAt
                 ? new Date(order.createdAt).toLocaleDateString('cs-CZ', {
@@ -604,6 +608,10 @@ export default function SubscriptionManager() {
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200">
                           <CheckCircle2 size={12} /> Uhrazeno
                         </span>
+                      ) : isRefunded ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                          Refundováno / Dobropis
+                        </span>
                       ) : isCancelled ? (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gray-200 text-gray-600">
                           Zrušeno
@@ -611,6 +619,12 @@ export default function SubscriptionManager() {
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-100 text-amber-900 border border-amber-200">
                           <Clock size={12} /> Čeká na úhradu
+                        </span>
+                      )}
+
+                      {order.iuctoInvoiceNumber && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-white text-gray-700 border border-gray-200">
+                          Faktura: {order.iuctoInvoiceNumber}
                         </span>
                       )}
                     </div>
@@ -640,6 +654,38 @@ export default function SubscriptionManager() {
                     <span className="text-base sm:text-lg font-black text-gray-900">
                       {order.amount || 99} {order.currency === 'CZK' || !order.currency ? 'Kč' : order.currency}
                     </span>
+
+                    {(isPaid || isRefunded) && (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={e => {
+                            e.stopPropagation();
+                            downloadOrderInvoicePdf(order).catch(err =>
+                              toast.error(err.message || 'Nepodařilo se otevřít fakturu.')
+                            );
+                          }}
+                          className="rounded-xl h-9 px-3 border-gray-200 bg-white hover:bg-gray-50 text-gray-800 text-xs font-bold cursor-pointer flex items-center gap-1.5"
+                        >
+                          <FileText size={14} className="text-[#B80053]" />
+                          <span>{order.iuctoInvoiceId ? 'Faktura PDF' : 'Doklad'}</span>
+                        </Button>
+                        {order.iuctoCreditNoteShareUrl && (
+                          <a
+                            href={order.iuctoCreditNoteShareUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 rounded-xl h-9 px-3 border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-800 text-xs font-bold"
+                          >
+                            <ExternalLink size={13} />
+                            <span>Dobropis</span>
+                          </a>
+                        )}
+                      </div>
+                    )}
 
                     {isPending && (
                       <Button

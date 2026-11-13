@@ -94,6 +94,9 @@ export default function UnifiedPaywallModal({
   const [street, setStreet] = useState('');
   const [city, setCity] = useState('');
   const [zip, setZip] = useState('');
+  const [isCompanyPurchase, setIsCompanyPurchase] = useState(false);
+  const [ico, setIco] = useState('');
+  const [dic, setDic] = useState('');
   const [paymentMethod] = useState<'comgate'>('comgate');
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [newsletterConsent, setNewsletterConsent] = useState(false);
@@ -118,6 +121,11 @@ export default function UnifiedPaywallModal({
       if (profile?.billingDetails?.street) setStreet(profile.billingDetails.street);
       if (profile?.billingDetails?.city) setCity(profile.billingDetails.city);
       if (profile?.billingDetails?.zip) setZip(profile.billingDetails.zip);
+      const savedIco = profile?.billingDetails?.ico || '';
+      const savedDic = profile?.billingDetails?.dic || '';
+      setIco(savedIco);
+      setDic(savedDic);
+      setIsCompanyPurchase(Boolean(savedIco || savedDic));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialOrder]);
@@ -239,6 +247,9 @@ export default function UnifiedPaywallModal({
 
     setIsSubmitting(true);
     try {
+      const cleanIco = isCompanyPurchase ? ico.trim() : '';
+      const cleanDic = isCompanyPurchase ? dic.trim() : '';
+
       const result = await createOrder({
         clientName: clientName.trim(),
         billingAddress: {
@@ -248,6 +259,8 @@ export default function UnifiedPaywallModal({
           country: 'Česká republika'
         },
         invoiceEmail: invoiceEmail.trim(),
+        ico: cleanIco || undefined,
+        dic: cleanDic || undefined,
         paymentMethod,
         termsAccepted,
         newsletterConsent,
@@ -270,8 +283,8 @@ export default function UnifiedPaywallModal({
           city: city.trim(),
           zip: zip.trim(),
           country: 'Česká republika',
-          ico: profile?.billingDetails?.ico || '',
-          dic: profile?.billingDetails?.dic || ''
+          ico: cleanIco,
+          dic: cleanDic
         }
       }).catch(profileErr => {
         console.warn('[Billing Profile Sync]:', profileErr);
@@ -655,6 +668,38 @@ export default function UnifiedPaywallModal({
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* Volitelné firemní údaje (IČO / DIČ pro iÚčto) */}
+                <div className="space-y-2">
+                  <label className="inline-flex items-center gap-2 cursor-pointer select-none text-xs font-bold text-gray-600">
+                    <input
+                      type="checkbox"
+                      checked={isCompanyPurchase}
+                      onChange={e => setIsCompanyPurchase(e.target.checked)}
+                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span>Nakupuji na firmu / OSVČ (doplnit IČO / DIČ na fakturu)</span>
+                  </label>
+
+                  {isCompanyPurchase && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <Input
+                        value={ico}
+                        onChange={e => setIco(e.target.value)}
+                        placeholder="IČO (např. 12345678)"
+                        maxLength={20}
+                        className="h-10 text-xs sm:text-sm rounded-xl border-gray-200 bg-[#FAF6EE]/50"
+                      />
+                      <Input
+                        value={dic}
+                        onChange={e => setDic(e.target.value)}
+                        placeholder="DIČ (volitelné, např. CZ12345678)"
+                        maxLength={20}
+                        className="h-10 text-xs sm:text-sm rounded-xl border-gray-200 bg-[#FAF6EE]/50"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* 3. Řádek: Způsob platby - Platební brána */}

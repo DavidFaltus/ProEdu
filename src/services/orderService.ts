@@ -7,6 +7,8 @@ export interface CreateOrderParams {
   clientName: string;
   billingAddress: BillingAddress;
   invoiceEmail: string;
+  ico?: string;
+  dic?: string;
   paymentMethod: PaymentMethod;
   termsAccepted: boolean;
   newsletterConsent?: boolean;
@@ -100,6 +102,8 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
       country: params.billingAddress.country || 'Česká republika'
     },
     invoiceEmail: params.invoiceEmail.trim(),
+    ...(params.ico?.trim() ? { ico: params.ico.trim().slice(0, 20) } : {}),
+    ...(params.dic?.trim() ? { dic: params.dic.trim().slice(0, 20) } : {}),
     amount,
     currency: 'CZK',
     planId,
@@ -122,28 +126,34 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
     console.warn('[Order Firestore Client Write Notice]: Používám serverový zápis / dummy režim:', firestoreOrderErr);
   }
 
-    // 2. Záložní asynchronní synchronizace se serverem (pokud běží server na pozadí)
+  // 2. Synchronizace se serverem (vytvoření Comgate platby a získání live redirectUrl)
+  let serverResult: Partial<CreateOrderResult> | null = null;
   try {
     const token = await currentUser.getIdToken();
-    fetch('/api/orders/create', {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const response = await fetch('/api/orders/create', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify({ ...params, orderId, variableSymbol })
-    }).catch(err => {
-      console.warn('[Order Sync Notice]:', err);
+      body: JSON.stringify({ ...params, orderId, variableSymbol }),
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
+    if (response.ok) {
+      serverResult = await response.json().catch(() => null);
+    }
   } catch (syncErr) {
-    console.warn('[Order Token Notice]:', syncErr);
+    console.warn('[Order Sync Notice]:', syncErr);
   }
 
   const result: CreateOrderResult = {
     success: true,
     orderId,
-    order: orderData,
-    bankDetails: {
+    order: serverResult?.order || orderData,
+    bankDetails: serverResult?.bankDetails || {
       accountNumber: bankConfig.accountNumber,
       bankCode: bankConfig.bankCode,
       bankName: bankConfig.bankName,
@@ -155,11 +165,11 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
       spaydString,
       qrImageUrl
     },
-    comgate: params.paymentMethod === 'comgate' ? {
+    comgate: serverResult?.comgate || (params.paymentMethod === 'comgate' ? {
       isSandbox: true,
       testMode: true,
-      message: 'Platební brána Comgate je nastavena v testovacím režimu (čeká se na finální schválení smlouvy).'
-    } : undefined
+      message: 'Platební brána Comgate je nastavena v testovacím režimu (čeká se na zadání klíčů Comgate).'
+    } : undefined)
   };
 
   return result;
@@ -752,6 +762,112 @@ export async function saveBillingAndPaymentSettings(params: {
     success: true,
     message: 'Fakturační a platební údaje byly úspěšně uloženy.'
   };
+}
+
+/**
+ * Stáhne nebo otevře PDF fakturu z iÚčta přes autorizovaný backend proxy.
+ * Pokud objednávka ještě nemá iÚčto doklad (např. starší testovací objednávka), otevře HTML náhled.
+ */
+export async function downloadOrderInvoicePdf(order: Order): Promise<void> {
+  const orderId = (order as any).orderId || order.id;
+  if (!order.iuctoInvoiceId || !orderId) {
+    openIuctoInvoicePreview(order);
+    return;
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/invoice.pdf`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    throw new Error(errData.error || 'Nepodařilo se stáhnout PDF faktury z iÚčta.');
+  }
+
+  const blob = await response.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const opened = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+  if (!opened) {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `faktura-${order.iuctoInvoiceNumber || order.variableSymbol || orderId}.pdf`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+}
+
+/**
+ * Ruční opakování / dovystavení faktury v iÚčtu (akce učitele/admina)
+ */
+export async function retryOrderIuctoSync(
+  orderId: string,
+  sendEmail: boolean = false
+): Promise<{ success: boolean; iuctoInvoiceId?: string; iuctoInvoiceNumber?: string; message: string }> {
+  const token = await getAuthToken();
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/iucto-retry`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ sendEmail })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se vystavit fakturu v iÚčtu.');
+  }
+  return data;
+}
+
+/**
+ * Stornuje / refunduje zaplacenou objednávku a vystaví dobropis v iÚčtu (akce učitele/admina)
+ */
+export async function refundOrderWithCreditNote(
+  orderId: string,
+  reason: string
+): Promise<{ success: boolean; creditNote?: any; message: string }> {
+  const token = await getAuthToken();
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/refund`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify({ reason, sendEmailViaIucto: true })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se stornovat objednávku a vystavit dobropis.');
+  }
+  return data;
+}
+
+/**
+ * Ověří stav napojení na iÚčto API (akce učitele/admina)
+ */
+export async function getIuctoStatus(): Promise<{
+  configured: boolean;
+  connected: boolean;
+  companyName?: string | null;
+  isVatPayer?: boolean;
+  selectedBankAccountId?: number;
+  bankAccounts?: Array<{ id: number; name: string; currency: string }>;
+  sandboxEnabled?: boolean;
+  comgateTestMode?: boolean;
+  error?: string;
+}> {
+  const token = await getAuthToken();
+  const response = await fetch('/api/iucto/status', {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+  return response.json();
 }
 
 /**

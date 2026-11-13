@@ -12,9 +12,11 @@ import { toast } from 'sonner';
 import PdfSvgDropzone from './PdfSvgDropzone';
 import { 
   getAllMaterials, saveMaterial, deleteMaterial, getMaterialById,
+  updateMaterialViaApi, fetchMaterialStatus, mapDocToMaterial,
   ExistingMaterialItem, PREDEFINED_SUBJECTS, LEARNING_SHEETS_COLLECTION 
 } from '../../services/practiceService';
 import { sanitizeSvg } from '../../utils/svgUtils';
+import { downloadMaterialAsPdf, isPdfResource } from '../../utils/pdfToSvg';
 import { auth, db } from '../../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { StudyStep } from '../../types';
@@ -28,6 +30,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const effectiveUserId = userId || auth.currentUser?.uid || '';
 
   const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<Array<ExistingMaterialItem & { resolvedId?: string }>>([]);
+  const [pendingEdits, setPendingEdits] = useState<Record<string, Partial<ExistingMaterialItem>>>({});
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedSubject, setSelectedSubject] = useState<string>('Vše');
@@ -55,6 +59,10 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [editSubject, setEditSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [editTopic, setEditTopic] = useState('');
   const [editTheory, setEditTheory] = useState('');
+  const [editFileData, setEditFileData] = useState<string>('');
+  const [editFileType, setEditFileType] = useState<string>('');
+  const [editFileUrl, setEditFileUrl] = useState<string>('');
+  const [editFileCleared, setEditFileCleared] = useState(false);
   const [editSvgString, setEditSvgString] = useState<string>('');
   const [editSvgUrl, setEditSvgUrl] = useState<string>('');
   const [editPdfUrl, setEditPdfUrl] = useState<string>('');
@@ -82,37 +90,11 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     try {
       const q = query(collection(db, LEARNING_SHEETS_COLLECTION), orderBy('createdAt', 'desc'));
       const unsubscribe = onSnapshot(q, (snapshot) => {
-        const items = snapshot.docs.map(d => {
-          const data = d.data();
-          let parsedContent: any = {};
-          if (data.content && typeof data.content === 'string') {
-            try { parsedContent = JSON.parse(data.content); } catch { /* ignore */ }
-          }
-          const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (data.fileUrl && data.fileUrl.toLowerCase().endsWith('.pdf') ? data.fileUrl : null);
-          return {
-            id: d.id,
-            title: data.title || 'Materiál',
-            subject: data.subject || 'Matematika',
-            topic: data.topic || '',
-            svgUrl: data.svgUrl || null,
-            thumbnailUrl: data.thumbnailUrl || `/api/materials/${d.id}/thumbnail`,
-            fileUrl: data.fileUrl || `/api/materials/${d.id}/file`,
-            downloadUrl: data.downloadUrl || `/api/materials/${d.id}/download`,
-            pdfUrl: pdfUrl,
-            svgContent: parsedContent.svgContent || null,
-            studyTheory: parsedContent.studyTheory || (typeof data.content === 'string' && !data.content.startsWith('{') ? data.content : ''),
-            hasStudyMaterial: true,
-            status: data.status || 'ready',
-            errorMessage: data.errorMessage,
-            pageCount: data.pageCount,
-            originalName: data.originalName,
-            fileType: data.fileType,
-            fileSize: data.fileSize,
-            createdAt: data.createdAt,
-            updatedAt: data.updatedAt
-          } as ExistingMaterialItem;
-        });
+        const items = snapshot.docs
+          .map(d => mapDocToMaterial(d.id, d.data()))
+          .filter(item => !item.hiddenFromLibrary);
         setMaterials(items);
+        setPendingUploads(prev => prev.filter(p => !p.resolvedId || !items.some(m => m.id === p.resolvedId)));
         setLoading(false);
       }, (err) => {
         console.warn('Realtime snapshot listener fallback to getAllMaterials:', err);
@@ -133,6 +115,50 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       });
     }
   }, []);
+
+  // Fallback polling pokud některý materiál zůstává ve stavu 'processing'
+  useEffect(() => {
+    const processingIds = materials
+      .filter(m => m.status === 'processing' && !m.id.startsWith('temp_'))
+      .map(m => m.id);
+    if (processingIds.length === 0) return;
+
+    const timer = window.setInterval(async () => {
+      try {
+        const updates = await Promise.all(
+          processingIds.map(id => fetchMaterialStatus(id).catch(() => null))
+        );
+        let changed = false;
+        setMaterials(prev =>
+          prev.map(item => {
+            const st = updates.find(u => u && u.materialId === item.id);
+            if (!st || st.status === item.status) return item;
+            changed = true;
+            return {
+              ...item,
+              status: st.status,
+              errorMessage: st.errorMessage || undefined,
+              fileSize: st.fileSize ?? item.fileSize,
+              fileUrl: st.fileUrl !== undefined ? st.fileUrl : item.fileUrl,
+              pdfUrl: st.pdfUrl !== undefined ? st.pdfUrl : item.pdfUrl,
+              svgUrl: st.svgUrl !== undefined ? st.svgUrl : item.svgUrl,
+              thumbnailUrl: st.thumbnailUrl !== undefined ? st.thumbnailUrl : item.thumbnailUrl,
+              downloadUrl: st.downloadUrl !== undefined ? st.downloadUrl : item.downloadUrl,
+              fileType: st.fileType || item.fileType,
+              originalName: st.originalName || item.originalName
+            };
+          })
+        );
+        if (changed) {
+          await loadData();
+        }
+      } catch {
+        // Ignorujeme dočasné síťové výpadky při dotazování stavu
+      }
+    }, 3000);
+
+    return () => window.clearInterval(timer);
+  }, [materials]);
 
   const handleOpenUpload = () => {
     setNewTitle('');
@@ -161,28 +187,70 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       return;
     }
 
-    // Okamžitě zavřeme nahrávací okno, aby admin nemusel čekat na zpracování!
+    const titleCopy = newTitle.trim();
+    const subjectCopy = newSubject;
+    const topicCopy = newTopic.trim() || 'Obecné';
+    const theoryCopy = newTheory.trim();
+    const fileDataCopy = uploadedFileData || undefined;
+    const fileTypeCopy =
+      uploadedFileType ||
+      (uploadedSvgString || uploadedFileName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf');
+    const originalNameCopy = uploadedFileName || (uploadedSvgString ? 'material.svg' : 'material.pdf');
+    const thumbnailCopy = uploadedThumbnailUrl || undefined;
+    const svgUrlCopy = uploadedSvgUrl || undefined;
+    const pdfUrlCopy = uploadedPdfUrl || undefined;
+    const svgStringCopy = uploadedSvgString || undefined;
+
+    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const optimisticItem: ExistingMaterialItem & { resolvedId?: string } = {
+      id: tempId,
+      title: titleCopy,
+      subject: subjectCopy,
+      topic: topicCopy,
+      studyTheory: theoryCopy,
+      hasStudyMaterial: true,
+      status: 'processing',
+      originalName: fileDataCopy || svgStringCopy ? originalNameCopy : undefined,
+      fileType: fileDataCopy || svgStringCopy ? fileTypeCopy : undefined,
+      thumbnailUrl: thumbnailCopy || null,
+      fileUrl: null,
+      pdfUrl: null,
+      svgUrl: null
+    };
+
+    // Okamžitě zobrazíme kartu s točícím se kolečkem a zavřeme modální okno
+    setPendingUploads(prev => [optimisticItem, ...prev]);
     setIsUploadModalOpen(false);
-    toast.info('Materiál byl zařazen ke zpracování na pozadí.');
+    toast.info('Nahrávám materiál a připravuji jej na pozadí...');
 
     setIsSaving(true);
     try {
-      await saveMaterial({
-        title: newTitle.trim(),
-        subject: newSubject,
-        topic: newTopic.trim() || 'Obecné',
-        studyTheory: newTheory.trim(),
-        fileData: uploadedFileData || undefined,
-        fileType: uploadedFileType || (uploadedFileName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf'),
-        originalName: uploadedFileName || 'material.pdf',
-        thumbnailDataUrl: uploadedThumbnailUrl || undefined,
-        svgUrl: uploadedSvgUrl || undefined,
-        pdfUrl: uploadedPdfUrl || undefined,
-        svgContent: uploadedSvgString || undefined
+      const materialId = await saveMaterial({
+        title: titleCopy,
+        subject: subjectCopy,
+        topic: topicCopy,
+        studyTheory: theoryCopy,
+        fileData: fileDataCopy,
+        fileType: fileTypeCopy,
+        originalName: originalNameCopy,
+        thumbnailDataUrl: thumbnailCopy,
+        svgUrl: svgUrlCopy,
+        pdfUrl: pdfUrlCopy,
+        svgContent: svgStringCopy
       }, effectiveUserId);
 
-      toast.success('Materiál byl úspěšně zařazen! Zpracování probíhá na pozadí.');
+      setPendingUploads(prev => {
+        const existsInLive = materials.some(m => m.id === materialId);
+        if (existsInLive) {
+          return prev.filter(p => p.id !== tempId);
+        }
+        return prev.map(p => (p.id === tempId ? { ...p, resolvedId: materialId } : p));
+      });
+      toast.success('Materiál byl nahrán! Dokončuji přípravu na pozadí.');
     } catch (err: any) {
+      setPendingUploads(prev =>
+        prev.map(p => (p.id === tempId ? { ...p, status: 'error', errorMessage: err.message } : p))
+      );
       toast.error('Chyba při ukládání: ' + err.message);
     } finally {
       setIsSaving(false);
@@ -192,6 +260,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const handleOpenEdit = async (mat: ExistingMaterialItem) => {
     setEditMaterial(mat);
     setEditLoading(true);
+    setEditFileData('');
+    setEditFileCleared(false);
     try {
       const full = await getMaterialById(mat.id);
       if (full) {
@@ -200,11 +270,15 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         setEditSubject((full.subject as 'Matematika' | 'Čeština') || 'Matematika');
         setEditTopic(full.topic || '');
         setEditTheory(full.studyTheory || '');
+        setEditFileData('');
+        setEditFileType(full.fileType || '');
+        setEditFileUrl(full.fileUrl || full.pdfUrl || full.svgUrl || '');
+        setEditFileCleared(false);
         setEditSvgString(full.svgContent || '');
         setEditSvgUrl(full.svgUrl || '');
         setEditPdfUrl(full.pdfUrl || '');
         setEditThumbnailUrl(full.thumbnailUrl || '');
-        setEditFileName(full.title || '');
+        setEditFileName(full.originalName || full.title || '');
         setEditSteps([]);
       } else {
         toast.error('Nepodařilo se načíst detail materiálu.');
@@ -226,24 +300,83 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       return;
     }
 
-    setIsSavingEdit(true);
-    try {
-      await saveMaterial({
-        id: editMaterial.id,
-        title: editTitle.trim(),
-        subject: editSubject,
-        topic: editTopic.trim() || 'Obecné',
-        studyTheory: editTheory.trim(),
-        svgUrl: editSvgUrl || editFullSubtopic?.svgUrl || undefined,
-        pdfUrl: editPdfUrl || editFullSubtopic?.pdfUrl || undefined,
-        thumbnailUrl: editThumbnailUrl || editFullSubtopic?.thumbnailUrl || undefined,
-        svgContent: editSvgString || editFullSubtopic?.svgContent || undefined
-      }, effectiveUserId);
+    const materialId = editMaterial.id;
+    const replacingFile = Boolean(editFileData || (editSvgString && editSvgString !== (editFullSubtopic?.svgContent || '')));
 
-      toast.success('Materiál byl úspěšně upraven!');
+    const payload = {
+      title: editTitle.trim(),
+      subject: editSubject,
+      topic: editTopic.trim() || 'Obecné',
+      studyTheory: editTheory.trim(),
+      ...(editFileData ? {
+        fileData: editFileData,
+        fileType: editFileType || (editSvgString || editFileName?.toLowerCase().endsWith('.svg') ? 'image/svg+xml' : 'application/pdf'),
+        originalName: editFileName || 'material.svg',
+        thumbnailDataUrl: editThumbnailUrl || undefined
+      } : {}),
+      ...(!editFileData && editSvgString && editSvgString !== (editFullSubtopic?.svgContent || '') ? {
+        svgContent: editSvgString,
+        fileType: 'image/svg+xml',
+        originalName: editFileName || 'material.svg',
+        thumbnailDataUrl: editThumbnailUrl || undefined
+      } : {}),
+      ...(editFileCleared ? { clearFile: true } : {})
+    };
+
+    if (replacingFile) {
+      // Při nahrazení souboru okno hned zavřeme a zobrazíme točící se kolečko na kartě materiálu
+      setPendingEdits(prev => ({
+        ...prev,
+        [materialId]: { status: 'processing', title: payload.title, subject: payload.subject, topic: payload.topic }
+      }));
       setEditMaterial(null);
+      toast.info('Nahrávám nový soubor k materiálu na pozadí...');
+    } else {
+      setIsSavingEdit(true);
+    }
+
+    try {
+      const res = await updateMaterialViaApi(materialId, payload);
+      setPendingEdits(prev => {
+        const next = { ...prev };
+        delete next[materialId];
+        return next;
+      });
+      setMaterials(prev =>
+        prev.map(m =>
+          m.id === materialId
+            ? {
+                ...m,
+                title: payload.title,
+                subject: payload.subject,
+                topic: payload.topic,
+                studyTheory: payload.studyTheory,
+                status: res.status || m.status,
+                fileUrl: res.fileUrl !== undefined ? res.fileUrl : m.fileUrl,
+                pdfUrl: res.pdfUrl !== undefined ? res.pdfUrl : m.pdfUrl,
+                svgUrl: res.svgUrl !== undefined ? res.svgUrl : m.svgUrl,
+                thumbnailUrl: res.thumbnailUrl !== undefined ? res.thumbnailUrl : m.thumbnailUrl,
+                downloadUrl: res.downloadUrl !== undefined ? res.downloadUrl : m.downloadUrl,
+                fileType: res.fileType !== undefined ? (res.fileType || undefined) : m.fileType,
+                originalName: res.originalName !== undefined ? (res.originalName || undefined) : m.originalName
+              }
+            : m
+        )
+      );
+
+      if (!replacingFile) {
+        toast.success('Materiál byl úspěšně upraven!');
+        setEditMaterial(null);
+      } else {
+        toast.success('Nový soubor zařazen ke zpracování na pozadí.');
+      }
       await loadData();
     } catch (err: any) {
+      setPendingEdits(prev => {
+        const next = { ...prev };
+        delete next[materialId];
+        return next;
+      });
       toast.error('Chyba při ukládání úprav: ' + err.message);
     } finally {
       setIsSavingEdit(false);
@@ -276,6 +409,10 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   };
 
   const handleDeleteMaterial = async (id: string, title: string) => {
+    if (id.startsWith('temp_')) {
+      setPendingUploads(prev => prev.filter(p => p.id !== id));
+      return;
+    }
     if (!window.confirm(`Opravdu chcete smazat materiál "${title}"?`)) return;
     try {
       await deleteMaterial(id);
@@ -286,7 +423,12 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     }
   };
 
-  const filteredMaterials = materials.filter(m => {
+  const mergedMaterials: ExistingMaterialItem[] = [
+    ...pendingUploads.filter(p => !p.resolvedId || !materials.some(m => m.id === p.resolvedId)),
+    ...materials.map(m => (pendingEdits[m.id] ? { ...m, ...pendingEdits[m.id] } : m))
+  ];
+
+  const filteredMaterials = mergedMaterials.filter(m => {
     const matchesSubject = selectedSubject === 'Vše' || m.subject === selectedSubject;
     const q = search.toLowerCase().trim();
     const matchesSearch = !q || 
@@ -607,6 +749,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                 userId={effectiveUserId}
                 valueSvgString={uploadedSvgString}
                 valueSvgUrl={uploadedSvgUrl}
+                valueFileUrl={uploadedFileData || uploadedPdfUrl || uploadedSvgUrl}
+                valueFileType={uploadedFileType}
                 valueThumbnailUrl={uploadedThumbnailUrl}
                 fileName={uploadedFileName}
                 onChange={(res) => {
@@ -658,10 +802,9 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
               </Button>
               <Button
                 type="submit"
-                disabled={isSaving}
                 className="rounded-xl bg-[#1E1B18] text-white font-bold text-xs px-5 shadow-sm"
               >
-                {isSaving ? 'Ukládám do databáze...' : 'Uložit materiál'}
+                Uložit materiál
               </Button>
             </DialogFooter>
           </form>
@@ -748,16 +891,26 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     userId={effectiveUserId}
                     valueSvgString={editSvgString}
                     valueSvgUrl={editSvgUrl}
+                    valueFileUrl={editFileData || editFileUrl}
+                    valueFileType={editFileType}
                     valueThumbnailUrl={editThumbnailUrl}
                     fileName={editFileName}
                     onChange={(res) => {
                       if (res) {
-                        setEditSvgString(res.svgString);
+                        setEditFileData(res.fileData || '');
+                        setEditFileType(res.fileType || '');
+                        setEditFileUrl(res.fileData || res.pdfUrl || res.svgUrl || '');
+                        setEditFileCleared(false);
+                        setEditSvgString(res.svgString || '');
                         setEditSvgUrl(res.svgUrl || '');
                         setEditPdfUrl(res.pdfUrl || '');
-                        setEditThumbnailUrl(res.thumbnail || '');
+                        setEditThumbnailUrl(res.thumbnail || res.thumbnailDataUrl || '');
                         setEditFileName(res.fileName);
                       } else {
+                        setEditFileData('');
+                        setEditFileType('');
+                        setEditFileUrl('');
+                        setEditFileCleared(true);
                         setEditSvgString('');
                         setEditSvgUrl('');
                         setEditPdfUrl('');
@@ -965,12 +1118,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
       {/* Universal Preview Modal with PDF and Zoom */}
       {previewMaterial && (() => {
-        const isPdf = Boolean(
-          previewMaterial.fileType === 'application/pdf' ||
-          previewMaterial.pdfUrl ||
-          previewMaterial.originalName?.toLowerCase().endsWith('.pdf') ||
-          (previewMaterial.fileUrl && !previewMaterial.fileUrl.toLowerCase().endsWith('.svg') && !previewMaterial.svgContent)
-        );
+        const isPdf = isPdfResource(previewMaterial);
         const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
         const downloadSrc = previewMaterial.downloadUrl || previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
 
@@ -1075,14 +1223,24 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
                 <div className="flex items-center gap-2 ml-auto">
                   {downloadSrc && (
-                    <a
-                      href={downloadSrc}
-                      download={previewMaterial.originalName || `${previewMaterial.title}.pdf`}
+                    <Button
+                      type="button"
+                      onClick={() =>
+                        downloadMaterialAsPdf({
+                          title: previewMaterial.title,
+                          downloadUrl: previewMaterial.downloadUrl,
+                          pdfUrl: previewMaterial.pdfUrl,
+                          fileUrl: previewMaterial.fileUrl,
+                          svgUrl: previewMaterial.svgUrl,
+                          svgContent: previewMaterial.svgContent,
+                          fileType: previewMaterial.fileType
+                        }).catch((err: any) => toast.error(err?.message || 'Stažení selhalo.'))
+                      }
                       className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
                     >
                       <Download size={14} />
-                      <span>Stáhnout</span>
-                    </a>
+                      <span>Stáhnout PDF</span>
+                    </Button>
                   )}
 
                   {fileSrc && (

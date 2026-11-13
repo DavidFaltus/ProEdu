@@ -3,7 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   ArrowLeft, ChevronDown, ChevronUp, 
-  Play
+  Play, AlertTriangle
 } from 'lucide-react';
 import {
   BookCyanIcon,
@@ -16,11 +16,19 @@ import {
 import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
-import { getSubtopicById, getQuestionsForSubtopic, getTopicById } from '../services/practiceService';
-import { PracticeSubtopic, StudyStep } from '../types';
+import {
+  getSubtopicById,
+  getQuestionsForSubtopic,
+  getTopicById,
+  fetchMaterialStatus,
+  LEARNING_SHEETS_COLLECTION
+} from '../services/practiceService';
+import { PracticeSubtopic, StudyStep, MaterialStatus } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
-import { sanitizeSvg } from '../utils/svgUtils';
 import { cn } from '../lib/utils';
+import { db } from '../lib/firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
+import InlineStudyMedia from '../components/common/InlineStudyMedia';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 
 export default function StudyView() {
@@ -36,6 +44,16 @@ export default function StudyView() {
   const [expandedTips, setExpandedTips] = useState<Record<number, boolean>>({});
   const [stepAnswers, setStepAnswers] = useState<Record<number, string | null>>({});
   const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
+  const [materialMeta, setMaterialMeta] = useState<{
+    status?: MaterialStatus;
+    errorMessage?: string | null;
+    fileUrl?: string | null;
+    pdfUrl?: string | null;
+    svgUrl?: string | null;
+    downloadUrl?: string | null;
+    fileType?: string | null;
+    originalName?: string | null;
+  } | null>(null);
 
   useEffect(() => {
     async function loadData() {
@@ -65,6 +83,68 @@ export default function StudyView() {
     }
     loadData();
   }, [subtopicId]);
+
+  const linkedMaterialId = React.useMemo(() => {
+    if (!subtopic) return null;
+    if (subtopic.materialId) return subtopic.materialId;
+    const candidateUrl = subtopic.pdfUrl || subtopic.fileUrl || subtopic.svgUrl || '';
+    const match = candidateUrl.match(/\/api\/materials\/([^/?#]+)/);
+    return match ? match[1] : null;
+  }, [subtopic]);
+
+  // Real-time sledování přípravy přiřazeného materiálu (dokud má status 'processing')
+  useEffect(() => {
+    if (!linkedMaterialId) {
+      setMaterialMeta(null);
+      return;
+    }
+
+    let unsub: (() => void) | null = null;
+    let pollTimer: number | null = null;
+
+    const applyStatus = (data: any) => {
+      if (!data) return;
+      setMaterialMeta({
+        status: data.status || 'ready',
+        errorMessage: data.errorMessage || null,
+        fileUrl: data.fileUrl ?? null,
+        pdfUrl: data.pdfUrl ?? null,
+        svgUrl: data.svgUrl ?? null,
+        downloadUrl: data.downloadUrl ?? null,
+        fileType: data.fileType ?? null,
+        originalName: data.originalName ?? null
+      });
+      if (data.status !== 'processing' && pollTimer !== null) {
+        window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    };
+
+    try {
+      unsub = onSnapshot(
+        doc(db, LEARNING_SHEETS_COLLECTION, linkedMaterialId),
+        (snap) => {
+          if (snap.exists()) {
+            applyStatus(snap.data());
+          }
+        },
+        () => {
+          fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
+        }
+      );
+    } catch {
+      fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
+    }
+
+    pollTimer = window.setInterval(() => {
+      fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
+    }, 3000);
+
+    return () => {
+      if (unsub) unsub();
+      if (pollTimer !== null) window.clearInterval(pollTimer);
+    };
+  }, [linkedMaterialId]);
 
   const toggleTip = (index: number) => {
     setExpandedTips(prev => ({ ...prev, [index]: !prev[index] }));
@@ -96,7 +176,14 @@ export default function StudyView() {
     );
   }
 
-  const hasSvg = Boolean(subtopic.svgUrl || subtopic.svgContent);
+  const effectiveFileUrl = materialMeta?.fileUrl || subtopic.fileUrl || subtopic.pdfUrl || subtopic.svgUrl || null;
+  const effectivePdfUrl = materialMeta?.pdfUrl || subtopic.pdfUrl || null;
+  const effectiveFileType = materialMeta?.fileType || subtopic.fileType || null;
+  const effectiveOriginalName = materialMeta?.originalName || subtopic.originalName || null;
+
+  const hasVisualMaterial = Boolean(effectiveFileUrl || effectivePdfUrl || subtopic.svgUrl || subtopic.svgContent);
+  const isMaterialProcessing = materialMeta?.status === 'processing';
+  const isMaterialError = materialMeta?.status === 'error';
   const steps: StudyStep[] = subtopic.studySteps || [];
 
   return (
@@ -144,22 +231,31 @@ export default function StudyView() {
         </div>
       </header>
 
-      {/* Vizuální výukový list NEBO Teoretický výklad (pokud není k dispozici obrázek) */}
-      {hasSvg ? (
-        <div className="w-full overflow-x-auto py-1 px-1 sm:px-2 flex justify-center items-start">
-          {subtopic.svgUrl ? (
-            <img 
-              src={subtopic.svgUrl} 
-              alt={subtopic.title} 
-              className="w-full h-auto max-w-full rounded-2xl shadow-sm bg-white p-2 sm:p-4 object-contain"
-            />
-          ) : subtopic.svgContent ? (
-            <div 
-              className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-sm rounded-2xl bg-white p-2 sm:p-4"
-              dangerouslySetInnerHTML={{ __html: sanitizeSvg(subtopic.svgContent) }}
-            />
-          ) : null}
+      {/* Vizuální výukový list NEBO Teoretický výklad (pokud není k dispozici soubor) */}
+      {isMaterialProcessing ? (
+        <div className="bg-amber-50/80 border border-amber-200 rounded-3xl p-10 text-center space-y-3 shadow-sm">
+          <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
+          <h3 className="font-bold text-lg text-amber-950">Studijní materiál se právě připravuje...</h3>
+          <p className="text-xs sm:text-sm text-amber-800 max-w-md mx-auto">
+            Soubor se dokončuje na serveru a během okamžiku se zde automaticky zobrazí.
+          </p>
         </div>
+      ) : isMaterialError ? (
+        <div className="bg-rose-50 border border-rose-200 rounded-3xl p-8 text-center space-y-2 shadow-sm">
+          <AlertTriangle size={28} className="text-rose-600 mx-auto" />
+          <h3 className="font-bold text-base text-rose-900">Materiál se nepodařilo připravit</h3>
+          <p className="text-xs text-rose-700">{materialMeta?.errorMessage || 'Zkuste to prosím později nebo kontaktujte vyučujícího.'}</p>
+        </div>
+      ) : hasVisualMaterial ? (
+        <InlineStudyMedia
+          svgContent={subtopic.svgContent}
+          fileUrl={effectiveFileUrl}
+          pdfUrl={effectivePdfUrl}
+          svgUrl={subtopic.svgUrl}
+          fileType={effectiveFileType}
+          originalName={effectiveOriginalName}
+          alt={subtopic.title}
+        />
       ) : (subtopic.studyTheory?.trim() && !subtopic.studyTheory.includes('<svg')) ? (
         <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-4">
           <div className="flex items-center gap-3">
@@ -274,26 +370,18 @@ export default function StudyView() {
                 </div>
 
                 {/* Step Image / SVG */}
-                {step.svgContent ? (
-                  <div className="py-2 flex justify-center w-full">
-                    <div 
-                      className="w-full max-w-2xl flex justify-center [&>svg]:w-full [&>svg]:max-w-full [&>svg]:h-auto shadow-xs rounded-2xl bg-[#FAF7F0] p-3 sm:p-5 border border-gray-200/80 overflow-hidden"
-                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
-                    />
-                  </div>
-                ) : step.imageUrl ? (
-                  <div className="py-2 flex justify-center w-full">
-                    <div className="rounded-2xl overflow-hidden border border-gray-200/80 bg-[#FAF7F0] p-2.5 sm:p-3 shadow-xs max-w-full">
-                      <img 
-                        src={step.imageUrl} 
-                        alt={step.title || `Obrázek ke kroku ${idx + 1}`}
-                        className="max-h-[360px] w-auto max-w-full rounded-xl object-contain hover:scale-[1.01] transition-transform cursor-pointer mx-auto"
-                        onClick={() => window.open(step.imageUrl, '_blank')}
-                        title="Kliknutím otevřete obrázek v plné velikosti"
-                      />
-                    </div>
-                  </div>
-                ) : null}
+                {(step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl) && (
+                  <InlineStudyMedia
+                    svgContent={step.svgContent}
+                    fileUrl={step.fileUrl}
+                    pdfUrl={step.pdfUrl}
+                    imageUrl={step.imageUrl}
+                    fileType={step.fileType}
+                    originalName={step.originalName}
+                    alt={step.title || `Příloha ke kroku ${idx + 1}`}
+                    className="py-1"
+                  />
+                )}
 
                 {/* Tutor Tip - Bublinka lektora rozkliknutá přímo pod záhlavím s ocáskem směřujícím k tlačítku vpravo */}
                 {step.tutorTip && (

@@ -82,7 +82,9 @@ service cloud.firestore {
              (!('emailVerified' in data) || data.emailVerified == null || data.emailVerified is bool) &&
              (!('initRecurringTransId' in data) || data.initRecurringTransId == null || (data.initRecurringTransId is string && data.initRecurringTransId.size() <= 128)) &&
              (!('premiumSince' in data) || data.premiumSince == null || (data.premiumSince is string && data.premiumSince.size() <= 64)) &&
-             (!('subscriptionExpiredAt' in data) || data.subscriptionExpiredAt == null || (data.subscriptionExpiredAt is string && data.subscriptionExpiredAt.size() <= 64));
+             (!('subscriptionExpiredAt' in data) || data.subscriptionExpiredAt == null || (data.subscriptionExpiredAt is string && data.subscriptionExpiredAt.size() <= 64)) &&
+             (!('iuctoCustomerId' in data) || data.iuctoCustomerId == null || data.iuctoCustomerId is int || (data.iuctoCustomerId is string && data.iuctoCustomerId.size() <= 64)) &&
+             (!('lastRecurringAttemptDate' in data) || data.lastRecurringAttemptDate == null || (data.lastRecurringAttemptDate is string && data.lastRecurringAttemptDate.size() <= 32));
     }
 
     function isValidTest(data) {
@@ -137,8 +139,15 @@ service cloud.firestore {
              data.subjectId is string && data.subjectId.size() <= 128 &&
              data.topicId is string && data.topicId.size() <= 128 &&
              (!('description' in data) || data.description == null || (data.description is string && data.description.size() <= 2000)) &&
-             (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 1000)) &&
+             (!('svgUrl' in data) || data.svgUrl == null || (data.svgUrl is string && data.svgUrl.size() <= 2048)) &&
              (!('svgContent' in data) || data.svgContent == null || (data.svgContent is string && data.svgContent.size() <= 500000)) &&
+             (!('materialId' in data) || data.materialId == null || (data.materialId is string && data.materialId.size() <= 128)) &&
+             (!('fileUrl' in data) || data.fileUrl == null || (data.fileUrl is string && data.fileUrl.size() <= 2048)) &&
+             (!('pdfUrl' in data) || data.pdfUrl == null || (data.pdfUrl is string && data.pdfUrl.size() <= 2048)) &&
+             (!('downloadUrl' in data) || data.downloadUrl == null || (data.downloadUrl is string && data.downloadUrl.size() <= 2048)) &&
+             (!('thumbnailUrl' in data) || data.thumbnailUrl == null || (data.thumbnailUrl is string && data.thumbnailUrl.size() <= 2048)) &&
+             (!('fileType' in data) || data.fileType == null || (data.fileType is string && data.fileType.size() <= 128)) &&
+             (!('originalName' in data) || data.originalName == null || (data.originalName is string && data.originalName.size() <= 256)) &&
              (!('hasStudyMaterial' in data) || data.hasStudyMaterial == null || data.hasStudyMaterial is bool) &&
              (!('studyTheory' in data) || data.studyTheory == null || (data.studyTheory is string && data.studyTheory.size() <= 20000)) &&
              (!('studyTips' in data) || data.studyTips == null || (data.studyTips is string && data.studyTips.size() <= 5000)) &&
@@ -213,6 +222,8 @@ service cloud.firestore {
              (!('topic' in data) || data.topic == null || (data.topic is string && data.topic.size() <= 128)) &&
              (!('topics' in data) || data.topics == null || data.topics is list) &&
              (!('content' in data) || data.content == null || data.content is string) &&
+             (!('studyTheory' in data) || data.studyTheory == null || (data.studyTheory is string && data.studyTheory.size() <= 50000)) &&
+             (!('hiddenFromLibrary' in data) || data.hiddenFromLibrary == null || data.hiddenFromLibrary is bool) &&
              (!('status' in data) || data.status == null || (data.status is string && (data.status == 'processing' || data.status == 'ready' || data.status == 'error'))) &&
              (!('errorMessage' in data) || data.errorMessage == null || (data.errorMessage is string && data.errorMessage.size() <= 1000)) &&
              (!('pageCount' in data) || data.pageCount == null || data.pageCount is int) &&
@@ -339,12 +350,30 @@ service cloud.firestore {
              data.invoiceEmail is string && data.invoiceEmail.size() <= 256 &&
              data.amount is number && data.amount > 0 &&
              (data.paymentMethod == 'qr_bank_transfer' || data.paymentMethod == 'comgate') &&
-             (data.status == 'pending' || data.status == 'paid' || data.status == 'cancelled') &&
+             (data.status == 'pending' || data.status == 'paid' || data.status == 'cancelled' || data.status == 'refunded') &&
              data.termsAccepted == true &&
              data.billingAddress is map &&
              data.billingAddress.street is string && data.billingAddress.street.size() <= 150 &&
              data.billingAddress.city is string && data.billingAddress.city.size() <= 100 &&
-             data.billingAddress.zip is string && data.billingAddress.zip.size() <= 20;
+             data.billingAddress.zip is string && data.billingAddress.zip.size() <= 20 &&
+             (!('ico' in data) || data.ico == null || (data.ico is string && data.ico.size() <= 20)) &&
+             (!('dic' in data) || data.dic == null || (data.dic is string && data.dic.size() <= 20));
+    }
+
+    function hasNoClientPrivilegedOrderFields(data) {
+      return !('iuctoInvoiceId' in data) &&
+             !('iuctoInvoiceNumber' in data) &&
+             !('iuctoPaymentId' in data) &&
+             !('iuctoCreditNoteId' in data) &&
+             !('iuctoCreditNoteNumber' in data) &&
+             !('iuctoCreditNoteShareUrl' in data) &&
+             !('iuctoSyncStatus' in data) &&
+             !('iuctoError' in data) &&
+             !('iuctoSyncedAt' in data) &&
+             !('iuctoPdfUrl' in data) &&
+             !('paidAt' in data) &&
+             !('refundedAt' in data) &&
+             !('comgateTransId' in data);
     }
 
     function isValidBugReport(data) {
@@ -385,11 +414,13 @@ service cloud.firestore {
       allow read: if isAuthenticated() && (isOwner(uid) || isAdmin());
       allow create: if isAuthenticated() &&
         (isOwner(uid) || isAdmin()) &&
+        (isAdmin() || !('iuctoCustomerId' in request.resource.data)) &&
         (request.resource.data.role == 'student' || request.resource.data.role == 'free' || (request.auth.token.email == 'ucitel@ucitel.cz' && request.resource.data.role == 'teacher')) &&
         isValidUser(request.resource.data);
       allow update: if isAuthenticated() &&
         (isOwner(uid) || isAdmin()) &&
         keepsImmutableFields() &&
+        (isAdmin() || !('iuctoCustomerId' in request.resource.data) || (('iuctoCustomerId' in resource.data) && request.resource.data.iuctoCustomerId == resource.data.iuctoCustomerId)) &&
         (isAdmin() || (isOwner(uid) && request.resource.data.role in ['student', 'free', 'premium', 'course']) || request.resource.data.role == resource.data.role) &&
         isValidUser(request.resource.data);
       allow delete: if false;
@@ -575,7 +606,11 @@ service cloud.firestore {
     match /orders/{orderId} {
       allow read: if isAuthenticated() && (isAdmin() || resource.data.userId == request.auth.uid);
       allow create: if isAuthenticated() && 
-                    (isAdmin() || (request.resource.data.userId == request.auth.uid && request.resource.data.status == 'pending')) &&
+                    (isAdmin() || (
+                      request.resource.data.userId == request.auth.uid &&
+                      request.resource.data.status == 'pending' &&
+                      hasNoClientPrivilegedOrderFields(request.resource.data)
+                    )) &&
                     isValidOrder(request.resource.data);
       allow update: if isAdmin();
       allow delete: if isAdmin();

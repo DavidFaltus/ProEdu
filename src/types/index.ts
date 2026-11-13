@@ -46,6 +46,8 @@ export interface UserProfile {
   initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
   premiumSince?: string;
   subscriptionExpiredAt?: string | null;
+  iuctoCustomerId?: number | null; // ID odběratele v iÚčtu (spravuje pouze server)
+  lastRecurringAttemptDate?: string; // YYYY-MM-DD posledního automatického stržení
 }
 
 export type QuestionType = 'choice' | 'open' | 'self_check'; // Výběr ze 4 možností | Volná odpověď | Self check (vlastní porovnání)
@@ -77,6 +79,11 @@ export interface StudyStep {
   content: string;
   imageUrl?: string;
   svgContent?: string;
+  materialId?: string;
+  fileUrl?: string;
+  pdfUrl?: string;
+  fileType?: string;
+  originalName?: string;
   testQuestion?: string;
   testOptions?: string[];
   correctAnswer?: string;
@@ -107,8 +114,15 @@ export interface PracticeSubtopic {
   order?: number;
   isHidden?: boolean;
   hasStudyMaterial?: boolean;
-  svgUrl?: string; // např. '/materials/cz-shoda.svg' nebo externí link
-  svgContent?: string; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
+  svgUrl?: string | null; // např. '/materials/cz-shoda.svg' nebo externí link
+  svgContent?: string | null; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
+  materialId?: string | null;
+  fileUrl?: string | null;
+  pdfUrl?: string | null;
+  downloadUrl?: string | null;
+  thumbnailUrl?: string | null;
+  fileType?: string | null;
+  originalName?: string | null;
   studyTheory?: string;
   sampleProblem?: SampleProblem;
   studySteps?: StudyStep[];
@@ -242,8 +256,9 @@ export interface Course {
 }
 
 export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
-export type OrderStatus = 'pending' | 'paid' | 'cancelled';
+export type OrderStatus = 'pending' | 'paid' | 'cancelled' | 'refunded';
 export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive';
+export type IuctoSyncStatus = 'pending' | 'synced' | 'failed' | 'skipped_sandbox' | 'refunded';
 
 export interface BillingAddress {
   street: string;
@@ -266,6 +281,8 @@ export interface Order {
   clientName: string;
   billingAddress: BillingAddress;
   invoiceEmail: string;
+  ico?: string;
+  dic?: string;
   amount: number;
   currency: string;
   planId: string;
@@ -277,10 +294,19 @@ export interface Order {
   spaydString?: string;
   comgateTransId?: string;
   comgateRedirectUrl?: string;
+  isSandbox?: boolean;
   iuctoInvoiceId?: string;
   iuctoInvoiceNumber?: string;
+  iuctoPaymentId?: string;
+  iuctoCreditNoteId?: string;
+  iuctoCreditNoteNumber?: string;
+  iuctoCreditNoteShareUrl?: string;
+  iuctoSyncStatus?: IuctoSyncStatus;
+  iuctoError?: string | null;
+  iuctoSyncedAt?: string;
   iuctoPdfUrl?: string;
   paidAt?: any;
+  refundedAt?: any;
   createdAt: any;
   updatedAt?: any;
 }
@@ -370,6 +396,7 @@ export interface ExistingMaterialItem {
   originalName?: string;
   fileType?: string;
   fileSize?: number;
+  hiddenFromLibrary?: boolean;
   createdAt?: any;
   updatedAt?: any;
   createdBy?: string;

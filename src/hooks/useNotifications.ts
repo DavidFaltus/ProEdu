@@ -386,6 +386,7 @@ export function useNotifications() {
       if (!isFree) {
         // 2. Learning sheets (Pro & Course)
         sheetsList.forEach(sheet => {
+          if (sheet.hiddenFromLibrary) return;
           const time = safeToDate(sheet.createdAt) || new Date(0);
           if (time.getTime() >= userCreatedAt.getTime()) {
             list.push({
