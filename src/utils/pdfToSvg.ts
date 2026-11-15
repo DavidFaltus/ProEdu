@@ -460,9 +460,23 @@ export async function downloadMaterialAsPdf(material: {
 
   let svgText = material.svgContent || '';
 
+  const getAuthHeaders = async (targetUrl: string): Promise<Record<string, string>> => {
+    if (!targetUrl.startsWith('/api/') && !targetUrl.includes('/api/materials/')) {
+      return {};
+    }
+    try {
+      const { auth } = await import('../lib/firebase');
+      const token = await auth.currentUser?.getIdToken();
+      return token ? { Authorization: `Bearer ${token}` } : {};
+    } catch {
+      return {};
+    }
+  };
+
   if (directPdfUrl) {
     try {
-      const response = await fetch(directPdfUrl);
+      const headers = await getAuthHeaders(directPdfUrl);
+      const response = await fetch(directPdfUrl, { headers, credentials: 'include' });
       if (response.ok) {
         const contentType = (response.headers.get('content-type') || '').toLowerCase();
         if (contentType.includes('svg')) {
@@ -482,15 +496,16 @@ export async function downloadMaterialAsPdf(material: {
         }
       }
     } catch {
-      // Fallback to direct anchor click if CORS blocks fetch
-      const link = document.createElement('a');
-      link.href = directPdfUrl;
-      link.download = downloadFileName;
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      return;
+      if (!directPdfUrl.startsWith('/api/')) {
+        const link = document.createElement('a');
+        link.href = directPdfUrl;
+        link.download = downloadFileName;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        return;
+      }
     }
   }
 
@@ -498,7 +513,8 @@ export async function downloadMaterialAsPdf(material: {
   if (!svgText) {
     const svgSourceUrl = material.svgUrl || (storedAsSvg ? material.fileUrl : null);
     if (svgSourceUrl) {
-      const resp = await fetch(svgSourceUrl);
+      const headers = await getAuthHeaders(svgSourceUrl);
+      const resp = await fetch(svgSourceUrl, { headers, credentials: 'include' });
       if (!resp.ok) {
         throw new Error('Nepodařilo se načíst podklad pro stažení PDF.');
       }

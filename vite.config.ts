@@ -17,6 +17,22 @@ export default defineConfig({
   },
   server: {
     hmr: process.env.DISABLE_HMR !== 'true',
+    fs: {
+      deny: [
+        '.env',
+        '.env.*',
+        '*.rules',
+        '**/server/**',
+        '**/.git/**',
+        '**/.agents/**',
+        '**/firebase.json',
+        '**/.firebaserc',
+        '**/package.json',
+        '**/package-lock.json',
+        '**/tsconfig.json',
+        '**/test/**'
+      ],
+    },
     watch: {
       ignored: ['**/*.png', '**/*.jpg', '**/*.jpeg', '**/*.pdf', '**/dist/**', '**/.git/**', '**/*.log', '**/server/**', '**/public/uploads/**', '**/.gemini/**', '**/brain/**'],
     },

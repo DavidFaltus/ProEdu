@@ -43,7 +43,7 @@ import {
   updateStudentAccess,
   deleteStudentByAdmin 
 } from '../../services/studentProgressService';
-import { getAllCourses } from '../../services/courseService';
+import { getAllCourses, enrollStudentInCourse, unenrollStudentFromCourse } from '../../services/courseService';
 import {
   getStudentPracticeTodos,
   updateScheduledTodoDueDate,
@@ -230,10 +230,23 @@ export default function StudentsProgressManager() {
     setIsSavingAccess(true);
 
     try {
-      await updateStudentAccess(targetStudent.uid, {
-        role: accessRole,
-        enrolledCourseIds: accessCourseIds
-      });
+      const prevCourseIds = Array.isArray(targetStudent.enrolledCourseIds) ? targetStudent.enrolledCourseIds : [];
+      const addedCourseIds = accessCourseIds.filter(id => !prevCourseIds.includes(id));
+      const removedCourseIds = prevCourseIds.filter(id => !accessCourseIds.includes(id));
+
+      for (const courseId of addedCourseIds) {
+        await enrollStudentInCourse(courseId, targetStudent.uid);
+      }
+      for (const courseId of removedCourseIds) {
+        await unenrollStudentFromCourse(courseId, targetStudent.uid);
+      }
+
+      if (addedCourseIds.length === 0 && removedCourseIds.length === 0 || accessRole !== (accessCourseIds.length > 0 ? 'course' : targetStudent.role)) {
+        await updateStudentAccess(targetStudent.uid, {
+          role: accessRole,
+          enrolledCourseIds: accessCourseIds
+        });
+      }
 
       // Optimistic update of local state
       setStudents(prev => prev.map(s => {

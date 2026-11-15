@@ -1,7 +1,8 @@
 import { db, auth } from '../lib/firebase';
-import { doc, getDoc, setDoc, updateDoc, deleteDoc, collection, getDocs, query, orderBy, where } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, where } from 'firebase/firestore';
 import { Order, PaymentMethod, BillingAddress, BillingDetails } from '../types';
 import { generateSpaydString, getQrImageUrl } from '../utils/qrPayment';
+import { sanitizeSafeUrl } from '../utils/svgUtils';
 
 export interface CreateOrderParams {
   clientName: string;
@@ -45,14 +46,23 @@ export interface CreateOrderResult {
 async function getAuthToken(): Promise<string> {
   const currentUser = auth.currentUser;
   if (!currentUser) {
-    throw new Error('Pro vytvoření objednávky musíte být přihlášeni.');
+    throw new Error('Pro tuto akci musíte být přihlášeni.');
   }
   return currentUser.getIdToken();
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /**
- * Vytvoří novou objednávku předplatného bleskově přímo ve Firestore
- * a asynchronně notifikuje backend
+ * Vytvoří novou objednávku výhradně přes autorizované serverové API (/api/orders/create).
+ * Cenu a ID objednávky určuje server z katalogu.
  */
 export async function createOrder(params: CreateOrderParams): Promise<CreateOrderResult> {
   const currentUser = auth.currentUser;
@@ -60,128 +70,70 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
     throw new Error('Pro vytvoření objednávky se prosím nejdříve přihlas.');
   }
 
-  const userId = currentUser.uid;
-  const userEmail = currentUser.email || params.invoiceEmail;
-  const amount = params.amount || 99;
-  const planId = params.planId || 'premium-monthly';
+  const token = await currentUser.getIdToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-  // Generování 9místného variabilního symbolu a unikátního ID
-  const variableSymbol = String(Date.now()).slice(-9);
-  const orderId = `ord_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-
-  // Bankovní konfigurace pro SPAYD
-  const bankConfig = {
-    accountNumber: import.meta.env.VITE_BANK_ACCOUNT_NUMBER || '2100000000',
-    bankCode: import.meta.env.VITE_BANK_CODE || '2010',
-    bankName: import.meta.env.VITE_BANK_NAME || 'Fio banka',
-    recipientName: import.meta.env.VITE_BANK_RECIPIENT || 'ProEdu vzdělávání'
-  };
-
-  const paymentMessage = `ProEdu: ${userEmail}`.slice(0, 60);
-  const spaydString = generateSpaydString({
-    accountNumber: bankConfig.accountNumber,
-    bankCode: bankConfig.bankCode,
-    amount,
-    currency: 'CZK',
-    variableSymbol,
-    message: paymentMessage,
-    recipientName: bankConfig.recipientName
-  });
-
-  const qrImageUrl = getQrImageUrl(spaydString, 260);
-
-  const orderData: Order = {
-    id: orderId,
-    userId,
-    userEmail,
-    clientName: params.clientName.trim(),
-    billingAddress: {
-      street: params.billingAddress.street.trim(),
-      city: params.billingAddress.city.trim(),
-      zip: params.billingAddress.zip.trim(),
-      country: params.billingAddress.country || 'Česká republika'
-    },
-    invoiceEmail: params.invoiceEmail.trim(),
-    ...(params.ico?.trim() ? { ico: params.ico.trim().slice(0, 20) } : {}),
-    ...(params.dic?.trim() ? { dic: params.dic.trim().slice(0, 20) } : {}),
-    amount,
-    currency: 'CZK',
-    planId,
-    paymentMethod: params.paymentMethod,
-    status: 'pending',
-    termsAccepted: Boolean(params.termsAccepted),
-    newsletterConsent: Boolean(params.newsletterConsent),
-    variableSymbol,
-    spaydString,
-    createdAt: new Date().toISOString()
-  };
-
-  // 1. Pokus o přímý zápis do Firestore s krátkým timeoutem (aby nikdy nezdržel ani nezablokoval přechod na Krok 3)
+  let response: Response;
   try {
-    await Promise.race([
-      setDoc(doc(db, 'orders', orderId), orderData),
-      new Promise(resolve => setTimeout(resolve, 1500))
-    ]);
-  } catch (firestoreOrderErr) {
-    console.warn('[Order Firestore Client Write Notice]: Používám serverový zápis / dummy režim:', firestoreOrderErr);
-  }
-
-  // 2. Synchronizace se serverem (vytvoření Comgate platby a získání live redirectUrl)
-  let serverResult: Partial<CreateOrderResult> | null = null;
-  try {
-    const token = await currentUser.getIdToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-    const response = await fetch('/api/orders/create', {
+    response = await fetch('/api/orders/create', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`
       },
-      body: JSON.stringify({ ...params, orderId, variableSymbol }),
+      body: JSON.stringify({
+        clientName: params.clientName.trim(),
+        billingAddress: {
+          street: params.billingAddress.street.trim(),
+          city: params.billingAddress.city.trim(),
+          zip: params.billingAddress.zip.trim(),
+          country: params.billingAddress.country || 'Česká republika'
+        },
+        invoiceEmail: params.invoiceEmail.trim(),
+        ...(params.ico?.trim() ? { ico: params.ico.trim().slice(0, 20) } : {}),
+        ...(params.dic?.trim() ? { dic: params.dic.trim().slice(0, 20) } : {}),
+        paymentMethod: params.paymentMethod,
+        termsAccepted: Boolean(params.termsAccepted),
+        newsletterConsent: Boolean(params.newsletterConsent),
+        planId: params.planId || 'premium-monthly'
+      }),
       signal: controller.signal
     });
+  } catch (err: any) {
     clearTimeout(timeoutId);
-    if (response.ok) {
-      serverResult = await response.json().catch(() => null);
+    if (err?.name === 'AbortError') {
+      throw new Error('Vypršel časový limit při vytváření objednávky. Zkus to prosím znovu.');
     }
-  } catch (syncErr) {
-    console.warn('[Order Sync Notice]:', syncErr);
+    throw new Error('Nepodařilo se spojit se serverem pro vytvoření objednávky.');
+  }
+  clearTimeout(timeoutId);
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.order || !(data?.orderId || data?.order?.id)) {
+    throw new Error(data?.error || 'Nepodařilo se vytvořit objednávku na serveru.');
   }
 
-  const result: CreateOrderResult = {
+  const serverOrder: Order = data.order;
+  const orderId: string = data.orderId || serverOrder.id || '';
+
+  return {
     success: true,
     orderId,
-    order: serverResult?.order || orderData,
-    bankDetails: serverResult?.bankDetails || {
-      accountNumber: bankConfig.accountNumber,
-      bankCode: bankConfig.bankCode,
-      bankName: bankConfig.bankName,
-      recipientName: bankConfig.recipientName,
-      amount,
-      currency: 'CZK',
-      variableSymbol,
-      message: paymentMessage,
-      spaydString,
-      qrImageUrl
-    },
-    comgate: serverResult?.comgate || (params.paymentMethod === 'comgate' ? {
-      isSandbox: true,
-      testMode: true,
-      message: 'Platební brána Comgate je nastavena v testovacím režimu (čeká se na zadání klíčů Comgate).'
-    } : undefined)
+    order: { ...serverOrder, id: orderId },
+    ...(data.bankDetails ? { bankDetails: data.bankDetails } : {}),
+    ...(data.comgate ? { comgate: data.comgate } : {})
   };
-
-  return result;
 }
 
 /**
- * Sestaví CreateOrderResult z již existující objednávky (např. při rozkliknutí neuhrazené platby ve Správě předplatného)
+ * Sestaví CreateOrderResult z již existující objednávky (např. při rozkliknutí neuhrazené platby ve Správě předplatného).
+ * Zachovává příznaky live vs sandbox Comgate brány.
  */
 export function buildOrderResultFromOrder(order: Order): CreateOrderResult {
   const orderId = (order as any).orderId || order.id || '';
   const amount = order.amount || 99;
-  const variableSymbol = order.variableSymbol || String(Date.now()).slice(-9);
+  const variableSymbol = order.variableSymbol || '';
   const userEmail = order.invoiceEmail || order.userEmail || '';
 
   const bankConfig = {
@@ -194,17 +146,22 @@ export function buildOrderResultFromOrder(order: Order): CreateOrderResult {
   const paymentMessage = `ProEdu: ${userEmail}`.slice(0, 60);
   const spaydString =
     order.spaydString ||
-    generateSpaydString({
-      accountNumber: bankConfig.accountNumber,
-      bankCode: bankConfig.bankCode,
-      amount,
-      currency: 'CZK',
-      variableSymbol,
-      message: paymentMessage,
-      recipientName: bankConfig.recipientName
-    });
+    (variableSymbol
+      ? generateSpaydString({
+          accountNumber: bankConfig.accountNumber,
+          bankCode: bankConfig.bankCode,
+          amount,
+          currency: 'CZK',
+          variableSymbol,
+          message: paymentMessage,
+          recipientName: bankConfig.recipientName
+        })
+      : '');
 
   const qrImageUrl = getQrImageUrl(spaydString, 260);
+  const safeRedirectUrl = sanitizeSafeUrl(order.comgateRedirectUrl) || undefined;
+  const isLiveComgate = !order.isSandbox && Boolean(safeRedirectUrl);
+  const isSandbox = Boolean(order.isSandbox ?? !isLiveComgate);
 
   return {
     success: true,
@@ -223,58 +180,37 @@ export function buildOrderResultFromOrder(order: Order): CreateOrderResult {
       qrImageUrl
     },
     comgate: {
-      isSandbox: true,
-      testMode: true,
-      message: 'Testovací platební brána'
+      ...(order.comgateTransId ? { transId: order.comgateTransId } : {}),
+      ...(safeRedirectUrl ? { redirectUrl: safeRedirectUrl } : {}),
+      isLive: isLiveComgate,
+      isSandbox,
+      testMode: isSandbox,
+      message: isLiveComgate
+        ? 'Dokonči platbu bezpečně přes platební bránu Comgate.'
+        : 'Testovací platební brána'
     }
   };
 }
 
 /**
- * Simuluje platbu v testovacím (dummy) režimu pro Comgate i QR platbu a ověří přepnutí na Premium v databázi
+ * Simuluje platbu pouze v lokálním vývojovém režimu přes backend sandbox endpoint.
  */
 export async function simulateComgatePayment(orderId: string): Promise<{ success: boolean; message: string }> {
-  const currentUser = auth.currentUser;
-  const nowIso = new Date().toISOString();
-  const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-
-  const premiumPayload = {
-    role: 'premium',
-    subscriptionStatus: 'active',
-    subscriptionPeriodEnd: periodEnd,
-    subscriptionCancelledAt: null,
-    premiumSince: nowIso
-  };
-
-  if (currentUser) {
-    const userDocRef = doc(db, 'users', currentUser.uid);
-
-    // 1. Pokus o přímý klientský zápis do dokumentu uživatele ve Firestore
-    try {
-      await updateDoc(userDocRef, premiumPayload);
-    } catch (clientWriteErr) {
-      console.warn('[Dummy Payment Client Write Fallback]: Používám serverové API pro povýšení role:', clientWriteErr);
-    }
-
-    // 2. Zápis přes serverový dev endpoint (využívá oprávnění učitele/admina v databázi)
-    try {
-      await fetch('/api/dev/set-role', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid: currentUser.uid, ...premiumPayload })
-      });
-    } catch (devErr) {
-      console.warn('[Dummy Payment Dev Set-Role Notice]:', devErr);
-    }
+  if (!import.meta.env.DEV) {
+    throw new Error('Testovací simulace platby není v produkčním prostředí povolena.');
   }
 
-  // 3. Synchronizace se serverovým endpointem objednávky (označení objednávky jako paid + invalidace cache)
-  try {
-    const token = await getAuthToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+  if (!orderId) {
+    throw new Error('Chybí ID objednávky.');
+  }
 
-    await fetch('/api/payments/comgate/sandbox-simulate-pay', {
+  const token = await getAuthToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  let response: Response;
+  try {
+    response = await fetch('/api/payments/comgate/sandbox-simulate-pay', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -283,41 +219,22 @@ export async function simulateComgatePayment(orderId: string): Promise<{ success
       body: JSON.stringify({ orderId }),
       signal: controller.signal
     });
+  } catch (err: any) {
     clearTimeout(timeoutId);
-  } catch (err) {
-    console.warn('[Dummy Payment Notice]: Server endpoint unavailable, using Firestore state:', err);
+    throw new Error(err?.name === 'AbortError'
+      ? 'Vypršel časový limit testovací platby.'
+      : 'Nepodařilo se spojit se serverem pro potvrzení platby.');
   }
+  clearTimeout(timeoutId);
 
-  // 4. Počkáme na potvrzení přímo z databáze Firestore, že uživatel má roli 'premium'
-  if (currentUser) {
-    const userDocRef = doc(db, 'users', currentUser.uid);
-    for (let attempt = 0; attempt < 5; attempt++) {
-      try {
-        const snap = await getDoc(userDocRef);
-        if (snap.exists()) {
-          const dbData = snap.data();
-          if (dbData.role === 'premium') {
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('proedu_dev_role_override', 'premium');
-              localStorage.setItem('proedu_cached_profile', JSON.stringify({ ...dbData, ...premiumPayload }));
-            }
-            break;
-          }
-        }
-      } catch {
-        // Ignorujeme dílčí chybu čtení při ověřování
-      }
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('proedu_dev_role_override', 'premium');
-    }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.ok && !data?.success) {
+    throw new Error(data?.error || 'Testovací simulaci platby se nepodařilo potvrdit.');
   }
 
   return {
     success: true,
-    message: '🎉 Dummy platba byla úspěšně potvrzena! Tvůj účet je nyní přepnut na ProEducator Premium.'
+    message: data.message || '🎉 Testovací platba byla úspěšně potvrzena! Tvůj účet je nyní přepnut na ProEducator Premium.'
   };
 }
 
@@ -326,17 +243,6 @@ export async function simulateComgatePayment(orderId: string): Promise<{ success
  */
 export async function getAllOrders(): Promise<Order[]> {
   try {
-    const collRef = collection(db, 'orders');
-    const q = query(collRef, orderBy('createdAt', 'desc'));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      return snap.docs.map(d => ({ id: d.id, ...(d.data() as Order) }));
-    }
-  } catch (firestoreErr) {
-    console.warn('[Orders Firestore Query]: Fallback na serverové API:', firestoreErr);
-  }
-
-  try {
     const token = await getAuthToken();
     const response = await fetch('/api/orders/all', {
       headers: {
@@ -344,12 +250,24 @@ export async function getAllOrders(): Promise<Order[]> {
       }
     });
 
-    const data = await response.json();
-    if (response.ok && data.orders) {
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && Array.isArray(data.orders)) {
       return data.orders;
     }
+    if (!response.ok) {
+      throw new Error(data.error || 'Nepodařilo se načíst objednávky.');
+    }
   } catch (apiErr) {
-    console.warn('[Orders API Query]:', apiErr);
+    console.warn('[Orders API Query]: Fallback na Firestore čtení:', apiErr);
+  }
+
+  try {
+    const collRef = collection(db, 'orders');
+    const q = query(collRef, orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...(d.data() as Order) }));
+  } catch (firestoreErr) {
+    console.warn('[Orders Firestore Query]:', firestoreErr);
   }
 
   return [];
@@ -361,7 +279,7 @@ export async function getAllOrders(): Promise<Order[]> {
 export async function confirmOrderManual(orderId: string): Promise<{ success: boolean; message: string }> {
   const token = await getAuthToken();
 
-  const response = await fetch(`/api/orders/${orderId}/confirm-manual`, {
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/confirm-manual`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -369,7 +287,7 @@ export async function confirmOrderManual(orderId: string): Promise<{ success: bo
     }
   });
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || 'Nepodařilo se potvrdit platbu objednávky.');
   }
@@ -378,46 +296,29 @@ export async function confirmOrderManual(orderId: string): Promise<{ success: bo
 }
 
 /**
- * Smaže jednotlivou objednávku v administraci (akce učitele/admina)
+ * Smaže neuhrazenou objednávku v administraci výhradně přes backend (chrání účetní stopu).
  */
 export async function deleteOrder(orderId: string): Promise<{ success: boolean; message: string }> {
   if (!orderId) {
     throw new Error('Chybí ID objednávky.');
   }
 
-  let deletedDirectly = false;
-  try {
-    await deleteDoc(doc(db, 'orders', orderId));
-    deletedDirectly = true;
-  } catch (firestoreErr) {
-    console.warn('[Delete Order Firestore Fallback]:', firestoreErr);
-  }
+  const token = await getAuthToken();
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
 
-  try {
-    const token = await getAuthToken();
-    const response = await fetch(`/api/orders/${orderId}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    if (response.ok) {
-      const data = await response.json();
-      return data;
-    }
-    if (!deletedDirectly) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || 'Nepodařilo se smazat objednávku.');
-    }
-  } catch (apiErr: any) {
-    if (!deletedDirectly) {
-      throw new Error(apiErr.message || 'Nepodařilo se smazat objednávku.');
-    }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se smazat objednávku.');
   }
 
   return {
     success: true,
-    message: 'Objednávka byla úspěšně smazána.'
+    message: data.message || 'Objednávka byla úspěšně smazána.'
   };
 }
 
@@ -429,38 +330,36 @@ export async function getMyOrders(): Promise<Order[]> {
   if (!currentUser) return [];
 
   try {
-    const collRef = collection(db, 'orders');
-    const q = query(collRef, where('userId', '==', currentUser.uid));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const orders = snap.docs.map(d => ({ id: d.id, ...(d.data() as Order) }));
-      orders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      return orders;
-    }
-  } catch (firestoreErr) {
-    console.warn('[My Orders Firestore Query]: Fallback na serverové API:', firestoreErr);
-  }
-
-  try {
     const token = await getAuthToken();
     const response = await fetch('/api/orders/my', {
       headers: {
         Authorization: `Bearer ${token}`
       }
     });
-    const data = await response.json();
-    if (response.ok && data.orders) {
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && Array.isArray(data.orders)) {
       return data.orders;
     }
   } catch (apiErr) {
-    console.warn('[My Orders API Query]:', apiErr);
+    console.warn('[My Orders API Query]: Fallback na Firestore čtení:', apiErr);
+  }
+
+  try {
+    const collRef = collection(db, 'orders');
+    const q = query(collRef, where('userId', '==', currentUser.uid));
+    const snap = await getDocs(q);
+    const orders = snap.docs.map(d => ({ id: d.id, ...(d.data() as Order) }));
+    orders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    return orders;
+  } catch (firestoreErr) {
+    console.warn('[My Orders Firestore Query]:', firestoreErr);
   }
 
   return [];
 }
 
 /**
- * Zruší předplatné uživatele (ke konci období nebo okamžitě v testovacím režimu)
+ * Zruší předplatné uživatele výhradně přes serverový endpoint /api/subscription/cancel.
  */
 export async function cancelSubscription(params: {
   reason: string;
@@ -473,198 +372,81 @@ export async function cancelSubscription(params: {
   subscriptionPeriodEnd: string | null;
   message: string;
 }> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    throw new Error('Pro správu předplatného se prosím přihlas.');
-  }
-
+  const token = await getAuthToken();
   const safeReason = (params.reason || 'Bez udání důvodu').trim().slice(0, 500);
-  const nowIso = new Date().toISOString();
-  let finalPeriodEnd = params.currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  let finalMessage = params.immediate
-    ? 'Předplatné bylo okamžitě ukončeno a účet byl přepnut na tarif Free.'
-    : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.';
 
-  // 1. Synchronizace se serverem (primární zdroj pravdy: určí přesný konec období a zruší Comgate rekurentní obnovu)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  let res: Response;
   try {
-    const token = await currentUser.getIdToken();
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3500);
-    const res = await fetch('/api/subscription/cancel', {
+    res = await fetch('/api/subscription/cancel', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + token
+        Authorization: `Bearer ${token}`
       },
       body: JSON.stringify({ reason: safeReason, immediate: Boolean(params.immediate) }),
       signal: controller.signal
     });
+  } catch (err: any) {
     clearTimeout(timeoutId);
-    if (res.ok) {
-      const data = await res.json();
-      if (data.subscriptionPeriodEnd) {
-        finalPeriodEnd = data.subscriptionPeriodEnd;
-      }
-      if (data.message) {
-        finalMessage = data.message;
-      }
-    }
-  } catch (apiErr) {
-    console.warn('[Cancel Subscription API Notice]:', apiErr);
+    throw new Error(err?.name === 'AbortError'
+      ? 'Vypršel časový limit při rušení předplatného.'
+      : 'Nepodařilo se spojit se serverem pro zrušení předplatného.');
   }
+  clearTimeout(timeoutId);
 
-  const updatePayload: Record<string, any> = params.immediate
-    ? {
-        role: 'free',
-        subscriptionStatus: 'inactive',
-        subscriptionCancelledAt: nowIso,
-        subscriptionCancelReason: safeReason,
-        subscriptionExpiredAt: nowIso
-      }
-    : {
-        role: 'premium',
-        subscriptionStatus: 'cancelled_at_period_end',
-        subscriptionCancelledAt: nowIso,
-        subscriptionCancelReason: safeReason,
-        subscriptionPeriodEnd: finalPeriodEnd
-      };
-
-  const userDocRef = doc(db, 'users', currentUser.uid);
-
-  // 2. Pokus o zápis do klientského Firestore
-  try {
-    await updateDoc(userDocRef, updatePayload);
-  } catch (clientWriteErr) {
-    console.warn('[Cancel Subscription Client Write Fallback]:', clientWriteErr);
-  }
-
-  // 3. Zápis přes serverový dev endpoint (pro dev prostředí bez cloud functions)
-  try {
-    await fetch('/api/dev/set-role', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        uid: currentUser.uid,
-        role: params.immediate ? 'free' : 'premium',
-        ...updatePayload
-      })
-    });
-  } catch (devErr) {
-    console.warn('[Cancel Subscription Dev Set-Role Notice]:', devErr);
-  }
-
-  // 4. Aktualizace lokálního úložiště
-  if (typeof window !== 'undefined') {
-    if (params.immediate) {
-      localStorage.setItem('proedu_dev_role_override', 'free');
-    } else {
-      if (localStorage.getItem('proedu_dev_role_override') === 'free') {
-        localStorage.removeItem('proedu_dev_role_override');
-      }
-    }
-    const cachedStr = localStorage.getItem('proedu_cached_profile');
-    if (cachedStr) {
-      try {
-        const cached = JSON.parse(cachedStr);
-        Object.assign(cached, updatePayload);
-        localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
-      } catch {}
-    }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Nepodařilo se zrušit předplatné.');
   }
 
   return {
     success: true,
-    immediate: Boolean(params.immediate),
-    subscriptionStatus: params.immediate ? 'inactive' : 'cancelled_at_period_end',
-    subscriptionPeriodEnd: params.immediate ? null : finalPeriodEnd,
-    message: finalMessage
+    immediate: Boolean(data.immediate ?? params.immediate),
+    subscriptionStatus: data.subscriptionStatus || (params.immediate ? 'inactive' : 'cancelled_at_period_end'),
+    subscriptionPeriodEnd: data.subscriptionPeriodEnd ?? (params.immediate ? null : params.currentPeriodEnd ?? null),
+    message:
+      data.message ||
+      (params.immediate
+        ? 'Předplatné bylo okamžitě ukončeno.'
+        : 'Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou až do konce zaplaceného období.')
   };
 }
 
 /**
- * Obnoví zrušené předplatné před vypršením zaplaceného období
+ * Obnoví zrušené předplatné před vypršením zaplaceného období výhradně přes server.
  */
-export async function reactivateSubscription(currentPeriodEnd?: string): Promise<{
+export async function reactivateSubscription(_currentPeriodEnd?: string): Promise<{
   success: boolean;
   subscriptionStatus: 'active';
   subscriptionPeriodEnd: string;
   message: string;
 }> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    throw new Error('Pro obnovení předplatného se prosím přihlas.');
-  }
-
-  let finalPeriodEnd = currentPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  let finalMessage = 'Předplatné ProEducator Premium bylo úspěšně obnoveno!';
-
-  try {
-    const token = await currentUser.getIdToken();
-    const res = await fetch('/api/subscription/reactivate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + token
-      }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.subscriptionPeriodEnd) {
-        finalPeriodEnd = data.subscriptionPeriodEnd;
-      }
-      if (data.message) {
-        finalMessage = data.message;
-      }
+  const token = await getAuthToken();
+  const res = await fetch('/api/subscription/reactivate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
     }
-  } catch (err) {
-    console.warn('[reactivateSubscription API notice]:', err);
-  }
+  });
 
-  const updatePayload = {
-    role: 'premium',
-    subscriptionStatus: 'active',
-    subscriptionCancelledAt: null,
-    subscriptionCancelReason: null,
-    subscriptionPeriodEnd: finalPeriodEnd
-  };
-
-  try {
-    await updateDoc(doc(db, 'users', currentUser.uid), updatePayload);
-  } catch (clientWriteErr) {
-    console.warn('[Reactivate Subscription Client Write Fallback]:', clientWriteErr);
-  }
-
-  try {
-    await fetch('/api/dev/set-role', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uid: currentUser.uid, ...updatePayload })
-    });
-  } catch {}
-
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('proedu_dev_role_override');
-    const cachedStr = localStorage.getItem('proedu_cached_profile');
-    if (cachedStr) {
-      try {
-        const cached = JSON.parse(cachedStr);
-        Object.assign(cached, updatePayload);
-        localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
-      } catch {}
-    }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Předplatné nelze obnovit. Pokud již skončilo, založ prosím novou objednávku.');
   }
 
   return {
     success: true,
     subscriptionStatus: 'active',
-    subscriptionPeriodEnd: finalPeriodEnd,
-    message: finalMessage
+    subscriptionPeriodEnd: data.subscriptionPeriodEnd || '',
+    message: data.message || 'Předplatné ProEducator Premium bylo úspěšně obnoveno!'
   };
 }
 
 /**
- * Ověří na serveru, zda placené období předplatného již neuplynulo.
- * Pokud uplynulo, server a databáze automaticky přepnou účet na Free.
+ * Ověří na serveru, zda placené období předplatného již neuplynulo (fail-closed při chybě serveru).
  */
 export async function checkSubscriptionExpiry(): Promise<{
   expired: boolean;
@@ -672,61 +454,41 @@ export async function checkSubscriptionExpiry(): Promise<{
   subscriptionStatus: string;
   message?: string;
 }> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    return { expired: false, role: 'free', subscriptionStatus: 'inactive' };
-  }
-
-  try {
-    const token = await currentUser.getIdToken();
-    const res = await fetch('/api/subscription/check-expiry', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer ' + token
-      }
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.expired && typeof window !== 'undefined') {
-        localStorage.removeItem('proedu_dev_role_override');
-        const cachedStr = localStorage.getItem('proedu_cached_profile');
-        if (cachedStr) {
-          try {
-            const cached = JSON.parse(cachedStr);
-            cached.role = 'free';
-            cached.subscriptionStatus = 'inactive';
-            localStorage.setItem('proedu_cached_profile', JSON.stringify(cached));
-          } catch {}
-        }
-      }
-      return data;
+  const token = await getAuthToken();
+  const res = await fetch('/api/subscription/check-expiry', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
     }
-  } catch (err) {
-    console.warn('[checkSubscriptionExpiry error]:', err);
+  });
+
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Nepodařilo se ověřit platnost předplatného na serveru.');
   }
 
-  return { expired: false, role: 'free', subscriptionStatus: 'inactive' };
+  return data;
 }
 
 /**
- * Uloží fakturační údaje (pro iÚčto) a preferovanou platební metodu (Comgate / QR)
+ * Uloží fakturační údaje (pro iÚčto) a preferovanou platební metodu přes autorizované serverové API.
  */
 export async function saveBillingAndPaymentSettings(params: {
   billingDetails?: BillingDetails;
   preferredPaymentMethod?: PaymentMethod;
 }): Promise<{ success: boolean; message: string }> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) {
-    throw new Error('Pro uložení nastavení se prosím přihlas.');
-  }
+  const token = await getAuthToken();
+  const payload: {
+    billingDetails?: BillingDetails;
+    preferredPaymentMethod?: PaymentMethod;
+  } = {};
 
-  const updatePayload: Record<string, any> = {};
   if (params.preferredPaymentMethod) {
-    updatePayload.preferredPaymentMethod = params.preferredPaymentMethod;
+    payload.preferredPaymentMethod = params.preferredPaymentMethod;
   }
   if (params.billingDetails) {
-    updatePayload.billingDetails = {
+    payload.billingDetails = {
       clientName: (params.billingDetails.clientName || '').trim().slice(0, 128),
       invoiceEmail: (params.billingDetails.invoiceEmail || '').trim().slice(0, 256),
       street: (params.billingDetails.street || '').trim().slice(0, 150),
@@ -738,35 +500,29 @@ export async function saveBillingAndPaymentSettings(params: {
     };
   }
 
-  try {
-    await updateDoc(doc(db, 'users', currentUser.uid), updatePayload);
-  } catch (clientWriteErr) {
-    console.warn('[Save Billing Client Write Fallback]:', clientWriteErr);
-  }
+  const response = await fetch('/api/subscription/billing', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
 
-  try {
-    const token = await currentUser.getIdToken();
-    await fetch('/api/subscription/billing', {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(params)
-    });
-  } catch {
-    // Tichý fallback
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || 'Nepodařilo se uložit fakturační údaje.');
   }
 
   return {
     success: true,
-    message: 'Fakturační a platební údaje byly úspěšně uloženy.'
+    message: data.message || 'Fakturační a platební údaje byly úspěšně uloženy.'
   };
 }
 
 /**
  * Stáhne nebo otevře PDF fakturu z iÚčta přes autorizovaný backend proxy.
- * Pokud objednávka ještě nemá iÚčto doklad (např. starší testovací objednávka), otevře HTML náhled.
+ * Pokud objednávka ještě nemá iÚčto doklad, otevře zabezpečený HTML náhled.
  */
 export async function downloadOrderInvoicePdf(order: Order): Promise<void> {
   const orderId = (order as any).orderId || order.id;
@@ -871,18 +627,40 @@ export async function getIuctoStatus(): Promise<{
 }
 
 /**
- * Otevře tisknutelný náhled faktury / daňového dokladu (připraveno pro iÚčto PDF)
+ * Otevře tisknutelný náhled faktury / daňového dokladu s plným HTML escapováním všech vstupů.
  */
 export function openIuctoInvoicePreview(order: Order) {
-  if (order.iuctoPdfUrl) {
-    window.open(order.iuctoPdfUrl, '_blank', 'noopener,noreferrer');
+  const safePdfUrl = sanitizeSafeUrl(order.iuctoPdfUrl);
+  if (safePdfUrl) {
+    window.open(safePdfUrl, '_blank', 'noopener,noreferrer');
     return;
   }
 
-  const invoiceNum = order.iuctoInvoiceNumber || `FV-${new Date(order.createdAt || Date.now()).getFullYear()}-${order.variableSymbol || '0001'}`;
-  const issueDate = new Date(order.paidAt || order.createdAt || Date.now()).toLocaleDateString('cs-CZ');
-  const planTitle = order.planId === 'premium-monthly' ? 'Předplatné ProEducator Premium (měsíční tarif)' : order.planId;
-  const paymentLabel = order.paymentMethod === 'comgate' ? 'Platební brána Comgate (online karta)' : 'Bankovní převod (QR platba)';
+  const invoiceNum = escapeHtml(
+    order.iuctoInvoiceNumber || `FV-${new Date(order.createdAt || Date.now()).getFullYear()}-${order.variableSymbol || '0001'}`
+  );
+  const issueDate = escapeHtml(new Date(order.paidAt || order.createdAt || Date.now()).toLocaleDateString('cs-CZ'));
+  const planTitle = escapeHtml(
+    order.planId === 'premium-monthly' ? 'Předplatné ProEducator Premium (měsíční tarif)' : order.planId
+  );
+  const paymentLabel = escapeHtml(
+    order.paymentMethod === 'comgate' ? 'Platební brána Comgate (online karta)' : 'Bankovní převod (QR platba)'
+  );
+  const safeVarSym = escapeHtml(order.variableSymbol || '-');
+  const safeClientName = escapeHtml(order.clientName || 'Zákazník');
+  const safeStreet = escapeHtml(order.billingAddress?.street || '');
+  const safeZip = escapeHtml(order.billingAddress?.zip || '');
+  const safeCity = escapeHtml(order.billingAddress?.city || '');
+  const safeEmail = escapeHtml(order.invoiceEmail || order.userEmail || '');
+  const safeAmount = escapeHtml(order.amount || 99);
+  const safeCurrency = escapeHtml(order.currency || 'Kč');
+  const statusLabel = escapeHtml(
+    order.status === 'paid'
+      ? 'UHRAZENO'
+      : order.status === 'refunded'
+        ? 'REFUNDOVÁNO'
+        : 'ČEKÁ NA ÚHRADU'
+  );
 
   const html = `<!DOCTYPE html>
 <html lang="cs">
@@ -917,7 +695,7 @@ export function openIuctoInvoicePreview(order: Order) {
       <div style="text-align:right;">
         <div style="font-size:12px;color:#6B7280;font-weight:700;text-transform:uppercase;">Faktura č.</div>
         <div style="font-size:22px;font-weight:900;">${invoiceNum}</div>
-        <div style="font-size:12px;color:#6B7280;margin-top:4px;">Variabilní symbol: <strong>${order.variableSymbol || '-'}</strong></div>
+        <div style="font-size:12px;color:#6B7280;margin-top:4px;">Variabilní symbol: <strong>${safeVarSym}</strong></div>
       </div>
     </div>
     <div class="grid">
@@ -929,10 +707,10 @@ export function openIuctoInvoicePreview(order: Order) {
       </div>
       <div class="box">
         <h4>Odběratel</h4>
-        <p><strong>${order.clientName || 'Zákazník'}</strong></p>
-        <p>${order.billingAddress?.street || ''}</p>
-        <p>${order.billingAddress?.zip || ''} ${order.billingAddress?.city || ''}</p>
-        <p>E-mail: ${order.invoiceEmail || order.userEmail || ''}</p>
+        <p><strong>${safeClientName}</strong></p>
+        <p>${safeStreet}</p>
+        <p>${safeZip} ${safeCity}</p>
+        <p>E-mail: ${safeEmail}</p>
       </div>
     </div>
     <div class="grid" style="margin-bottom:16px;">
@@ -941,7 +719,7 @@ export function openIuctoInvoicePreview(order: Order) {
         <div style="font-size:13px;color:#6B7280;margin-top:4px;">Způsob úhrady: <strong>${paymentLabel}</strong></div>
       </div>
       <div style="text-align:right;">
-        <div style="font-size:13px;color:#059669;font-weight:800;">Stav: ${order.status === 'paid' ? 'UHRAZENO' : 'ČEKÁ NA ÚHRADU'}</div>
+        <div style="font-size:13px;color:#059669;font-weight:800;">Stav: ${statusLabel}</div>
       </div>
     </div>
     <table>
@@ -956,11 +734,11 @@ export function openIuctoInvoicePreview(order: Order) {
         <tr>
           <td>${planTitle}</td>
           <td>1 ks</td>
-          <td style="text-align:right;">${order.amount || 99} ${order.currency || 'Kč'}</td>
+          <td style="text-align:right;">${safeAmount} ${safeCurrency}</td>
         </tr>
       </tbody>
     </table>
-    <div class="total">Celkem k úhradě: ${order.amount || 99} ${order.currency || 'Kč'}</div>
+    <div class="total">Celkem k úhradě: ${safeAmount} ${safeCurrency}</div>
     <div class="actions">
       <button class="btn" onclick="window.print()">Vytisknout / Uložit jako PDF</button>
     </div>
@@ -968,10 +746,8 @@ export function openIuctoInvoicePreview(order: Order) {
 </body>
 </html>`;
 
-  const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-  }
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blobUrl = URL.createObjectURL(blob);
+  window.open(blobUrl, '_blank', 'noopener,noreferrer');
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
 }
-

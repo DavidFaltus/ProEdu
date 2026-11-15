@@ -27,7 +27,7 @@ import StudentLiveLessonsSection from '../components/StudentLiveLessonsSection';
 import JokerZoneSection from '../components/JokerZoneSection';
 import TeacherInquiriesOverview from '../components/admin/TeacherInquiriesOverview';
 import TeacherLessonsOverview from '../components/admin/TeacherLessonsOverview';
-import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons } from '../services/liveLessonService';
+import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons, subscribeToStudentTodos } from '../services/liveLessonService';
 import { LiveLesson, PracticeSubtopic } from '../types';
 import { getJoinedLessonIds, markLessonAsJoined } from '../lib/liveLessonUtils';
 import { 
@@ -40,8 +40,19 @@ import { db } from '../lib/firebase';
 import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
 import { toast } from 'sonner';
 import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
+import { fetchPracticeCatalog } from '../services/practiceService';
 import { trackSectionClick } from '../services/analyticsService';
 import { toCzechVocative } from '../utils/czechVocative';
+
+const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
 
 const MOTIVATIONAL_QUOTES = [
   { text: "Učení je jediná věc, kterou se mysl nikdy nevyčerpá, nikdy se jí nebojí a nikdy nelituje.", author: "Leonardo da Vinci" },
@@ -87,7 +98,7 @@ const TEACHER_HEADLINE_TEMPLATES = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile, isPremium, jokers, openAuthModal } = useAuth();
+  const { user, profile, isPremium, isCourseUser, isTeacher, enrolledCourseIds, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -96,10 +107,10 @@ export default function StudentDashboard() {
 
   // Kontrola vyčerpání limitu žolíků i videí pro dnešní den
   const isGuest = !user;
-  const isTeacher = profile?.role === 'teacher';
+  const hasPaidOrTeacherAccess = isPremium || isCourseUser || isTeacher;
   const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
   const isVideoLimitReached = videosWatchedToday >= 3;
-  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
+  const isOutOfJokersAndVideos = !hasPaidOrTeacherAccess && jokers <= 0 && isVideoLimitReached;
 
   // Zpracování návratu po redirectu z vyčerpaného procvičování
   useEffect(() => {
@@ -130,7 +141,7 @@ export default function StudentDashboard() {
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
-  const isFreeOrGuest = (!user && !profile) || profile?.role === 'free' || (!isPremium && !isTeacher);
+  const isFreeOrGuest = !user || !hasPaidOrTeacherAccess;
   const canViewTutorAndLessons = !isFreeOrGuest;
 
   const [isPaywallOpen, setIsPaywallOpen] = useState(false);
@@ -144,6 +155,7 @@ export default function StudentDashboard() {
   const [joinedLessonIds, setJoinedLessonIds] = useState<string[]>(() => getJoinedLessonIds());
   const [todos, setTodos] = useState<any[]>([]);
   const [syncingLessonId, setSyncingLessonId] = useState<string | null>(null);
+  const [firstDemoSubtopicId, setFirstDemoSubtopicId] = useState<string | null>(null);
 
   // Personalized practice recommendations
   const [recommendedItems, setRecommendedItems] = useState<RecommendedPracticeItem[]>([]);
@@ -154,9 +166,13 @@ export default function StudentDashboard() {
     async function loadRecommendations() {
       setLoadingRecommendations(true);
       try {
-        const items = await getPersonalizedRecommendations(user?.uid, profile?.focusAreas || []);
+        const [items, catalog] = await Promise.all([
+          getPersonalizedRecommendations(user?.uid, profile?.focusAreas || []),
+          !user?.uid ? fetchPracticeCatalog().catch(() => null) : Promise.resolve(null),
+        ]);
         if (isMounted) {
           setRecommendedItems(items);
+          setFirstDemoSubtopicId(catalog?.firstDemoSubtopicId ?? null);
         }
       } catch (err) {
         console.error('Failed to load personalized recommendations:', err);
@@ -172,24 +188,14 @@ export default function StudentDashboard() {
     };
   }, [user?.uid, profile?.focusAreas]);
 
-  // Subscribe to student's todos in Firestore
+  // Subscribe to student's todos in Firestore (shared multiplexed listener)
   useEffect(() => {
     if (!user?.uid) return;
-    const qTodos = query(
-      collection(db, 'todos'),
-      where('studentId', '==', user.uid),
-      limit(300)
+    return subscribeToStudentTodos(
+      user.uid,
+      (items) => setTodos(items),
+      (err) => console.error('Error fetching student todos:', err)
     );
-    const unsub = onSnapshot(
-      qTodos,
-      (snap) => {
-        setTodos(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-      },
-      (err) => {
-        console.error('Error fetching student todos:', err);
-      }
-    );
-    return () => unsub();
   }, [user?.uid]);
 
   useEffect(() => {
@@ -207,9 +213,14 @@ export default function StudentDashboard() {
   }, []);
 
   const handleJoinLesson = (lesson: LiveLesson) => {
+    const safeMeetUrl = getSafeExternalUrl(lesson.meetUrl);
+    if (!safeMeetUrl) {
+      toast.error('Neplatný odkaz na Google Meet lekci.');
+      return;
+    }
     markLessonAsJoined(lesson.id);
     setJoinedLessonIds(prev => prev.includes(lesson.id) ? prev : [...prev, lesson.id]);
-    window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer');
+    window.open(safeMeetUrl, '_blank', 'noopener,noreferrer');
     toast.success(`Google Meet pro lekci "${lesson.title}" byl otevřen v novém okně.`);
   };
 
@@ -232,7 +243,10 @@ export default function StudentDashboard() {
       } catch (googleErr: any) {
         console.warn('Direct Google Calendar OAuth failed, opening Web URL fallback:', googleErr);
         // Fallback: open prefilled Google Calendar web URL
-        window.open(getGoogleCalendarWebUrl(lesson), '_blank');
+        const safeCalendarUrl = getSafeExternalUrl(getGoogleCalendarWebUrl(lesson));
+        if (safeCalendarUrl) {
+          window.open(safeCalendarUrl, '_blank', 'noopener,noreferrer');
+        }
         toast.success(`Lekce byla uložena do kalendáře v aplikaci a otevřena v Google Kalendáři pro uložení.`);
       }
     } catch (err: any) {
@@ -272,11 +286,12 @@ export default function StudentDashboard() {
           (err) => {
             console.error('Failed to load student live lessons:', err);
             setLoadingLessons(false);
-          }
+          },
+          enrolledCourseIds
         );
 
     return () => unsubscribe();
-  }, [user?.uid, isTeacher, canViewTutorAndLessons]);
+  }, [user?.uid, isTeacher, canViewTutorAndLessons, enrolledCourseIds]);
 
   const loadInquiries = useCallback(async () => {
     if (!user?.uid || !canViewTutorAndLessons) {
@@ -439,7 +454,7 @@ export default function StudentDashboard() {
                   >
                     <StarPinkIcon size={13} />
                     <span>Statistiky</span>
-                    {!isPremium && <Lock size={11} className="text-amber-700" />}
+                    {!hasPaidOrTeacherAccess && <Lock size={11} className="text-amber-700" />}
                   </Button>
 
                   <Button
@@ -479,8 +494,8 @@ export default function StudentDashboard() {
               ) : (
                 <div className="space-y-2.5">
                   {recommendedItems.slice(0, 3).map((item, index) => {
-                    const isLockedForGuest = !user && index === 2;
-                    const isStudyLocked = !isPremium;
+                    const isLockedForGuest = !user && (firstDemoSubtopicId ? item.subtopicId !== firstDemoSubtopicId : index > 0);
+                    const isStudyLocked = !hasPaidOrTeacherAccess;
 
                     const badgeStyles = {
                       warning: 'bg-rose-100 text-rose-800 border-rose-200',
@@ -573,7 +588,7 @@ export default function StudentDashboard() {
                               <span className={cn("text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded", item.tagClass)}>
                                 {item.subject}
                               </span>
-                              {!user && index < 2 ? (
+                              {!user && !isLockedForGuest ? (
                                 <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
                                   Vyzkoušet zdarma
                                 </span>
@@ -618,7 +633,7 @@ export default function StudentDashboard() {
                             className="rounded-xl font-bold text-xs h-9 px-2.5 flex items-center justify-center gap-1 cursor-pointer bg-white border-gray-200 hover:border-brand-blue text-gray-700"
                           >
                             <Calendar size={13} className="text-brand-blue" />
-                            {!isPremium && (
+                            {!hasPaidOrTeacherAccess && (
                               <span className="text-[8px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.2 rounded">
                                 PRO
                               </span>

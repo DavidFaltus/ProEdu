@@ -13,6 +13,7 @@ import PdfSvgDropzone from './PdfSvgDropzone';
 import { 
   getAllMaterials, saveMaterial, deleteMaterial, getMaterialById,
   updateMaterialViaApi, fetchMaterialStatus, mapDocToMaterial,
+  fetchProtectedMaterialResource,
   ExistingMaterialItem, PREDEFINED_SUBJECTS, LEARNING_SHEETS_COLLECTION 
 } from '../../services/practiceService';
 import { sanitizeSvg } from '../../utils/svgUtils';
@@ -21,6 +22,85 @@ import { auth, db } from '../../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { StudyStep } from '../../types';
 import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
+
+function ProtectedAdminThumbnail({ material }: { material: ExistingMaterialItem }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [svgMarkup, setSvgMarkup] = useState<string | null>(material.svgContent || null);
+  const sourceUrl = material.thumbnailUrl || material.svgUrl || null;
+
+  useEffect(() => {
+    setSvgMarkup(material.svgContent || null);
+    if (!sourceUrl || material.svgContent) {
+      setBlobUrl(null);
+      return;
+    }
+    if (sourceUrl.startsWith('data:') || sourceUrl.startsWith('blob:')) {
+      setBlobUrl(sourceUrl);
+      return;
+    }
+
+    let cancelled = false;
+    let createdBlob: string | undefined;
+
+    fetchProtectedMaterialResource(sourceUrl)
+      .then((res) => {
+        if (cancelled) {
+          if (res.blobUrl) URL.revokeObjectURL(res.blobUrl);
+          return;
+        }
+        if (res.svgMarkup) {
+          setSvgMarkup(res.svgMarkup);
+        }
+        if (res.blobUrl) {
+          createdBlob = res.blobUrl;
+          setBlobUrl(res.blobUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBlobUrl(null);
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdBlob) URL.revokeObjectURL(createdBlob);
+    };
+  }, [material.id, material.svgContent, sourceUrl]);
+
+  if (svgMarkup) {
+    return (
+      <div
+        className="w-full h-full flex items-center justify-center p-2 overflow-hidden pointer-events-none group-hover/thumb:scale-105 transition-transform duration-300 [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:h-auto [&>svg]:w-auto"
+        dangerouslySetInnerHTML={{ __html: sanitizeSvg(svgMarkup) }}
+      />
+    );
+  }
+
+  if (blobUrl) {
+    return (
+      <img
+        src={blobUrl}
+        alt={material.title}
+        className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-300"
+        loading="lazy"
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center gap-1.5 text-gray-400 p-4 text-center">
+      <div
+        className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs ${
+          material.subject === 'Matematika' ? 'bg-teal-50 text-teal-600' : 'bg-rose-50 text-rose-600'
+        }`}
+      >
+        <BookCyanIcon size={20} />
+      </div>
+      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+        Grafický list
+      </span>
+    </div>
+  );
+}
 
 interface MaterialsManagerProps {
   userId?: string;
@@ -73,7 +153,67 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
   // Preview Modal state
   const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
+  const [previewResource, setPreviewResource] = useState<{
+    blobUrl?: string;
+    svgMarkup?: string;
+    loading: boolean;
+    error?: string;
+  }>({ loading: false });
   const [zoomLevel, setZoomLevel] = useState<number>(1);
+
+  useEffect(() => {
+    if (!previewMaterial) {
+      setPreviewResource({ loading: false });
+      return;
+    }
+    const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
+    if (!fileSrc) {
+      setPreviewResource({
+        loading: false,
+        svgMarkup: previewMaterial.svgContent ? sanitizeSvg(previewMaterial.svgContent) : undefined,
+      });
+      return;
+    }
+    if (fileSrc.startsWith('data:') || fileSrc.startsWith('blob:')) {
+      setPreviewResource({
+        loading: false,
+        blobUrl: fileSrc,
+        svgMarkup: previewMaterial.svgContent ? sanitizeSvg(previewMaterial.svgContent) : undefined,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    let createdBlobUrl: string | undefined;
+    setPreviewResource({ loading: true });
+
+    fetchProtectedMaterialResource(fileSrc)
+      .then((res) => {
+        if (cancelled) {
+          if (res.blobUrl) URL.revokeObjectURL(res.blobUrl);
+          return;
+        }
+        createdBlobUrl = res.blobUrl;
+        setPreviewResource({
+          loading: false,
+          blobUrl: res.blobUrl,
+          svgMarkup: res.svgMarkup,
+        });
+      })
+      .catch((err: any) => {
+        if (!cancelled) {
+          setPreviewResource({
+            loading: false,
+            error: err?.message || 'Nepodařilo se načíst náhled materiálu.',
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl);
+    };
+  }, [previewMaterial]);
 
   const loadData = async () => {
     try {
@@ -560,36 +700,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                         {mat.errorMessage || 'Soubor se nepodařilo zpracovat'}
                       </span>
                     </div>
-                  ) : mat.thumbnailUrl ? (
-                    <img 
-                      src={mat.thumbnailUrl} 
-                      alt={mat.title} 
-                      className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-300" 
-                      loading="lazy"
-                    />
-                  ) : mat.svgUrl ? (
-                    <img 
-                      src={mat.svgUrl} 
-                      alt={mat.title} 
-                      className="w-full h-full object-contain p-2 group-hover/thumb:scale-105 transition-transform duration-300" 
-                      loading="lazy"
-                    />
-                  ) : mat.svgContent ? (
-                    <div 
-                      className="w-full h-full flex items-center justify-center p-2 overflow-hidden pointer-events-none group-hover/thumb:scale-105 transition-transform duration-300 [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:h-auto [&>svg]:w-auto"
-                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(mat.svgContent) }}
-                    />
                   ) : (
-                    <div className="flex flex-col items-center justify-center gap-1.5 text-gray-400 p-4 text-center">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-xs ${
-                        mat.subject === 'Matematika' ? "bg-teal-50 text-teal-600" : "bg-rose-50 text-rose-600"
-                      }`}>
-                        <BookCyanIcon size={20} />
-                      </div>
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-                        Grafický list
-                      </span>
-                    </div>
+                    <ProtectedAdminThumbnail material={mat} />
                   )}
 
                   {/* Hover Overlay */}
@@ -1146,16 +1258,33 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
               </div>
 
               <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 flex items-center justify-center min-h-[350px]">
-                {isPdf && fileSrc ? (
+                {previewResource.loading ? (
+                  <div className="flex flex-col items-center justify-center gap-3 py-16">
+                    <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
+                    <p className="text-sm font-bold text-gray-600">Načítání náhledu materiálu...</p>
+                  </div>
+                ) : previewResource.error ? (
+                  <div className="p-6 bg-rose-50 border border-rose-200 rounded-2xl text-center max-w-md">
+                    <p className="font-bold text-rose-800 text-sm">{previewResource.error}</p>
+                  </div>
+                ) : previewResource.svgMarkup ? (
+                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
+                    <div
+                      style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
+                      className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
+                      dangerouslySetInnerHTML={{ __html: previewResource.svgMarkup }}
+                    />
+                  </div>
+                ) : isPdf && previewResource.blobUrl ? (
                   <iframe
-                    src={`${fileSrc}#toolbar=1`}
+                    src={`${previewResource.blobUrl}#toolbar=1`}
                     className="w-full h-[70vh] border-0 rounded-2xl bg-white shadow-inner"
                     title={previewMaterial.title}
                   />
-                ) : fileSrc ? (
+                ) : previewResource.blobUrl ? (
                   <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
                     <img
-                      src={fileSrc}
+                      src={previewResource.blobUrl}
                       alt={previewMaterial.title || "Náhled"}
                       style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
                       className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2"
@@ -1183,7 +1312,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
               <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
                 {/* Zoom controls for non-PDF image/SVG */}
-                {!isPdf && fileSrc && (
+                {!isPdf && (fileSrc || previewResource.svgMarkup) && (
                   <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
                     <Button
                       type="button"
@@ -1243,9 +1372,9 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     </Button>
                   )}
 
-                  {fileSrc && (
+                  {previewResource.blobUrl && (
                     <a
-                      href={fileSrc}
+                      href={previewResource.blobUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="rounded-xl border border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-10 px-4 flex items-center justify-center gap-1.5 cursor-pointer bg-white"

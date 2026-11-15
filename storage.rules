@@ -1,48 +1,116 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    
-    // Helper function for user authentication status
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
+    function isTeacher() {
+      return isAuthenticated() &&
+        ('role' in request.auth.token) &&
+        request.auth.token.role == 'teacher';
+    }
+
+    function isPaidUser() {
+      return isAuthenticated() &&
+        ('role' in request.auth.token) &&
+        request.auth.token.role in ['premium', 'course', 'teacher'];
+    }
+
     function isOwner(userId) {
-      return request.auth.uid == userId;
+      return isAuthenticated() && request.auth.uid == userId;
     }
 
-    // Rule 12: Namespaced paths, authentication, content type whitelist, and file size limits
-    match /learningSheets/{userId}/{fileId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && 
-                    isOwner(userId) && 
-                    request.resource.size < 30 * 1024 * 1024 &&
-                    (request.resource.contentType == 'application/pdf' || 
-                     request.resource.contentType == 'image/svg+xml' || 
-                     request.resource.contentType.startsWith('image/'));
+    function isEnrolledInCourse(courseId) {
+      return isTeacher() || (
+        isAuthenticated() &&
+        'enrolledCourseIds' in request.auth.token &&
+        request.auth.token.enrolledCourseIds is list &&
+        courseId in request.auth.token.enrolledCourseIds
+      );
     }
 
+    function isAllowedTeacherMaterial() {
+      return request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 30 * 1024 * 1024 &&
+        request.resource.contentType in [
+          'application/pdf',
+          'image/png',
+          'image/jpeg',
+          'image/webp',
+          'image/gif',
+          'image/svg+xml'
+        ];
+    }
+
+    // Strictly raster images only (blocks image/svg+xml XSS uploads from users)
+    function isAllowedSafeUserRasterImage() {
+      return request.resource != null &&
+        request.resource.size > 0 &&
+        request.resource.size <= 5 * 1024 * 1024 &&
+        request.resource.contentType in [
+          'image/png',
+          'image/jpeg',
+          'image/webp'
+        ];
+    }
+
+    // Study materials, worksheets & teacher uploads (max 30 MB)
+    match /learningSheets/{allPaths=**} {
+      allow read: if isTeacher() || isPaidUser();
+      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow delete: if isTeacher();
+    }
+
+    match /materials/{allPaths=**} {
+      allow read: if isTeacher() || isPaidUser();
+      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow delete: if isTeacher();
+    }
+
+    match /questions/{allPaths=**} {
+      allow read: if isTeacher() || isPaidUser();
+      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow delete: if isTeacher();
+    }
+
+    match /practice/{allPaths=**} {
+      allow read: if isTeacher() || isPaidUser();
+      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow delete: if isTeacher();
+    }
+
+    match /courses/{courseId}/{allPaths=**} {
+      allow read: if isTeacher() || isEnrolledInCourse(courseId);
+      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow delete: if isTeacher();
+    }
+
+    // Private user files (avatars, etc.) — raster images only, <= 5 MB
     match /users/{userId}/{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && 
-                    isOwner(userId) && 
-                    request.resource.size < 5 * 1024 * 1024 && 
-                    request.resource.contentType.startsWith('image/');
+      allow read: if isOwner(userId) || isTeacher();
+      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
+      allow delete: if isOwner(userId) || isTeacher();
     }
 
-    // Screenshots and attachments for bug reports
-    match /bugReports/{userId}/{fileId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && 
-                    isOwner(userId) && 
-                    request.resource.size < 10 * 1024 * 1024 && 
-                    request.resource.contentType.startsWith('image/');
+    // Bug report screenshots — camelCase & kebab-case namespaces, raster only, <= 5 MB
+    match /bugReports/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId) || isTeacher();
+      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
+      allow delete: if isOwner(userId) || isTeacher();
     }
-    
-    // Strict least privilege principle on unmanaged paths
+
+    match /bug-reports/{userId}/{allPaths=**} {
+      allow read: if isOwner(userId) || isTeacher();
+      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
+      allow delete: if isOwner(userId) || isTeacher();
+    }
+
+    // Strict deny-all default fallback for unmanaged paths
     match /{allPaths=**} {
-      allow read: if isAuthenticated();
-      allow write: if false;
+      allow read, write: if false;
     }
   }
 }

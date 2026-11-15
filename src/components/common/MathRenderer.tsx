@@ -3,6 +3,37 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import katex from 'katex';
+import DOMPurify from 'dompurify';
+import { sanitizeSafeUrl } from '../../utils/svgUtils';
+
+const KATEX_SAFE_OPTIONS = {
+  throwOnError: false,
+  strict: false,
+  trust: false,
+} as const;
+
+function sanitizeMathHtml(html: string): string {
+  if (!html) return '';
+  if (typeof window === 'undefined' || !DOMPurify?.isSupported) return '';
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true, mathMl: true, svg: true },
+    ADD_ATTR: ['target', 'rel'],
+    FORBID_TAGS: [
+      'script',
+      'style',
+      'iframe',
+      'object',
+      'embed',
+      'foreignObject',
+      'foreignobject',
+      'form',
+      'input',
+      'button',
+      'textarea',
+      'select',
+    ],
+  });
+}
 
 export interface MathRendererProps {
   content?: string | null;
@@ -47,11 +78,10 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
     try {
       const rendered = katex.renderToString(rawMath, {
         displayMode: isDisplay,
-        throwOnError: false,
-        strict: false
+        ...KATEX_SAFE_OPTIONS,
       });
       const idx = mathPlaceholders.length;
-      mathPlaceholders.push(rendered);
+      mathPlaceholders.push(sanitizeMathHtml(rendered));
       return `__PROEDU_KATEX_PLACEHOLDER_${idx}__`;
     } catch {
       return match;
@@ -59,7 +89,7 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
   });
 
   if (typeof window === 'undefined' || typeof DOMParser === 'undefined') {
-    return withPlaceholders;
+    return '';
   }
 
   // 2. Parse and sanitize HTML via DOMParser
@@ -98,9 +128,12 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
 
         if (tag === 'a') {
           const href = (el.getAttribute('href') || '').trim();
-          if (href && !/^(https?:\/\/|mailto:|\/|#)/i.test(href)) {
+          const isMailto = /^mailto:[^\s<>]+$/i.test(href);
+          const safeHref = isMailto ? href : sanitizeSafeUrl(href);
+          if (!safeHref) {
             el.removeAttribute('href');
           } else {
+            el.setAttribute('href', safeHref);
             el.setAttribute('target', '_blank');
             el.setAttribute('rel', 'noopener noreferrer');
           }
@@ -108,9 +141,10 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
 
         if (tag === 'img') {
           const rawSrc = (el.getAttribute('src') || '').trim();
-          const resolvedSrc = (imageMap && rawSrc && imageMap[rawSrc]) ? imageMap[rawSrc] : rawSrc;
-          if (resolvedSrc && /^(https?:\/\/|\/|data:image\/|blob:|assets\/|uploads\/)/i.test(resolvedSrc)) {
-            el.setAttribute('src', resolvedSrc);
+          const mappedSrc = (imageMap && rawSrc && imageMap[rawSrc]) ? imageMap[rawSrc] : rawSrc;
+          const safeSrc = sanitizeSafeUrl(mappedSrc);
+          if (safeSrc) {
+            el.setAttribute('src', safeSrc);
             el.setAttribute('loading', 'lazy');
           } else {
             el.remove();
@@ -135,7 +169,7 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
     return mathPlaceholders[idx] ?? '';
   });
 
-  return cleanHtml;
+  return sanitizeMathHtml(cleanHtml);
 }
 
 /**
@@ -196,11 +230,12 @@ export function renderInlineMathSegments(text: string): React.ReactNode {
     if (seg.startsWith('$$') && seg.endsWith('$$') && seg.length >= 4) {
       const math = seg.slice(2, -2).trim();
       try {
-        const html = katex.renderToString(math, {
-          displayMode: true,
-          throwOnError: false,
-          strict: false
-        });
+        const html = sanitizeMathHtml(
+          katex.renderToString(math, {
+            displayMode: true,
+            ...KATEX_SAFE_OPTIONS,
+          })
+        );
         return (
           <span 
             key={idx} 
@@ -216,11 +251,12 @@ export function renderInlineMathSegments(text: string): React.ReactNode {
     if (seg.startsWith('$') && seg.endsWith('$') && seg.length >= 2) {
       const math = seg.slice(1, -1).trim();
       try {
-        const html = katex.renderToString(math, {
-          displayMode: false,
-          throwOnError: false,
-          strict: false
-        });
+        const html = sanitizeMathHtml(
+          katex.renderToString(math, {
+            displayMode: false,
+            ...KATEX_SAFE_OPTIONS,
+          })
+        );
         return (
           <span 
             key={idx} 
@@ -286,7 +322,7 @@ export const MathRenderer: React.FC<MathRendererProps> = ({
     <div className={`prose-math-content ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkMath]}
-        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
+        rehypePlugins={[[rehypeKatex, KATEX_SAFE_OPTIONS]]}
         components={{
           // Custom paragraph to avoid extra margin when rendering simple single-line text
           p: ({ children }) => (
@@ -294,17 +330,28 @@ export const MathRenderer: React.FC<MathRendererProps> = ({
               {children}
             </p>
           ),
-          // Links open safely in new tab
-          a: ({ href, children }) => (
-            <a 
-              href={href} 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="text-brand-blue hover:underline font-semibold"
-            >
-              {children}
-            </a>
-          )
+          // Links open safely in new tab after URL scheme check
+          a: ({ href, children }) => {
+            const safeHref = href && /^mailto:[^\s<>]+$/i.test(href) ? href : sanitizeSafeUrl(href);
+            if (!safeHref) {
+              return <span className="font-semibold">{children}</span>;
+            }
+            return (
+              <a
+                href={safeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-brand-blue hover:underline font-semibold"
+              >
+                {children}
+              </a>
+            );
+          },
+          img: ({ src, alt }) => {
+            const safeSrc = sanitizeSafeUrl(src);
+            if (!safeSrc) return null;
+            return <img src={safeSrc} alt={alt || ''} loading="lazy" className="max-w-full h-auto rounded-lg" />;
+          },
         }}
       >
         {normalized}

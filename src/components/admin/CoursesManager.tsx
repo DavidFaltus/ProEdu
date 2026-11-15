@@ -25,6 +25,7 @@ import {
   seedDefaultCourses 
 } from '../../services/courseService';
 import { Link } from 'react-router-dom';
+import { sanitizeSafeUrl } from '../../utils/svgUtils';
 
 interface CoursesManagerProps {
   userId: string;
@@ -137,6 +138,13 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
       return;
     }
 
+    const trimmedMeetUrl = meetUrl.trim();
+    const safeMeetUrl = trimmedMeetUrl ? sanitizeSafeUrl(trimmedMeetUrl) : '';
+    if (trimmedMeetUrl && !safeMeetUrl) {
+      toast.error('Neplatný formát odkazu pro Google Meet (vyžaduje https://).');
+      return;
+    }
+
     setSaving(true);
     try {
       const payload: Partial<Course> = {
@@ -151,7 +159,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
         endDate,
         badge: badge.trim(),
         color,
-        meetUrl: meetUrl.trim(),
+        meetUrl: safeMeetUrl || '',
         syllabus: syllabus.filter(Boolean),
         teacherId: userId
       };
@@ -347,7 +355,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
 
                 {/* Actions */}
                 <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
-                  <Link to={`/courses/${course.id}`} target="_blank" className="flex-1">
+                  <Link to={`/courses/${course.id}`} target="_blank" rel="noopener noreferrer" className="flex-1">
                     <Button 
                       variant="outline" 
                       size="sm" 

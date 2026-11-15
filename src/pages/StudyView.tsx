@@ -17,29 +17,27 @@ import { Button } from '../components/ui/button';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import {
-  getSubtopicById,
-  getQuestionsForSubtopic,
-  getTopicById,
-  fetchMaterialStatus,
-  LEARNING_SHEETS_COLLECTION
+  fetchStudySubtopic,
+  fetchPracticeCatalog,
+  fetchMaterialStatus
 } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep, MaterialStatus } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
-import { cn } from '../lib/utils';
-import { db } from '../lib/firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { Lock } from 'lucide-react';
 import InlineStudyMedia from '../components/common/InlineStudyMedia';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
-  const { user, isPremium, openAuthModal } = useAuth();
+  const { user, isPremium, isCourseUser, isTeacher, openAuthModal } = useAuth();
+  const hasStudyAccess = isPremium || isCourseUser || isTeacher;
   const navigate = useNavigate();
 
   const [subtopic, setSubtopic] = useState<PracticeSubtopic | null>(null);
   const [topicTitle, setTopicTitle] = useState<string>('');
   const [questionCount, setQuestionCount] = useState<number>(0);
   const [loading, setLoading] = useState(true);
+  const [accessDenied, setAccessDenied] = useState(false);
 
   const [expandedTips, setExpandedTips] = useState<Record<number, boolean>>({});
   const [stepAnswers, setStepAnswers] = useState<Record<number, string | null>>({});
@@ -57,23 +55,45 @@ export default function StudyView() {
 
   useEffect(() => {
     async function loadData() {
-      if (!subtopicId) return;
+      if (!subtopicId) {
+        setLoading(false);
+        return;
+      }
+      if (!hasStudyAccess) {
+        setSubtopic(null);
+        setAccessDenied(true);
+        setLoading(false);
+        return;
+      }
+
       setLoading(true);
+      setAccessDenied(false);
       try {
-        const data = await getSubtopicById(subtopicId);
+        const [studyRes, catalog] = await Promise.all([
+          fetchStudySubtopic(subtopicId),
+          fetchPracticeCatalog({ includeHidden: isTeacher }).catch(() => null),
+        ]);
+
+        if (studyRes.forbidden) {
+          setAccessDenied(true);
+          setSubtopic(null);
+          return;
+        }
+
+        const data = studyRes.subtopic;
         setSubtopic(data);
         if (data) {
-          const qs = await getQuestionsForSubtopic(data.id);
-          setQuestionCount(qs.length);
+          const cfgTotal =
+            data.practiceConfig?.totalCount ||
+            ((data.practiceConfig?.easyCount || 0) +
+              (data.practiceConfig?.mediumCount || 0) +
+              (data.practiceConfig?.hardCount || 0));
+          setQuestionCount(cfgTotal || data.questionCount || 0);
 
-          if (data.topicId) {
-            const topic = await getTopicById(data.topicId);
-            if (topic?.title) {
-              setTopicTitle(topic.title);
-            } else {
-              setTopicTitle(data.topicId);
-            }
-          }
+          const matchedTopic = catalog?.topics.find(
+            t => t.id === data.topicId || t.title === data.topicId
+          );
+          setTopicTitle(matchedTopic?.title || data.topicId || '');
         }
       } catch (err) {
         console.error('Failed to load study subtopic:', err);
@@ -82,7 +102,7 @@ export default function StudyView() {
       }
     }
     loadData();
-  }, [subtopicId]);
+  }, [subtopicId, hasStudyAccess, isTeacher]);
 
   const linkedMaterialId = React.useMemo(() => {
     if (!subtopic) return null;
@@ -92,18 +112,18 @@ export default function StudyView() {
     return match ? match[1] : null;
   }, [subtopic]);
 
-  // Real-time sledování přípravy přiřazeného materiálu (dokud má status 'processing')
+  // Real-time sledování přípravy přiřazeného materiálu (dokud má status 'processing') přes autorizované API
   useEffect(() => {
-    if (!linkedMaterialId) {
+    if (!linkedMaterialId || !hasStudyAccess) {
       setMaterialMeta(null);
       return;
     }
 
-    let unsub: (() => void) | null = null;
+    let cancelled = false;
     let pollTimer: number | null = null;
 
     const applyStatus = (data: any) => {
-      if (!data) return;
+      if (!data || cancelled) return;
       setMaterialMeta({
         status: data.status || 'ready',
         errorMessage: data.errorMessage || null,
@@ -120,31 +140,17 @@ export default function StudyView() {
       }
     };
 
-    try {
-      unsub = onSnapshot(
-        doc(db, LEARNING_SHEETS_COLLECTION, linkedMaterialId),
-        (snap) => {
-          if (snap.exists()) {
-            applyStatus(snap.data());
-          }
-        },
-        () => {
-          fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
-        }
-      );
-    } catch {
-      fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
-    }
+    fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
 
     pollTimer = window.setInterval(() => {
       fetchMaterialStatus(linkedMaterialId).then(applyStatus).catch(() => {});
     }, 3000);
 
     return () => {
-      if (unsub) unsub();
+      cancelled = true;
       if (pollTimer !== null) window.clearInterval(pollTimer);
     };
-  }, [linkedMaterialId]);
+  }, [linkedMaterialId, hasStudyAccess]);
 
   const toggleTip = (index: number) => {
     setExpandedTips(prev => ({ ...prev, [index]: !prev[index] }));
@@ -156,6 +162,56 @@ export default function StudyView() {
         <div className="w-12 h-12 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
         <p className="text-gray-600 font-bold text-sm">Načítání výukových materiálů...</p>
       </div>
+    );
+  }
+
+  if (!hasStudyAccess || accessDenied) {
+    return (
+      <>
+        <div className="max-w-2xl mx-auto py-16 px-4 text-center space-y-5">
+          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-xs">
+            <Lock size={28} />
+          </div>
+          <h2 className="text-3xl font-display font-black text-[#1E1B18]">
+            Studijní teorie a výklady jsou součástí ProEducator Premium
+          </h2>
+          <p className="text-gray-600 font-medium text-sm sm:text-base max-w-lg mx-auto">
+            Pro zobrazení kompletní teorie, vzorových příkladů a tipů lektora je nutné aktivní předplatné Premium nebo přiřazený kurz.
+          </p>
+          <div className="flex flex-wrap justify-center gap-3 pt-2">
+            {!user ? (
+              <Button
+                onClick={openAuthModal}
+                className="rounded-xl bg-[#1E1B18] text-white font-black px-6 h-11 cursor-pointer"
+              >
+                Přihlásit se / Registrovat
+              </Button>
+            ) : (
+              <Button
+                onClick={() => setIsPaywallDismissed(false)}
+                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-6 h-11 cursor-pointer"
+              >
+                Odemknout Premium
+              </Button>
+            )}
+            <Link to="/practice">
+              <Button variant="outline" className="rounded-xl font-bold h-11 px-5 cursor-pointer">
+                Zpět na přehled témat
+              </Button>
+            </Link>
+          </div>
+        </div>
+
+        <UnifiedPaywallModal
+          isOpen={!isPaywallDismissed}
+          onClose={() => {
+            setIsPaywallDismissed(true);
+            navigate('/practice');
+          }}
+          type="premium"
+          description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
+        />
+      </>
     );
   }
 
@@ -188,7 +244,7 @@ export default function StudyView() {
 
   return (
     <>
-      <div className={cn("w-full max-w-5xl mx-auto space-y-8 pb-16 relative", !isPremium && "filter blur-sm select-none pointer-events-none")}>
+      <div className="w-full max-w-5xl mx-auto space-y-8 pb-16 relative">
       {/* Top Breadcrumb Navigation */}
       <div className="flex items-center justify-between">
         <Link 
@@ -289,7 +345,7 @@ export default function StudyView() {
 
           <div className="grid gap-4">
             {steps.map((step, idx) => {
-              const isLocked = !isPremium && idx > 0;
+              const isLocked = !hasStudyAccess && idx > 0;
               if (isLocked && idx > 1) return null;
 
               if (isLocked) {
@@ -551,17 +607,6 @@ export default function StudyView() {
         </Button>
       </div>
     </div>
-
-    {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
-    <UnifiedPaywallModal
-      isOpen={!isPremium && !isPaywallDismissed}
-      onClose={() => {
-        setIsPaywallDismissed(true);
-        navigate('/practice');
-      }}
-      type="premium"
-      description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
-    />
   </>
   );
 }

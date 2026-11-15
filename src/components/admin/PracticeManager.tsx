@@ -39,7 +39,7 @@ import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage
 import PdfSvgDropzone, { DropzoneFileResult } from './PdfSvgDropzone';
 import MaterialSelectorModal from './MaterialSelectorModal';
 import { convertFileToSvg, svgStringToDataUrl, isPdfResource } from '../../utils/pdfToSvg';
-import { sanitizeSvg } from '../../utils/svgUtils';
+import { sanitizeSvg, sanitizeSafeUrl } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
 import QuickFormulaToolbar from './QuickFormulaToolbar';
 import { validateLatexSyntax } from '../../utils/mathPreprocessor';
@@ -574,8 +574,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
       case 'a': {
         const url = window.prompt('Zadejte URL adresu odkazu:', 'https://');
         if (!url) return;
+        const safeUrl = sanitizeSafeUrl(url.trim());
+        if (!safeUrl) {
+          toast.error('Neplatná URL adresa odkazu (povoleno je pouze http://, https:// nebo relativní cesta /...).');
+          return;
+        }
+        const escapedUrl = safeUrl.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
         const inner = selected || 'text odkazu';
-        const prefix = `<a href="${url.trim()}" target="_blank" rel="noopener noreferrer">`;
+        const prefix = `<a href="${escapedUrl}" target="_blank" rel="noopener noreferrer">`;
         textToInsert = `${prefix}${inner}</a>`;
         selectStartOffset = prefix.length;
         selectEndOffset = prefix.length + inner.length;
@@ -3137,9 +3143,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                     <p className="text-[11px] text-rose-700 font-medium">PDF dokument připraven</p>
                                   </div>
                                 </div>
-                                {(step.pdfUrl || step.fileUrl) && (
+                                {sanitizeSafeUrl(step.pdfUrl || step.fileUrl) && (
                                   <a
-                                    href={step.pdfUrl || step.fileUrl}
+                                    href={sanitizeSafeUrl(step.pdfUrl || step.fileUrl)!}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="px-3 py-1.5 bg-white border border-gray-300 hover:border-black rounded-lg text-xs font-bold text-gray-800 inline-flex items-center gap-1.5 shrink-0"
@@ -3154,13 +3160,13 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                 className="max-h-52 w-full overflow-hidden flex justify-center [&>svg]:max-h-52 [&>svg]:w-auto [&>svg]:max-w-full"
                                 dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
                               />
-                            ) : (
+                            ) : sanitizeSafeUrl(step.imageUrl || step.fileUrl) ? (
                               <img
-                                src={step.imageUrl || step.fileUrl}
+                                src={sanitizeSafeUrl(step.imageUrl || step.fileUrl)!}
                                 alt={`Náhled ke kroku ${idx + 1}`}
                                 className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
                               />
-                            )}
+                            ) : null}
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
@@ -3722,13 +3728,13 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                       className="w-full flex justify-center [&>svg]:max-h-56 [&>svg]:w-auto [&>svg]:max-w-full overflow-hidden p-2 bg-[#FAF7F0] rounded-lg"
                       dangerouslySetInnerHTML={{ __html: sanitizeSvg(editingQuestion.svgContent) }}
                     />
-                  ) : (
+                  ) : sanitizeSafeUrl(editingQuestion?.imageUrl) ? (
                     <img
-                      src={editingQuestion.imageUrl}
+                      src={sanitizeSafeUrl(editingQuestion.imageUrl)!}
                       alt="Náhled k úloze"
                       className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
                     />
-                  )}
+                  ) : null}
                   <div className="flex flex-wrap items-center justify-between gap-2 w-full pt-1 border-t border-gray-100">
                     <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
                       <CorrectCyanIcon size={13} />
@@ -3975,13 +3981,13 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           className="w-full flex justify-center [&>svg]:max-h-56 [&>svg]:w-auto [&>svg]:max-w-full overflow-hidden p-2 bg-[#FAF7F0] rounded-lg"
                           dangerouslySetInnerHTML={{ __html: sanitizeSvg(editingQuestion.solutionSvgContent) }}
                         />
-                      ) : (
+                      ) : sanitizeSafeUrl(editingQuestion?.solutionImageUrl) ? (
                         <img
-                          src={editingQuestion.solutionImageUrl}
+                          src={sanitizeSafeUrl(editingQuestion.solutionImageUrl)!}
                           alt="Náhled vzorového řešení"
                           className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
                         />
-                      )}
+                      ) : null}
                       <div className="flex flex-wrap items-center justify-between gap-2 w-full pt-1 border-t border-gray-100">
                         <span className="text-[11px] text-emerald-800 font-bold bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
                           <CorrectCyanIcon size={13} />

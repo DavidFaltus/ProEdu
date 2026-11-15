@@ -41,9 +41,10 @@ const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
 
 import Footer from './components/common/Footer';
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
+import { sanitizeSafeUrl } from './utils/svgUtils';
 
 function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 'student' | 'teacher' }) {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, loading, isTeacher } = useAuth();
 
   if (loading) {
     return (
@@ -68,10 +69,10 @@ function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 's
   }
 
   if (role) {
-    if (role === 'teacher' && profile?.role !== 'teacher') {
+    if (role === 'teacher' && !isTeacher) {
       return <Navigate to="/" replace />;
     }
-    if (role === 'student' && profile?.role === 'teacher') {
+    if (role === 'student' && isTeacher) {
       return <Navigate to="/teacher" replace />;
     }
   }
@@ -80,9 +81,9 @@ function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 's
 }
 
 function DashboardRedirect() {
-  const { profile, loading } = useAuth();
+  const { user, profile, loading, isTeacher } = useAuth();
 
-  if (loading || !profile) {
+  if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-screen gap-4 bg-[#FAF6EE]">
         <div className="w-12 h-12 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
@@ -91,7 +92,11 @@ function DashboardRedirect() {
     );
   }
 
-  if (profile.role === 'teacher') {
+  if (!user || !profile) {
+    return <Navigate to="/" replace />;
+  }
+
+  if (isTeacher) {
     return <Navigate to="/teacher" replace />;
   }
 
@@ -180,9 +185,9 @@ function AppContent() {
 
         {/* Action icons right: Jokers, Notifications, Avatar / Login, Hamburger */}
         <div className="flex items-center gap-2 shrink-0">
-          {user || profile ? (
+          {user && profile ? (
             <>
-              {profile?.role !== 'premium' && profile?.role !== 'course' && profile?.role !== 'teacher' && (
+              {!isPremium && (
                 <div 
                   className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#FAF7F0] border border-gray-200/70 text-[11px] font-bold text-gray-800"
                   title="Zbývající žolíky na dnešek"
@@ -233,8 +238,8 @@ function AppContent() {
               >
                 {profile?.avatarEmoji ? (
                   <span>{profile.avatarEmoji}</span>
-                ) : profile?.photoURL ? (
-                  <img src={profile.photoURL} alt="" className="w-full h-full object-cover" />
+                ) : sanitizeSafeUrl(profile?.photoURL) ? (
+                  <img src={sanitizeSafeUrl(profile?.photoURL)!} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <CapIcon size={18} />
                 )}
@@ -300,17 +305,17 @@ function AppContent() {
               <Route path="/todo" element={<PrivateRoute role="student"><TodoPage /></PrivateRoute>} />
               <Route path="/study/:subtopicId" element={<StudyView />} />
               <Route
-                path="/test/:id"
+                path="/test/:testId"
                 element={
-                  <PrivateRoute>
+                  <PrivateRoute role="student">
                     <TestTaker />
                   </PrivateRoute>
                 }
               />
               <Route
-                path="/review/:id"
+                path="/review/:testId"
                 element={
-                  <PrivateRoute>
+                  <PrivateRoute role="student">
                     <TestReview />
                   </PrivateRoute>
                 }
@@ -393,7 +398,7 @@ function AppContent() {
       <FloatingTimer />
       <BugReportButton />
       <LiveLessonNotificationWatcher />
-      <DevMonetizationToolbar />
+      {import.meta.env.DEV && import.meta.env.VITE_ENABLE_DEV_TOOLBAR === 'true' && <DevMonetizationToolbar />}
       <AuthModal />
       <Toaster />
     </div>

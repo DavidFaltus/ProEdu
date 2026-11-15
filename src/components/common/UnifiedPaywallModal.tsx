@@ -15,10 +15,11 @@ import { toast } from 'sonner';
 import { db } from '../../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { trackPaywallImpression, trackPaywallCtaClick } from '../../services/analyticsService';
-import { createOrder, simulateComgatePayment, buildOrderResultFromOrder, CreateOrderResult } from '../../services/orderService';
+import { createOrder, simulateComgatePayment, buildOrderResultFromOrder, saveBillingAndPaymentSettings, CreateOrderResult } from '../../services/orderService';
 import { Order } from '../../types';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { PaymentLogosBar } from './PaymentLogos';
+import { sanitizeSafeUrl } from '../../utils/svgUtils';
 
 export type PaywallType = 'premium' | 'course';
 
@@ -81,7 +82,8 @@ export default function UnifiedPaywallModal({
   initialOrder,
   defaultCourseId
 }: UnifiedPaywallModalProps) {
-  const { user, profile, updateProfileData, openAuthModal } = useAuth();
+  const navigate = useNavigate();
+  const { user, profile, openAuthModal, refreshProfile } = useAuth();
   const [currentStep, setCurrentStep] = useState<ModalStep>('plan_overview');
   const [selectedCourseId, setSelectedCourseId] = useState<string>(defaultCourseId || 'course-combo');
   const [availableCourses, setAvailableCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
@@ -180,34 +182,13 @@ export default function UnifiedPaywallModal({
     }
   }, [defaultCourseId, isOpen]);
 
-  const handleCourseActivate = async () => {
-    trackPaywallCtaClick('activate', selectedCourseId);
-    if (!user) {
-      onClose();
-      openAuthModal();
-      toast.info('Pro zapsání do kurzu se prosím nejdříve přihlas.');
-      return;
-    }
-
-    setIsSubmitting(true);
-    try {
-      const selected = availableCourses.find(c => c.id === selectedCourseId) || availableCourses[0];
-      const existingCourses = Array.isArray(profile?.enrolledCourseIds) ? profile.enrolledCourseIds : [];
-      const nextCourses = Array.from(new Set([...existingCourses, selectedCourseId]));
-
-      await updateProfileData({ 
-        role: 'course',
-        courseId: selectedCourseId,
-        enrolledCourseIds: nextCourses
-      });
-
-      toast.success(`🎉 Gratulujeme! Byl jsi úspěšně zapsán do kurzu "${selected.title}".`);
-      onClose();
-      if (onSuccess) onSuccess();
-    } catch (err: any) {
-      toast.error('Chyba při zápisu: ' + err.message);
-    } finally {
-      setIsSubmitting(false);
+  const handleCourseInquiry = () => {
+    trackPaywallCtaClick('course_detail', selectedCourseId);
+    onClose();
+    if (selectedCourseId) {
+      navigate(`/courses/${encodeURIComponent(selectedCourseId)}`);
+    } else {
+      navigate('/courses');
     }
   };
 
@@ -268,13 +249,13 @@ export default function UnifiedPaywallModal({
         amount: 99
       });
 
-      // Okamžitě přepneme modal do Kroku 3 (Dummy QR kód / Dummy platební brána)
+      // Okamžitě přepneme modal do Kroku 3
       setOrderResult(result);
       setCurrentStep('order_result');
       toast.success('Objednávka byla úspěšně vytvořena!');
 
-      // Asynchronně uložíme fakturační údaje do profilu na pozadí
-      updateProfileData({
+      // Asynchronně uložíme fakturační údaje přes autorizované serverové API
+      saveBillingAndPaymentSettings({
         preferredPaymentMethod: paymentMethod,
         billingDetails: {
           clientName: clientName.trim(),
@@ -286,14 +267,17 @@ export default function UnifiedPaywallModal({
           ico: cleanIco,
           dic: cleanDic
         }
-      }).catch(profileErr => {
-        console.warn('[Billing Profile Sync]:', profileErr);
-      });
+      })
+        .then(() => refreshProfile())
+        .catch(profileErr => {
+          console.warn('[Billing Profile Sync]:', profileErr);
+        });
 
-      // Pokud Comgate vrátila přímou URL v živém režimu, okamžitě přesměrovat
-      if (paymentMethod === 'comgate' && result.comgate?.redirectUrl && result.comgate.isLive) {
+      // Pokud Comgate vrátila bezpečnou přímou URL v živém režimu, okamžitě přesměrovat
+      const safeRedirectUrl = sanitizeSafeUrl(result.comgate?.redirectUrl);
+      if (paymentMethod === 'comgate' && safeRedirectUrl && result.comgate?.isLive) {
         toast.loading('Přesměrovávám na zabezpečenou platební bránu Comgate...');
-        window.location.href = result.comgate.redirectUrl;
+        window.location.href = safeRedirectUrl;
         return;
       }
     } catch (err: any) {
@@ -310,23 +294,18 @@ export default function UnifiedPaywallModal({
   };
 
   const handleSandboxSimulate = async () => {
+    if (!import.meta.env.DEV) {
+      toast.error('Testovací simulace platby není v tomto prostředí povolena.');
+      return;
+    }
     if (!orderResult?.orderId) return;
     setIsSimulatingPayment(true);
     try {
       const res = await simulateComgatePayment(orderResult.orderId);
-      const periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-      await updateProfileData({
-        role: 'premium',
-        subscriptionStatus: 'active',
-        subscriptionPeriodEnd: periodEnd,
-        subscriptionCancelledAt: null
-      });
+      await refreshProfile();
       toast.success(res.message);
       if (onSuccess) onSuccess();
-      setTimeout(() => {
-        onClose();
-        window.location.reload();
-      }, 600);
+      onClose();
     } catch (err: any) {
       toast.error(err.message);
     } finally {
@@ -534,14 +513,14 @@ export default function UnifiedPaywallModal({
 
             {/* Hlavní tlačítko přechodu k objednávce */}
             <Button
-              onClick={isCourse ? handleCourseActivate : handleGoToOrderForm}
+              onClick={isCourse ? handleCourseInquiry : handleGoToOrderForm}
               disabled={isSubmitting}
               className="w-full h-12 sm:h-13 bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black rounded-2xl shadow-sm border border-blue-200/80 cursor-pointer flex items-center justify-center gap-2 transition-all text-sm sm:text-base mt-2"
             >
               {isCourse ? (
                 <>
                   <CapIcon size={20} />
-                  <span>Zapsat se do vybraného kurzu</span>
+                  <span>Zobrazit detail kurzu a zápis</span>
                 </>
               ) : (
                 <>
@@ -746,11 +725,11 @@ export default function UnifiedPaywallModal({
                     />
                     <span className="text-gray-600 text-xs leading-normal">
                       Souhlasím s{' '}
-                      <Link to="/terms" target="_blank" className="text-blue-700 underline font-bold">
+                      <Link to="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-700 underline font-bold">
                         obchodními podmínkami
                       </Link>{' '}
                       a se{' '}
-                      <Link to="/privacy" target="_blank" className="text-blue-700 underline font-bold">
+                      <Link to="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-700 underline font-bold">
                         zpracováním osobních údajů
                       </Link>{' '}
                       *
@@ -812,7 +791,9 @@ export default function UnifiedPaywallModal({
                   </div>
                   <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
                     <div className="text-gray-500 text-[11px]">Částka k úhradě</div>
-                    <div className="font-black text-emerald-700 text-base mt-0.5">99,00 Kč</div>
+                    <div className="font-black text-emerald-700 text-base mt-0.5">
+                      {Number(orderResult.order.amount ?? 99).toFixed(2).replace('.', ',')} {orderResult.order.currency === 'CZK' || !orderResult.order.currency ? 'Kč' : orderResult.order.currency}
+                    </div>
                   </div>
                   <div className="bg-white p-2.5 rounded-xl border border-gray-100 text-xs">
                     <div className="text-gray-500 text-[11px]">E-mail klienta</div>
@@ -822,8 +803,8 @@ export default function UnifiedPaywallModal({
                   </div>
                 </div>
 
-                {/* Předvyplněná testovací karta v dummy bráně (pouze v testovacím režimu) */}
-                {!orderResult.comgate?.isLive && (
+                {/* Předvyplněná testovací karta v dummy bráně (pouze v lokálním vývojovém režimu) */}
+                {import.meta.env.DEV && !orderResult.comgate?.isLive && (
                   <div className="bg-white p-4 rounded-2xl border-2 border-blue-200 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Testovací platební karta</span>
@@ -847,40 +828,55 @@ export default function UnifiedPaywallModal({
                 <div className="p-3 rounded-2xl bg-blue-50/80 border border-blue-200 text-blue-900 text-xs text-left flex items-start gap-2.5">
                   <ShieldCheck size={18} className="shrink-0 mt-0.5 text-blue-600" />
                   <span>
-                    <strong>Opakované předplatné Comgate:</strong> Iniciační platba ve výši 99 Kč autorizuje automatické prodlužování balíčku každých 30 dní. Po každém úspěšném stržení vám zašleme e-mailové potvrzení. Předplatné lze kdykoliv zrušit v nastavení účtu.
+                    <strong>Opakované předplatné Comgate:</strong> Iniciační platba ve výši {orderResult.order.amount ?? 99} Kč autorizuje automatické prodlužování balíčku každých 30 dní. Po každém úspěšném stržení vám zašleme e-mailové potvrzení. Předplatné lze kdykoliv zrušit v nastavení účtu.
                   </span>
                 </div>
 
                 <div className="text-xs text-gray-600 leading-relaxed">
-                  {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive
+                  {sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && orderResult.comgate?.isLive
                     ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
-                    : 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na platební bráně a přepnutí účtu na ProEducator Premium.'}
+                    : import.meta.env.DEV
+                      ? 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na platební bráně a přepnutí účtu na ProEducator Premium.'
+                      : 'Online platební brána se připravuje nebo vyžaduje dokončení konfigurace na serveru.'}
                 </div>
               </div>
 
               {/* Tlačítka */}
               <div className="flex flex-col sm:flex-row gap-3">
-                {orderResult.comgate?.redirectUrl && orderResult.comgate.isLive ? (
-                  <a
-                    href={orderResult.comgate.redirectUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                  >
-                    <CreditCard size={18} />
-                    <span>Přejít na bránu Comgate k autorizaci</span>
-                  </a>
-                ) : (
-                  <Button
-                    type="button"
-                    onClick={handleSandboxSimulate}
-                    disabled={isSimulatingPayment}
-                    className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
-                  >
-                    <Check size={18} />
-                    <span>{isSimulatingPayment ? 'Ověřuji platbu v databázi...' : 'Zaplatit 99 Kč (Testovací autorizace)'}</span>
-                  </Button>
-                )}
+                {(() => {
+                  const safeComgateUrl = sanitizeSafeUrl(orderResult.comgate?.redirectUrl);
+                  if (safeComgateUrl && orderResult.comgate?.isLive) {
+                    return (
+                      <a
+                        href={safeComgateUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                      >
+                        <CreditCard size={18} />
+                        <span>Přejít na bránu Comgate k autorizaci</span>
+                      </a>
+                    );
+                  }
+                  if (import.meta.env.DEV) {
+                    return (
+                      <Button
+                        type="button"
+                        onClick={handleSandboxSimulate}
+                        disabled={isSimulatingPayment}
+                        className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                      >
+                        <Check size={18} />
+                        <span>
+                          {isSimulatingPayment
+                            ? 'Ověřuji platbu v databázi...'
+                            : `Zaplatit ${orderResult.order.amount ?? 99} Kč (Testovací autorizace)`}
+                        </span>
+                      </Button>
+                    );
+                  }
+                  return null;
+                })()}
 
                 <Button
                   type="button"

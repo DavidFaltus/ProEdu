@@ -5,32 +5,49 @@
 
 /**
  * Převod českého čísla účtu a kódu banky na mezinárodní formát IBAN.
+ * Validuje číselný vstup, aby nikdy nevznikl neplatný IBAN s NaN.
  */
 export function czechAccountToIban(accountNumberRaw: string, bankCodeRaw: string): string {
-  const bankCode = bankCodeRaw.trim().padStart(4, '0');
-  
-  // Rozdělení na předčíslí a samotné číslo účtu (např. 19-123456789 nebo jen 123456789)
-  let prefix = '000000';
-  let account = accountNumberRaw.trim();
-  
-  if (account.includes('-')) {
-    const parts = account.split('-');
-    prefix = parts[0].padStart(6, '0');
-    account = parts[1];
+  const rawBank = String(bankCodeRaw ?? '').trim();
+  if (!/^\d{1,4}$/.test(rawBank)) {
+    throw new Error('Neplatný kód banky pro výpočet IBAN.');
   }
-  
+  const bankCode = rawBank.padStart(4, '0');
+
+  const rawAccount = String(accountNumberRaw ?? '').trim();
+  const parts = rawAccount.split('-');
+  if (parts.length > 2) {
+    throw new Error('Neplatný formát čísla účtu pro výpočet IBAN.');
+  }
+
+  let prefix = '000000';
+  let account = parts[0];
+
+  if (parts.length === 2) {
+    const rawPrefix = parts[0].trim();
+    if (rawPrefix && !/^\d{1,6}$/.test(rawPrefix)) {
+      throw new Error('Neplatné předčíslí bankovního účtu.');
+    }
+    prefix = (rawPrefix || '0').padStart(6, '0');
+    account = parts[1].trim();
+  }
+
+  if (!/^\d{1,10}$/.test(account) || /^0+$/.test(account)) {
+    throw new Error('Neplatné číslo bankovního účtu pro výpočet IBAN.');
+  }
+
   const paddedAccount = account.padStart(10, '0');
   const bban = `${bankCode}${prefix}${paddedAccount}`;
-  
+
   // CZ = 12 35, 00 pro výpočet kontrolních číslic
   const numericString = `${bban}123500`;
-  
+
   // Výpočet modulo 97 pro dlouhé číslo
   let remainder = 0;
   for (let i = 0; i < numericString.length; i++) {
-    remainder = (remainder * 10 + parseInt(numericString[i], 10)) % 97;
+    remainder = (remainder * 10 + Number(numericString[i])) % 97;
   }
-  
+
   const checkDigits = (98 - remainder).toString().padStart(2, '0');
   return `CZ${checkDigits}${bban}`;
 }
@@ -93,8 +110,10 @@ export function generateSpaydString(options: QrPaymentOptions): string {
 }
 
 /**
- * Vygeneruje URL obrázku QR kódu z dat SPAYD.
+ * Zastaralý generátor URL externího QR obrázku.
+ * Platby probíhají výhradně přes bránu Comgate; externí službě api.qrserver.com
+ * nikdy neodesíláme SPAYD řetězec ani e-mail uživatele.
  */
-export function getQrImageUrl(spaydString: string, size = 260): string {
-  return `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&margin=10&format=svg&data=${encodeURIComponent(spaydString)}`;
+export function getQrImageUrl(_spaydString: string, _size = 260): string {
+  return '';
 }

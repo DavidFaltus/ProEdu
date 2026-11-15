@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Video, ExternalLink, BellRing, X } from 'lucide-react';
 
 export default function LiveLessonNotificationWatcher() {
-  const { user, profile, isPremium } = useAuth();
+  const { user, profile, isPremium, enrolledCourseIds } = useAuth();
   const notifiedLessonIdsRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
@@ -116,11 +116,12 @@ export default function LiveLessonNotificationWatcher() {
       },
       (err) => {
         console.error('LiveLessonNotificationWatcher error:', err);
-      }
+      },
+      enrolledCourseIds
     );
 
     return () => unsubscribe();
-  }, [user?.uid, profile?.role, isPremium]);
+  }, [user?.uid, profile?.role, isPremium, enrolledCourseIds]);
 
   return null;
 }

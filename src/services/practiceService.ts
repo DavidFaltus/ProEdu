@@ -11,6 +11,7 @@ import {
 } from '../types';
 export type { ExistingMaterialItem, MaterialStatus };
 import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
+import { sanitizeSvg } from '../utils/svgUtils';
 
 export const PREDEFINED_SUBJECTS = [
   {
@@ -34,28 +35,395 @@ function getEffectiveUserId(userId?: string): string {
   return auth.currentUser?.uid || userId || '';
 }
 
+function getCacheScope(): string {
+  return auth.currentUser?.uid || 'guest';
+}
+
+async function getOptionalAuthHeaders(): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (!user) return {};
+  try {
+    const token = await user.getIdToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
+function createApiError(message: string, status: number, code?: string, extra?: Record<string, any>): Error {
+  const err = new Error(message) as Error & { status?: number; code?: string; [k: string]: any };
+  err.status = status;
+  if (code) err.code = code;
+  if (extra) Object.assign(err, extra);
+  return err;
+}
+
+// -------------------------------------------------------------
+// SECURE BACKEND PRACTICE & MATERIALS CATALOG APIs
+// -------------------------------------------------------------
+
+export async function fetchPracticeCatalog(options?: {
+  subject?: string;
+  includeHidden?: boolean;
+}): Promise<{
+  topics: PracticeTopic[];
+  subtopics: PracticeSubtopic[];
+  firstDemoSubtopicId: string | null;
+  demoSubtopicIds?: string[];
+}> {
+  const params = new URLSearchParams();
+  if (options?.subject) params.set('subject', options.subject);
+  if (options?.includeHidden) params.set('includeHidden', '1');
+  const qs = params.toString();
+  const url = `/api/practice/catalog${qs ? `?${qs}` : ''}`;
+
+  const headers = await getOptionalAuthHeaders();
+  const res = await fetch(url, { headers, credentials: 'include' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se načíst katalog procvičování.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return {
+    topics: Array.isArray(data.topics) ? data.topics : [],
+    subtopics: Array.isArray(data.subtopics) ? data.subtopics : [],
+    firstDemoSubtopicId: typeof data.firstDemoSubtopicId === 'string' ? data.firstDemoSubtopicId : null,
+    demoSubtopicIds: Array.isArray(data.demoSubtopicIds) ? data.demoSubtopicIds : [],
+  };
+}
+
+export async function fetchStudySubtopic(subtopicId: string): Promise<{
+  subtopic: PracticeSubtopic | null;
+  forbidden?: boolean;
+  status?: number;
+}> {
+  if (!subtopicId) return { subtopic: null };
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  if (!token) {
+    return { subtopic: null, forbidden: true, status: 401 };
+  }
+  const res = await fetch(`/api/practice/study/${encodeURIComponent(subtopicId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    return { subtopic: null, forbidden: true, status: res.status };
+  }
+  if (res.status === 404) {
+    return { subtopic: null, status: 404 };
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se načíst studijní materiály.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return { subtopic: (data.subtopic || data) as PracticeSubtopic, status: 200 };
+}
+
+export async function fetchSubtopicQuestions(subtopicId: string): Promise<{
+  questions: PracticeQuestion[];
+  isDemo: boolean;
+  guestRemaining?: number;
+}> {
+  const headers = await getOptionalAuthHeaders();
+  const res = await fetch(`/api/practice/subtopics/${encodeURIComponent(subtopicId)}/questions`, {
+    headers,
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se načíst otázky pro toto podtéma.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return {
+    questions: Array.isArray(data.questions) ? data.questions : [],
+    isDemo: Boolean(data.isDemo),
+    guestRemaining: typeof data.guestRemaining === 'number' ? data.guestRemaining : undefined,
+  };
+}
+
+export async function checkPracticeAnswerApi(payload: {
+  questionId: string;
+  subtopicId: string;
+  studentAnswer: string;
+  selfCheckStatus?: 'correct' | 'partial' | 'wrong';
+  sessionId?: string;
+}): Promise<{
+  isCorrect: boolean;
+  pointsEarned: number;
+  tutorFeedback?: string;
+  correctAnswer?: string;
+  explanation?: string;
+  solutionImageUrl?: string | null;
+  solutionSvgContent?: string | null;
+  jokersRemaining?: number;
+  guestRemaining?: number;
+}> {
+  const authHeaders = await getOptionalAuthHeaders();
+  const res = await fetch('/api/practice/check-answer', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+    },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se vyhodnotit odpověď.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return data;
+}
+
+export async function revealPracticeSolutionApi(payload: {
+  questionId: string;
+  subtopicId: string;
+  sessionId?: string;
+}): Promise<{
+  correctAnswer?: string;
+  explanation?: string;
+  solutionImageUrl?: string | null;
+  solutionSvgContent?: string | null;
+  jokersRemaining?: number;
+  guestRemaining?: number;
+}> {
+  const authHeaders = await getOptionalAuthHeaders();
+  const res = await fetch('/api/practice/reveal-solution', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders,
+    },
+    credentials: 'include',
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se zobrazit řešení.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return data;
+}
+
+export async function finishPracticeSessionApi(payload: {
+  subtopicId: string;
+  topicId?: string;
+  subjectId?: string;
+  sessionId?: string;
+  answers: Array<{
+    questionId: string;
+    userAnswer: string;
+    isCorrect?: boolean;
+    usedHint?: boolean;
+    selfCheckStatus?: 'correct' | 'partial' | 'wrong';
+    selfScore?: number;
+    errorCode?: string | null;
+    timeSpentMs?: number | null;
+  }>;
+  durationSeconds?: number;
+}): Promise<{
+  ok?: boolean;
+  attemptId?: string;
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  streak?: number;
+}> {
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  if (!token) {
+    throw createApiError('Pro uložení výsledku se musíte přihlásit.', 401, 'AUTH_REQUIRED');
+  }
+  const res = await fetch('/api/practice/finish', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se uložit výsledek procvičování.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return data;
+}
+
+export async function fetchMaterialsCatalog(options?: {
+  includeHidden?: boolean;
+}): Promise<{ materials: ExistingMaterialItem[]; locked: boolean }> {
+  const params = new URLSearchParams();
+  if (options?.includeHidden) params.set('includeHidden', '1');
+  const qs = params.toString();
+  const headers = await getOptionalAuthHeaders();
+  const res = await fetch(`/api/materials${qs ? `?${qs}` : ''}`, {
+    headers,
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se načíst katalog materiálů.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  const rawList: any[] = Array.isArray(data) ? data : (Array.isArray(data.materials) ? data.materials : []);
+  const materials: ExistingMaterialItem[] = rawList.map(item => ({
+    ...item,
+    locked: Boolean(item.locked || data.locked),
+    hasStudyMaterial: item.hasStudyMaterial ?? true,
+  }));
+  return {
+    materials,
+    locked: Boolean(data.locked),
+  };
+}
+
+export async function fetchProtectedMaterialResource(url: string): Promise<{
+  blobUrl?: string;
+  svgMarkup?: string;
+  contentType: string;
+}> {
+  const headers = await getOptionalAuthHeaders();
+  const res = await fetch(url, { headers, credentials: 'include' });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw createApiError(
+      errData.error || `Nepodařilo se načíst materiál (HTTP ${res.status}).`,
+      res.status,
+      errData.code,
+      errData
+    );
+  }
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('image/svg+xml')) {
+    const rawSvg = await res.text();
+    const safeSvg = sanitizeSvg(rawSvg);
+    const svgBlob = new Blob([safeSvg], { type: 'image/svg+xml;charset=utf-8' });
+    return {
+      blobUrl: URL.createObjectURL(svgBlob),
+      svgMarkup: safeSvg,
+      contentType,
+    };
+  }
+  const blob = await res.blob();
+  return {
+    blobUrl: URL.createObjectURL(blob),
+    contentType: contentType || blob.type || 'application/octet-stream',
+  };
+}
+
+export async function downloadProtectedMaterialFile(material: ExistingMaterialItem): Promise<void> {
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  if (!token) {
+    throw createApiError('Pro stažení materiálu je nutné přihlášení.', 401, 'AUTH_REQUIRED');
+  }
+  const targetUrl =
+    material.downloadUrl ||
+    `/api/materials/${encodeURIComponent(material.id)}/download`;
+  const res = await fetch(targetUrl, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const errData = await res.json().catch(() => ({}));
+    throw createApiError(
+      errData.error || `Nepodařilo se stáhnout materiál (HTTP ${res.status}).`,
+      res.status,
+      errData.code,
+      errData
+    );
+  }
+
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  const safeBaseName = String(material.title || material.originalName || 'material')
+    .replace(/[^\w\sáčďéěíňóřšťúůýžÁČĎÉĚÍŇÓŘŠŤÚŮÝŽ-]/gi, '')
+    .trim() || 'material';
+
+  let downloadBlob: Blob;
+  let ext = '.pdf';
+  if (contentType.includes('svg')) {
+    const rawSvg = await res.text();
+    const safeSvg = sanitizeSvg(rawSvg);
+    downloadBlob = new Blob([safeSvg], { type: 'image/svg+xml;charset=utf-8' });
+    ext = '.svg';
+  } else {
+    downloadBlob = await res.blob();
+    if (contentType.includes('png')) ext = '.png';
+    else if (contentType.includes('jpeg') || contentType.includes('jpg')) ext = '.jpg';
+    else if (contentType.includes('webp')) ext = '.webp';
+    else if (contentType.includes('pdf')) ext = '.pdf';
+    else if (material.originalName && material.originalName.includes('.')) {
+      ext = material.originalName.slice(material.originalName.lastIndexOf('.'));
+    }
+  }
+
+  const blobUrl = URL.createObjectURL(downloadBlob);
+  try {
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = safeBaseName.endsWith(ext) ? safeBaseName : `${safeBaseName}${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+  }
+}
+
 // -------------------------------------------------------------
 // TOPICS API (Stored in `customTopics`)
 // -------------------------------------------------------------
 
 export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
   try {
-    const allTopics = await cacheManager.getOrFetch('topics:all', async () => {
-      const collRef = collection(db, 'customTopics');
-      const snap = await getDocs(collRef);
-      return snap.docs.map(d => {
-        const data = d.data();
-        return {
-          id: d.id,
-          title: data.title || data.name || 'Bez názvu',
-          subjectId: data.subjectId || 'Matematika',
-          description: data.description || '',
-          order: typeof data.order === 'number' ? data.order : 0,
-          isHidden: Boolean(data.isHidden),
-          createdAt: data.createdAt,
-          createdBy: data.createdBy
-        } as PracticeTopic;
-      });
+    const allTopics = await cacheManager.getOrFetch(`topics:all:${getCacheScope()}`, async () => {
+      try {
+        const collRef = collection(db, 'customTopics');
+        const snap = await getDocs(collRef);
+        return snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: data.title || data.name || 'Bez názvu',
+            subjectId: data.subjectId || 'Matematika',
+            description: data.description || '',
+            order: typeof data.order === 'number' ? data.order : 0,
+            isHidden: Boolean(data.isHidden),
+            createdAt: data.createdAt,
+            createdBy: data.createdBy
+          } as PracticeTopic;
+        });
+      } catch {
+        const catalog = await fetchPracticeCatalog();
+        return catalog.topics;
+      }
     }, 10 * 60 * 1000);
 
     let topics = allTopics;
@@ -436,10 +804,15 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
 
 export async function getSubtopics(topicId?: string, subjectId?: string): Promise<PracticeSubtopic[]> {
   try {
-    const allSubtopics = await cacheManager.getOrFetch('subtopics:all', async () => {
-      const collRef = collection(db, PRACTICE_SUBTOPICS_COLLECTION);
-      const snap = await getDocs(collRef);
-      return snap.docs.map(mapDocToSubtopic);
+    const allSubtopics = await cacheManager.getOrFetch(`subtopics:all:${getCacheScope()}`, async () => {
+      try {
+        const collRef = collection(db, PRACTICE_SUBTOPICS_COLLECTION);
+        const snap = await getDocs(collRef);
+        return snap.docs.map(mapDocToSubtopic);
+      } catch {
+        const catalog = await fetchPracticeCatalog();
+        return catalog.subtopics;
+      }
     }, 10 * 60 * 1000);
 
     let subtopics: PracticeSubtopic[] = allSubtopics;
@@ -710,7 +1083,11 @@ export async function fetchMaterialStatus(materialId: string): Promise<{
   fileType?: string | null;
   originalName?: string | null;
 }> {
-  const res = await fetch(`/api/materials/${materialId}/status`);
+  const headers = await getOptionalAuthHeaders();
+  const res = await fetch(`/api/materials/${encodeURIComponent(materialId)}/status`, {
+    headers,
+    credentials: 'include',
+  });
   if (!res.ok) {
     throw new Error(`Nepodařilo se ověřit stav materiálu (HTTP ${res.status})`);
   }
@@ -984,7 +1361,7 @@ export async function getMaterialById(materialId: string): Promise<ExistingMater
 
 export async function getAllMaterials(options?: { includeHidden?: boolean }): Promise<ExistingMaterialItem[]> {
   const includeHidden = Boolean(options?.includeHidden);
-  const items = await cacheManager.getOrFetch('materials:all', async () => {
+  const items = await cacheManager.getOrFetch(`materials:all:${getCacheScope()}`, async () => {
     try {
       const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
       const snap = await getDocs(collRef);
@@ -1089,9 +1466,20 @@ export async function getQuestionById(questionId: string): Promise<PracticeQuest
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
     return mapDocToQuestion(snap);
-  } catch (error) {
-    console.error('Error fetching question by ID:', error);
-    return null;
+  } catch {
+    try {
+      const headers = await getOptionalAuthHeaders();
+      const res = await fetch(`/api/inquiries/question/${encodeURIComponent(questionId)}`, {
+        headers,
+        credentials: 'include',
+      });
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      return (data?.question as PracticeQuestion) || null;
+    } catch (error) {
+      console.error('Error fetching question by ID:', error);
+      return null;
+    }
   }
 }
 
@@ -1242,6 +1630,10 @@ export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' 
 
 const ACTIVE_PRACTICE_STORAGE_PREFIX = 'proedu_active_practice_';
 
+export function getActivePracticeStorageKey(studentId: string | undefined, subtopicId: string): string {
+  return `${ACTIVE_PRACTICE_STORAGE_PREFIX}${studentId || 'guest'}_${subtopicId}`;
+}
+
 function getLocalStorage(): Storage | null {
   try {
     if (typeof localStorage !== 'undefined') return localStorage;
@@ -1271,9 +1663,9 @@ export async function saveActivePracticeSession(session: ActivePracticeSession):
 
   const currentAuthUid = auth.currentUser?.uid;
   const studentId = session.studentId || currentAuthUid || '';
-  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${session.subtopicId}`;
+  const storageKey = getActivePracticeStorageKey(studentId || 'guest', session.subtopicId);
 
-  // 1. LocalStorage backup
+  // 1. LocalStorage backup scoped by studentId (nebo 'guest')
   try {
     const localPayload = {
       ...session,
@@ -1318,25 +1710,46 @@ export async function saveActivePracticeSession(session: ActivePracticeSession):
 }
 
 export async function getActivePracticeSession(
-  subtopicId: string, 
+  subtopicId: string,
   studentId?: string
 ): Promise<ActivePracticeSession | null> {
   if (!subtopicId) return null;
 
   const currentAuthUid = auth.currentUser?.uid;
-  const effectiveUserId = studentId || currentAuthUid;
-  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}`;
+  const explicitOrAuthOwner = studentId !== undefined ? (studentId || 'guest') : currentAuthUid;
 
-  // Read local storage first (instant fallback)
+  // Read local storage first (isolated by user)
   let localCandidate: ActivePracticeSession | null = null;
   try {
     const storage = getLocalStorage();
     if (storage) {
-      const raw = storage.getItem(storageKey);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && parsed.subtopicId === subtopicId) {
-          localCandidate = parsed;
+      if (explicitOrAuthOwner) {
+        const storageKey = getActivePracticeStorageKey(explicitOrAuthOwner, subtopicId);
+        const raw = storage.getItem(storageKey);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (
+            parsed &&
+            parsed.subtopicId === subtopicId &&
+            (!parsed.studentId || parsed.studentId === explicitOrAuthOwner || (explicitOrAuthOwner === 'guest' && parsed.studentId === ''))
+          ) {
+            localCandidate = parsed;
+          }
+        }
+      } else {
+        // Offline unit-test mode without auth user and without explicit studentId arg
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          if (key && key.startsWith(ACTIVE_PRACTICE_STORAGE_PREFIX) && key.endsWith(`_${subtopicId}`)) {
+            const raw = storage.getItem(key);
+            if (raw) {
+              const parsed = JSON.parse(raw);
+              if (parsed && parsed.subtopicId === subtopicId) {
+                localCandidate = parsed;
+                break;
+              }
+            }
+          }
         }
       }
     }
@@ -1345,7 +1758,7 @@ export async function getActivePracticeSession(
   }
 
   // If authenticated, check Firestore for authoritative multi-device state
-  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+  if (currentAuthUid && (!studentId || studentId === currentAuthUid)) {
     try {
       const docId = `${currentAuthUid}_${subtopicId}`;
       const docRef = doc(db, 'activePracticeSessions', docId);
@@ -1379,25 +1792,36 @@ export async function getActivePracticeSession(
 }
 
 export async function deleteActivePracticeSession(
-  subtopicId: string, 
+  subtopicId: string,
   studentId?: string
 ): Promise<void> {
   if (!subtopicId) return;
 
   const currentAuthUid = auth.currentUser?.uid;
-  const effectiveUserId = studentId || currentAuthUid;
-  const storageKey = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}`;
+  const explicitOrAuthOwner = studentId !== undefined ? (studentId || 'guest') : currentAuthUid;
 
   try {
     const storage = getLocalStorage();
     if (storage) {
-      storage.removeItem(storageKey);
+      if (explicitOrAuthOwner) {
+        storage.removeItem(getActivePracticeStorageKey(explicitOrAuthOwner, subtopicId));
+        storage.removeItem(`${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}`);
+      } else {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i);
+          if (key && (key === `${ACTIVE_PRACTICE_STORAGE_PREFIX}${subtopicId}` || (key.startsWith(ACTIVE_PRACTICE_STORAGE_PREFIX) && key.endsWith(`_${subtopicId}`)))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(k => storage.removeItem(k));
+      }
     }
   } catch (err) {
     console.warn('Error removing local active practice session:', err);
   }
 
-  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+  if (currentAuthUid && (!studentId || studentId === currentAuthUid)) {
     try {
       const docId = `${currentAuthUid}_${subtopicId}`;
       const docRef = doc(db, 'activePracticeSessions', docId);
@@ -1413,20 +1837,22 @@ export async function getUserActivePracticeSessions(
 ): Promise<Record<string, { answeredCount: number; totalCount: number }>> {
   const result: Record<string, { answeredCount: number; totalCount: number }> = {};
   const currentAuthUid = auth.currentUser?.uid;
-  const effectiveUserId = studentId || currentAuthUid;
+  const effectiveUserId = studentId !== undefined ? (studentId || 'guest') : (currentAuthUid || 'guest');
+  const ownerPrefix = `${ACTIVE_PRACTICE_STORAGE_PREFIX}${effectiveUserId}_`;
 
-  // 1. From localStorage
+  // 1. From localStorage (strictly scoped to effectiveUserId)
   try {
     const storage = getLocalStorage();
     if (storage) {
       for (let i = 0; i < storage.length; i++) {
         const key = storage.key(i);
-        if (key && key.startsWith(ACTIVE_PRACTICE_STORAGE_PREFIX)) {
+        if (key && key.startsWith(ownerPrefix)) {
           const raw = storage.getItem(key);
           if (raw) {
             const parsed = JSON.parse(raw);
             if (parsed && parsed.subtopicId && parsed.answeredCount > 0) {
-              if (!effectiveUserId || !parsed.studentId || parsed.studentId === effectiveUserId) {
+              const storedOwner = parsed.studentId || 'guest';
+              if (storedOwner === effectiveUserId) {
                 result[parsed.subtopicId] = {
                   answeredCount: parsed.answeredCount,
                   totalCount: parsed.totalCount || parsed.questionIds?.length || 0
@@ -1442,7 +1868,7 @@ export async function getUserActivePracticeSessions(
   }
 
   // 2. From Firestore (authoritative)
-  if (currentAuthUid && (!effectiveUserId || effectiveUserId === currentAuthUid)) {
+  if (currentAuthUid && (!studentId || studentId === currentAuthUid)) {
     try {
       const q = query(
         collection(db, 'activePracticeSessions'),

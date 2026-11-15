@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import { useNotifications } from '../hooks/useNotifications';
 import NotificationPopover from './NotificationPopover';
 import { trackSectionClick } from '../services/analyticsService';
+import { sanitizeSafeUrl } from '../utils/svgUtils';
 
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
@@ -35,7 +36,8 @@ interface StudentSidebarProps {
 }
 
 export default function StudentSidebar({ onNavigate, className }: StudentSidebarProps = {}) {
-  const { user, profile, loading, isPremium, isTeacher, jokers, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
+  const { user, profile, loading, isPremium, isCourseUser, isTeacher, jokers, signOut, isProfileSettingsOpen, setIsProfileSettingsOpen, updateProfileData, openAuthModal } = useAuth();
+  const safePhotoUrl = sanitizeSafeUrl(profile?.photoURL);
   const [isAvatarModalOpen, setIsAvatarModalOpen] = React.useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -187,7 +189,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
       {/* User Profile Card Footer */}
       <div className="border-t border-gray-100 pt-5 mt-4 flex flex-col gap-2 relative shrink-0">
-        {user || profile ? (
+        {user && profile ? (
           <>
             <div className="bg-[#FAF7F0] p-3.5 rounded-[1.5rem] border border-gray-200/60 shadow-2xs space-y-2.5">
               {/* Řádek 1: Avatar, Jméno a Akční tlačítka (Notifikace + Odhlášení) */}
@@ -201,8 +203,8 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                   >
                     {profile?.avatarEmoji ? (
                       <span className="text-xl leading-none">{profile.avatarEmoji}</span>
-                    ) : profile?.photoURL ? (
-                      <img src={profile.photoURL} alt={profile.name} className="w-full h-full object-cover" />
+                    ) : safePhotoUrl ? (
+                      <img src={safePhotoUrl} alt={profile.name} className="w-full h-full object-cover" />
                     ) : (
                       <CapIcon size={22} />
                     )}
@@ -257,7 +259,16 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
               {/* Řádek 2: Role / Odznáček plánu a žolíky (kliknutím otevře Správu předplatného) */}
               <div className="pt-2 border-t border-gray-200/50 flex items-center justify-between gap-1.5">
-                {profile?.role === 'premium' ? (
+                {isTeacher ? (
+                  <Link
+                    to="/settings?tab=subscription"
+                    onClick={onNavigate}
+                    title="Otevřít správu předplatného"
+                    className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 hover:bg-purple-200/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                  >
+                    <StarYellowIcon size={14} /> Učitel
+                  </Link>
+                ) : profile?.role === 'premium' && isPremium ? (
                   <Link
                     to="/settings?tab=subscription"
                     onClick={onNavigate}
@@ -266,7 +277,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                   >
                     <StarPinkIcon size={14} /> Premium účet
                   </Link>
-                ) : profile?.role === 'course' ? (
+                ) : isCourseUser ? (
                   <Link
                     to="/settings?tab=subscription"
                     onClick={onNavigate}
@@ -274,15 +285,6 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                     className="w-full text-center text-[10px] font-black uppercase tracking-wider text-blue-800 bg-blue-100/90 hover:bg-blue-200/90 py-1 px-2.5 rounded-lg border border-blue-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
                   >
                     <CapIcon size={14} /> Kurz student
-                  </Link>
-                ) : profile?.role === 'teacher' ? (
-                  <Link
-                    to="/settings?tab=subscription"
-                    onClick={onNavigate}
-                    title="Otevřít správu předplatného"
-                    className="w-full text-center text-[10px] font-black uppercase tracking-wider text-purple-800 bg-purple-100/90 hover:bg-purple-200/90 py-1 px-2.5 rounded-lg border border-purple-200/60 flex items-center justify-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
-                  >
-                    <StarYellowIcon size={14} /> Učitel
                   </Link>
                 ) : (
                   <div className="flex items-center justify-between w-full">

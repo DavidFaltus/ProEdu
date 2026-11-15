@@ -388,9 +388,13 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
 
     const { explicitBankAccountId } = getConfig();
     const [companyProfile, bankAccountsResp] = await Promise.all([
-      iuctoRequest('/company_profile').catch(() => null),
+      iuctoRequest('/company_profile'),
       iuctoRequest('/bank_account?page=1&pageSize=50')
     ]);
+
+    if (!companyProfile || typeof companyProfile.vat_payer !== 'boolean') {
+      throw new Error('iÚčto /company_profile nevrátil platný stav plátcovství DPH (vat_payer).');
+    }
 
     const bankAccounts = bankAccountsResp?._embedded?.bank_account || [];
     let comgateBankAccount = null;
@@ -413,19 +417,27 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
       );
     }
 
-    const isVatPayer = Boolean(companyProfile?.vat_payer);
+    const isVatPayer = Boolean(companyProfile.vat_payer);
     const vatRegex = isVatPayer ? /zdaniteln|čr|tuzem/i : /bez dph|neplátce|osvobozen/i;
 
+    let accountingFetchFailed = false;
+    const safeDictFetch = (path) =>
+      iuctoRequest(path).catch((err) => {
+        accountingFetchFailed = true;
+        console.warn(`[iÚčto] Nepodařilo se načíst číselník ${path}:`, err?.message || err);
+        return null;
+      });
+
     const [aeFv, vatFv, aePp, vatPp, aeOdv, vatOdv] = await Promise.all([
-      iuctoRequest('/accountentry_type?doctype=FV').catch(() => null),
-      iuctoRequest('/vat_type?doctype=FV').catch(() => null),
-      iuctoRequest('/accountentry_type?doctype=PP').catch(() => null),
-      iuctoRequest('/vat_type?doctype=PP').catch(() => null),
-      iuctoRequest('/accountentry_type?doctype=ODV').catch(() => null),
-      iuctoRequest('/vat_type?doctype=ODV').catch(() => null)
+      safeDictFetch('/accountentry_type?doctype=FV'),
+      safeDictFetch('/vat_type?doctype=FV'),
+      safeDictFetch('/accountentry_type?doctype=PP'),
+      safeDictFetch('/vat_type?doctype=PP'),
+      safeDictFetch('/accountentry_type?doctype=ODV'),
+      safeDictFetch('/vat_type?doctype=ODV')
     ]);
 
-    dictionaryCache = {
+    const resolved = {
       companyProfile,
       isVatPayer,
       bankAccountId: Number(comgateBankAccount.id),
@@ -436,8 +448,12 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
         ODV: pickEntryPair(aeOdv, vatOdv, /služb|sluzb|prodej|dobropis/i, vatRegex)
       }
     };
-    dictionaryCacheExpiresAt = Date.now() + DICTIONARY_CACHE_TTL_MS;
-    return dictionaryCache;
+
+    if (!accountingFetchFailed) {
+      dictionaryCache = resolved;
+      dictionaryCacheExpiresAt = Date.now() + DICTIONARY_CACHE_TTL_MS;
+    }
+    return resolved;
   }
 
   function hasCustomerChanged(existing, desired) {
@@ -459,6 +475,8 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
 
   /**
    * Najde, založí nebo aktualizuje zákazníka v iÚčtu.
+   * Páruje výhradně podle iuctoCustomerId (s ověřením external_code) nebo external_code (PROEDU_<uid>),
+   * nikdy ne podle IČO či e-mailu napříč uživateli.
    */
   async function syncCustomer({ userId, userDoc = {}, order = {} }) {
     const desired = buildCustomerPayload({ userId, userDoc, order });
@@ -466,7 +484,15 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
 
     if (userDoc?.iuctoCustomerId) {
       try {
-        existing = await iuctoRequest(`/customer/${Number(userDoc.iuctoCustomerId)}`);
+        const candidate = await iuctoRequest(`/customer/${Number(userDoc.iuctoCustomerId)}`);
+        if (
+          candidate?.id &&
+          (!candidate.external_code ||
+            !desired.external_code ||
+            String(candidate.external_code) === String(desired.external_code))
+        ) {
+          existing = candidate;
+        }
       } catch (err) {
         if (err.statusCode !== 404) throw err;
       }
@@ -476,17 +502,10 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
       const list = await iuctoRequest(
         `/customer?external_code=${encodeURIComponent(desired.external_code)}&pageSize=1`
       );
-      existing = list?._embedded?.customer?.[0] || null;
-    }
-
-    if (!existing && desired.comid) {
-      const list = await iuctoRequest(`/customer?comid=${encodeURIComponent(desired.comid)}&pageSize=1`);
-      existing = list?._embedded?.customer?.[0] || null;
-    }
-
-    if (!existing && desired.email) {
-      const list = await iuctoRequest(`/customer?email=${encodeURIComponent(desired.email)}&pageSize=1`);
-      existing = list?._embedded?.customer?.[0] || null;
+      const found = list?._embedded?.customer?.[0] || null;
+      if (found?.id && (!found.external_code || String(found.external_code) === String(desired.external_code))) {
+        existing = found;
+      }
     }
 
     if (existing?.id) {
@@ -509,8 +528,11 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
 
   /**
    * Vystaví uhrazenou vydanou fakturu v iÚčtu, spáruje přijatou platbu a stáhne PDF.
+   * Při částečném neúspěchu připojí err.partialResult (i zavolá onProgress),
+   * aby volající mohl bezpečně uložit již vytvořenou fakturu/platbu a při opakování nevznikl duplikát.
+   * @param {{ orderId?: string, order?: Record<string, any>, userDoc?: Record<string, any>, onProgress?: Function }} [params]
    */
-  async function issuePaidInvoice({ orderId, order = {}, userDoc = {} }) {
+  async function issuePaidInvoice({ orderId, order = {}, userDoc = {}, onProgress } = {}) {
     const gate = shouldRunIuctoForOrder(order, env);
     if (!gate.allowed) {
       return { skipped: true, reason: gate.reason };
@@ -526,73 +548,103 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
 
     let invoiceId = order.iuctoInvoiceId ? Number(order.iuctoInvoiceId) : null;
     let invoiceNumber = order.iuctoInvoiceNumber || null;
-
-    if (!invoiceId) {
-      const invoicePayload = buildInvoiceIssuedPayload({
-        customerId,
-        orderId,
-        order,
-        bankAccountId: dict.bankAccountId,
-        isVatPayer: dict.isVatPayer,
-        accountingEntry: dict.accounting.FV
-      });
-
-      const createdInvoice = await iuctoRequest('/invoice_issued', {
-        method: 'POST',
-        body: invoicePayload
-      });
-
-      invoiceId = Number(createdInvoice.id);
-      invoiceNumber = createdInvoice.sequence_code || String(invoiceId);
-
-      if (autoAccount && dict.accounting.FV) {
-        await iuctoRequest(`/invoice_issued/${invoiceId}/account`, { method: 'PUT' }).catch(err => {
-          console.warn(`[iÚčto] Nepodařilo se automaticky zaúčtovat fakturu ${invoiceId}:`, err.message);
-        });
-      }
-    }
-
     let paymentId = order.iuctoPaymentId ? Number(order.iuctoPaymentId) : null;
-    if (!paymentId) {
-      const paymentPayload = buildPaymentReceivedPayload({
-        customerId,
-        invoiceId,
-        invoiceNumber,
-        order,
-        bankAccountId: dict.bankAccountId,
-        isVatPayer: dict.isVatPayer,
-        accountingEntry: dict.accounting.PP
-      });
 
-      const createdPayment = await iuctoRequest('/payment_received', {
-        method: 'POST',
-        body: paymentPayload
-      });
-      paymentId = Number(createdPayment.id);
-
-      if (autoAccount && dict.accounting.PP) {
-        await iuctoRequest(`/payment_received/${paymentId}/account`, { method: 'PUT' }).catch(err => {
-          console.warn(`[iÚčto] Nepodařilo se automaticky zaúčtovat platbu ${paymentId}:`, err.message);
-        });
+    const notifyProgress = async (extra = {}) => {
+      if (typeof onProgress === 'function') {
+        try {
+          await onProgress({
+            iuctoCustomerId: customerId,
+            ...(invoiceId ? { iuctoInvoiceId: String(invoiceId) } : {}),
+            ...(invoiceNumber ? { iuctoInvoiceNumber: String(invoiceNumber) } : {}),
+            ...(paymentId ? { iuctoPaymentId: String(paymentId) } : {}),
+            ...extra
+          });
+        } catch (progressErr) {
+          console.warn('[iÚčto] onProgress selhal:', progressErr?.message || progressErr);
+        }
       }
-    }
-
-    const pdfBuffer = await iuctoRequest(`/invoice_issued/${invoiceId}/pdf`, {
-      accept: 'application/pdf',
-      responseType: 'buffer'
-    });
-
-    const safeNumber = String(invoiceNumber || invoiceId).replace(/[^a-zA-Z0-9_-]/g, '_');
-
-    return {
-      skipped: false,
-      iuctoCustomerId: customerId,
-      iuctoInvoiceId: String(invoiceId),
-      iuctoInvoiceNumber: String(invoiceNumber || invoiceId),
-      iuctoPaymentId: String(paymentId),
-      pdfBuffer,
-      pdfFilename: `faktura-${safeNumber}.pdf`
     };
+
+    try {
+      if (!invoiceId) {
+        const invoicePayload = buildInvoiceIssuedPayload({
+          customerId,
+          orderId,
+          order,
+          bankAccountId: dict.bankAccountId,
+          isVatPayer: dict.isVatPayer,
+          accountingEntry: dict.accounting.FV
+        });
+
+        const createdInvoice = await iuctoRequest('/invoice_issued', {
+          method: 'POST',
+          body: invoicePayload
+        });
+
+        invoiceId = Number(createdInvoice.id);
+        invoiceNumber = createdInvoice.sequence_code || String(invoiceId);
+        await notifyProgress();
+
+        if (autoAccount && dict.accounting.FV) {
+          await iuctoRequest(`/invoice_issued/${invoiceId}/account`, { method: 'PUT' }).catch((err) => {
+            console.warn(`[iÚčto] Nepodařilo se automaticky zaúčtovat fakturu ${invoiceId}:`, err.message);
+          });
+        }
+      }
+
+      if (!paymentId) {
+        const paymentPayload = buildPaymentReceivedPayload({
+          customerId,
+          invoiceId,
+          invoiceNumber,
+          order,
+          bankAccountId: dict.bankAccountId,
+          isVatPayer: dict.isVatPayer,
+          accountingEntry: dict.accounting.PP
+        });
+
+        const createdPayment = await iuctoRequest('/payment_received', {
+          method: 'POST',
+          body: paymentPayload
+        });
+        paymentId = Number(createdPayment.id);
+        await notifyProgress();
+
+        if (autoAccount && dict.accounting.PP) {
+          await iuctoRequest(`/payment_received/${paymentId}/account`, { method: 'PUT' }).catch((err) => {
+            console.warn(`[iÚčto] Nepodařilo se automaticky zaúčtovat platbu ${paymentId}:`, err.message);
+          });
+        }
+      }
+
+      const pdfBuffer = await iuctoRequest(`/invoice_issued/${invoiceId}/pdf`, {
+        accept: 'application/pdf',
+        responseType: 'buffer'
+      });
+
+      const safeNumber = String(invoiceNumber || invoiceId).replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      return {
+        skipped: false,
+        iuctoCustomerId: customerId,
+        iuctoInvoiceId: String(invoiceId),
+        iuctoInvoiceNumber: String(invoiceNumber || invoiceId),
+        iuctoPaymentId: String(paymentId),
+        pdfBuffer,
+        pdfFilename: `faktura-${safeNumber}.pdf`
+      };
+    } catch (err) {
+      if (err && typeof err === 'object') {
+        err.partialResult = {
+          iuctoCustomerId: customerId,
+          iuctoInvoiceId: invoiceId ? String(invoiceId) : null,
+          iuctoInvoiceNumber: invoiceNumber ? String(invoiceNumber) : null,
+          iuctoPaymentId: paymentId ? String(paymentId) : null
+        };
+      }
+      throw err;
+    }
   }
 
   /**

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -12,8 +12,18 @@ import { motion, AnimatePresence } from 'motion/react';
 import { toast } from 'sonner';
 
 export default function Login() {
+  const [searchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
-  const [isLogin, setIsLogin] = useState(true);
+  const [isLogin, setIsLogin] = useState(() => Boolean(searchParams.get('ref')) ? false : true);
+  const [pendingReferralCode, setPendingReferralCode] = useState<string>(() => {
+    try {
+      const refFromUrl = searchParams.get('ref')?.trim();
+      if (refFromUrl) return refFromUrl;
+      return localStorage.getItem('proedu_pending_referral') || '';
+    } catch {
+      return '';
+    }
+  });
   const [step, setStep] = useState<'form' | 'otp'>('form');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -33,6 +43,16 @@ export default function Login() {
     resendRegistrationOtp 
   } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const refParam = searchParams.get('ref')?.trim();
+    if (refParam) {
+      setPendingReferralCode(refParam);
+      try {
+        localStorage.setItem('proedu_pending_referral', refParam);
+      } catch {}
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -188,6 +208,12 @@ export default function Login() {
           <CardContent className="px-8 pb-10">
             {step === 'form' ? (
               <form onSubmit={handleAuth} className="space-y-5">
+                {pendingReferralCode && !isLogin && (
+                  <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200/80 text-emerald-900 text-xs font-bold flex items-center gap-2">
+                    <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
+                    <span>Zvací kód <strong>{pendingReferralCode}</strong> je připraven – bonusové žolíky se připíšou po registraci.</span>
+                  </div>
+                )}
                 <AnimatePresence mode="wait">
                   {!isLogin && (
                     <motion.div

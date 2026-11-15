@@ -51,6 +51,7 @@ import { LiveLesson, TodoItem } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { sanitizeSafeUrl } from '../utils/svgUtils';
 
 interface QuickCalendarProps {
   todos: TodoItem[];
@@ -125,6 +126,15 @@ export default function QuickCalendar({
         t.type !== 'practice' ||
         Boolean(t.addedBy && user?.uid && t.addedBy !== user.uid)
     );
+  }, [todos, isPremium, user?.uid]);
+
+  const hiddenSelfScheduledCount = useMemo(() => {
+    if (isPremium) return 0;
+    return todos.filter(
+      (t) =>
+        t.type === 'practice' &&
+        !(t.addedBy && user?.uid && t.addedBy !== user.uid)
+    ).length;
   }, [todos, isPremium, user?.uid]);
 
   const monthStart = startOfMonth(currentDate);
@@ -322,10 +332,15 @@ export default function QuickCalendar({
           setGoogleAccessToken(token);
         } catch (authError: any) {
           if (dayLessons.length > 0) {
-            window.open(getGoogleCalendarWebUrl(dayLessons[0]), '_blank');
-            toast.info(
-              'Otevřeno v Google Kalendáři pro snadné uložení jedním kliknutím.'
-            );
+            const safeCalUrl = sanitizeSafeUrl(getGoogleCalendarWebUrl(dayLessons[0]));
+            if (safeCalUrl) {
+              window.open(safeCalUrl, '_blank', 'noopener,noreferrer');
+              toast.info(
+                'Otevřeno v Google Kalendáři pro snadné uložení jedním kliknutím.'
+              );
+            } else {
+              toast.error('Odkaz na Google Kalendář není platný.');
+            }
             setIsSyncing(false);
             return;
           }
@@ -706,6 +721,26 @@ export default function QuickCalendar({
 
         {/* Scrollable Items List */}
         <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto space-y-3 max-h-[380px] scrollbar-hide">
+          {!isPremium && hiddenSelfScheduledCount > 0 && (
+            <div className="p-3 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-950 text-xs flex items-start gap-2.5 shadow-2xs">
+              <Lock size={15} className="text-amber-700 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-bold leading-snug">
+                  Vlastní studijní plány ({hiddenSelfScheduledCount}) jsou uzamčeny
+                </p>
+                <p className="text-[11px] text-amber-800 leading-relaxed">
+                  Vlastní plánování procvičování v kalendáři vyžaduje aktivní tarif Premium.{' '}
+                  <button
+                    type="button"
+                    onClick={() => navigate('/settings?tab=subscription')}
+                    className="font-black underline hover:text-amber-950 cursor-pointer"
+                  >
+                    Obnovit předplatné
+                  </button>
+                </p>
+              </div>
+            </div>
+          )}
           <AnimatePresence mode="wait">
             {hasEventsForSelectedDay ? (
               <motion.div
@@ -781,11 +816,16 @@ export default function QuickCalendar({
                               if (onJoinLesson) {
                                 onJoinLesson(lesson);
                               } else {
-                                window.open(
-                                  lesson.meetUrl,
-                                  '_blank',
-                                  'noopener,noreferrer'
-                                );
+                                const safeMeetUrl = sanitizeSafeUrl(lesson.meetUrl);
+                                if (safeMeetUrl) {
+                                  window.open(
+                                    safeMeetUrl,
+                                    '_blank',
+                                    'noopener,noreferrer'
+                                  );
+                                } else {
+                                  toast.error('Odkaz na online lekci není platný.');
+                                }
                               }
                             }}
                             className={cn(
@@ -1062,11 +1102,16 @@ export default function QuickCalendar({
                                   if (onJoinLesson) {
                                     onJoinLesson(lesson);
                                   } else {
-                                    window.open(
-                                      lesson.meetUrl,
-                                      '_blank',
-                                      'noopener,noreferrer'
-                                    );
+                                    const safeMeetUrl = sanitizeSafeUrl(lesson.meetUrl);
+                                    if (safeMeetUrl) {
+                                      window.open(
+                                        safeMeetUrl,
+                                        '_blank',
+                                        'noopener,noreferrer'
+                                      );
+                                    } else {
+                                      toast.error('Odkaz na online lekci není platný.');
+                                    }
                                   }
                                 }}
                                 className={cn(

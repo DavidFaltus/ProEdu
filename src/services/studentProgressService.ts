@@ -1,4 +1,4 @@
-import { collection, getDocs, query, orderBy, Timestamp, doc, updateDoc } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { UserProfile, PracticeSubtopic } from '../types';
 import { getSubtopics } from './practiceService';
@@ -88,18 +88,40 @@ function parseTestAttempt(
   }
 }
 
+let studentsProgressCache: { data: StudentProgressItem[] | null; expiresAt: number } = {
+  data: null,
+  expiresAt: 0,
+};
+
+export function invalidateStudentsProgressCache(): void {
+  studentsProgressCache.data = null;
+  studentsProgressCache.expiresAt = 0;
+}
+
 /**
- * Načte všechny studenty a k nim přiřadí jejich historii a statistiky procvičování.
+ * Načte studenty a k nim přiřadí jejich historii a statistiky procvičování (s limitem a 60s cache).
  */
-export async function getStudentsProgressList(): Promise<StudentProgressItem[]> {
+export async function getStudentsProgressList(options?: {
+  maxStudents?: number;
+  maxTests?: number;
+  forceRefresh?: boolean;
+}): Promise<StudentProgressItem[]> {
   try {
-    // 1. Paralelně načteme uživatele, podtémata a testy
+    const now = Date.now();
+    if (!options?.forceRefresh && studentsProgressCache.data && studentsProgressCache.expiresAt > now) {
+      return studentsProgressCache.data;
+    }
+
+    const maxStudents = Math.min(500, Math.max(25, options?.maxStudents || 200));
+    const maxTests = Math.min(2000, Math.max(100, options?.maxTests || 500));
+
+    // 1. Paralelně načteme uživatele, podtémata a testy s explicitním limitem
     const [usersSnap, subtopicsList, testsSnap] = await Promise.all([
-      getDocs(collection(db, 'users')),
+      getDocs(query(collection(db, 'users'), limit(maxStudents))),
       getSubtopics(),
-      getDocs(query(collection(db, 'tests'), orderBy('createdAt', 'desc'))).catch(async () => {
+      getDocs(query(collection(db, 'tests'), orderBy('createdAt', 'desc'), limit(maxTests))).catch(async () => {
         // Fallback pokud není vytvořen index na createdAt
-        return getDocs(collection(db, 'tests'));
+        return getDocs(query(collection(db, 'tests'), limit(maxTests)));
       })
     ]);
 
@@ -184,6 +206,11 @@ export async function getStudentsProgressList(): Promise<StudentProgressItem[]> 
       return a.name.localeCompare(b.name, 'cs');
     });
 
+    studentsProgressCache = {
+      data: students,
+      expiresAt: Date.now() + 60 * 1000,
+    };
+
     return students;
   } catch (error) {
     console.error('Error fetching students progress list:', error);
@@ -195,54 +222,43 @@ export async function getStudentsProgressList(): Promise<StudentProgressItem[]> 
  * Aktualizace statusu/role a přiřazených kurzů studenta administrátorem.
  */
 export async function updateStudentAccess(
-  studentId: string, 
+  studentId: string,
   data: { role: string; enrolledCourseIds: string[] }
 ): Promise<{ success: boolean; role: string; enrolledCourseIds: string[]; courseId?: string | null }> {
-  const safeCourseIds = Array.isArray(data.enrolledCourseIds) 
+  invalidateStudentsProgressCache();
+  const safeCourseIds = Array.isArray(data.enrolledCourseIds)
     ? data.enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0)
     : [];
   const safeRole = data.role || 'free';
-  const primaryCourseId = safeCourseIds.length > 0 ? safeCourseIds[0] : null;
-
-  // 1. Přímý a spolehlivý zápis do Firestore (učitel má v Firestore rules explicitní oprávnění isAdmin())
-  const userDocRef = doc(db, 'users', studentId);
-  const updatePayload: Record<string, any> = {
-    role: safeRole,
-    enrolledCourseIds: safeCourseIds,
-    courseId: primaryCourseId
-  };
-
-  await updateDoc(userDocRef, updatePayload);
-
-  // 2. Na pozadí (neblokující s timeoutem 1.5s) synchronizujeme cache serveru, pokud server běží
-  try {
-    const token = await auth.currentUser?.getIdToken();
-    if (token) {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      fetch(`/api/students/${studentId}/update-access`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ role: safeRole, enrolledCourseIds: safeCourseIds }),
-        signal: controller.signal
-      }).catch(() => {
-        // Ignorujeme tiché chyby z neblokující synchronizace
-      }).finally(() => {
-        clearTimeout(timeoutId);
-      });
-    }
-  } catch {
-    // Tichý fallback
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) {
+    throw new Error('Pro úpravu oprávnění studenta musíte být přihlášen jako učitel.');
   }
+
+  const res = await fetch(`/api/students/${encodeURIComponent(studentId)}/update-access`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ role: safeRole, enrolledCourseIds: safeCourseIds }),
+  });
+
+  const contentType = res.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json') ? await res.json().catch(() => null) : null;
+  if (!res.ok) {
+    throw new Error(payload?.error || 'Nepodařilo se aktualizovat oprávnění studenta na serveru.');
+  }
+
+  const finalCourseIds = Array.isArray(payload?.enrolledCourseIds) ? payload.enrolledCourseIds : safeCourseIds;
+  const finalRole = payload?.role || safeRole;
+  const primaryCourseId = payload?.courseId ?? (finalCourseIds.length > 0 ? finalCourseIds[0] : null);
 
   return {
     success: true,
-    role: safeRole,
-    enrolledCourseIds: safeCourseIds,
-    courseId: primaryCourseId
+    role: finalRole,
+    enrolledCourseIds: finalCourseIds,
+    courseId: primaryCourseId,
   };
 }
 

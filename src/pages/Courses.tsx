@@ -14,18 +14,14 @@ import {
 } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
-import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import { Course } from '../types';
 import { DEFAULT_FLAGSHIP_COURSES, getAllCourses } from '../services/courseService';
 import { trackSectionClick } from '../services/analyticsService';
 
 export default function Courses() {
-  const { profile, user, isCourseUser, isTeacher, hasCourseAccess } = useAuth();
+  const { isTeacher, hasCourseAccess } = useAuth();
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Paywall modal state for the banner
-  const [isPaywallOpen, setIsPaywallOpen] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -214,17 +210,18 @@ export default function Courses() {
               Odemkni si živou online výuku s lektorem
             </h2>
             <p className="text-gray-600 text-sm sm:text-base max-w-xl leading-relaxed font-medium">
-              Klikni na libovolný kurz níže pro zobrazení podrobné osnovy témat, harmonogramu a náročnosti.
+              Klikni na libovolný kurz níže pro zobrazení podrobné osnovy témat a harmonogramu. Přístup do kurzu přiděluje lektor individuálně po domluvě.
             </p>
           </div>
 
-          <Button
-            onClick={() => setIsPaywallOpen(true)}
-            className="h-13 px-8 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm shadow-sm border border-blue-200/80 shrink-0 cursor-pointer flex items-center gap-2 relative z-10 transition-all hover:scale-102"
-          >
-            <CapIcon size={19} />
-            <span>Zapsat se do kurzu</span>
-          </Button>
+          <Link to="/contact" className="shrink-0 relative z-10">
+            <Button
+              className="h-13 px-8 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm shadow-sm border border-blue-200/80 cursor-pointer flex items-center gap-2 transition-all hover:scale-102"
+            >
+              <CapIcon size={19} />
+              <span>Domluvit si zápis do kurzu</span>
+            </Button>
+          </Link>
         </div>
       )}
 
@@ -311,19 +308,6 @@ export default function Courses() {
           </AnimatePresence>
         </div>
       )}
-
-      {/* Sjednocený Paywall Modal pro Kurzy (pro tlačítko v banneru) */}
-      <UnifiedPaywallModal
-        isOpen={isPaywallOpen}
-        onClose={() => setIsPaywallOpen(false)}
-        type="course"
-        title="Výběr z aktuální nabídky kurzů"
-        description="Získej přístup k živým online lekcím, záznamům výuky, konzultacím a studijním materiálům kurzu."
-        onSuccess={() => {
-          setIsPaywallOpen(false);
-          window.location.reload();
-        }}
-      />
     </div>
   );
 }

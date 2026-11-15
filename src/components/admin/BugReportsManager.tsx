@@ -35,6 +35,7 @@ import {
   deleteBugReport, 
   getCategoryLabel 
 } from '../../services/bugReportService';
+import { sanitizeSafeUrl } from '../../utils/svgUtils';
 import { toast } from 'sonner';
 
 export default function BugReportsManager() {
@@ -499,30 +500,34 @@ export default function BugReportsManager() {
                   </p>
                 </div>
 
-                {/* Screenshot (pokud je přiložen) */}
-                {report.screenshotUrl && (
-                  <div>
-                    <p className="text-xs font-black uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1.5">
-                      <ImageIcon size={14} />
-                      Přiložený snímek obrazovky:
-                    </p>
-                    <div className="relative inline-block border border-gray-200 rounded-2xl overflow-hidden group cursor-pointer bg-gray-900">
-                      <img
-                        src={report.screenshotUrl}
-                        alt="Screenshot chyby"
-                        onClick={() => setPreviewImage(report.screenshotUrl || null)}
-                        className="max-h-48 max-w-full sm:max-w-md object-contain rounded-2xl transition-transform group-hover:scale-102"
-                      />
-                      <button
-                        onClick={() => setPreviewImage(report.screenshotUrl || null)}
-                        className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-xs gap-1.5"
-                      >
-                        <Maximize2 size={16} />
-                        Zvětšit obrázek
-                      </button>
+                {/* Screenshot (pokud je přiložen bezpečný URL) */}
+                {(() => {
+                  const safeScreenshotUrl = sanitizeSafeUrl(report.screenshotUrl);
+                  if (!safeScreenshotUrl) return null;
+                  return (
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wider text-gray-400 mb-2 flex items-center gap-1.5">
+                        <ImageIcon size={14} />
+                        Přiložený snímek obrazovky:
+                      </p>
+                      <div className="relative inline-block border border-gray-200 rounded-2xl overflow-hidden group cursor-pointer bg-gray-900">
+                        <img
+                          src={safeScreenshotUrl}
+                          alt="Screenshot chyby"
+                          onClick={() => setPreviewImage(safeScreenshotUrl)}
+                          className="max-h-48 max-w-full sm:max-w-md object-contain rounded-2xl transition-transform group-hover:scale-102"
+                        />
+                        <button
+                          onClick={() => setPreviewImage(safeScreenshotUrl)}
+                          className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-xs gap-1.5"
+                        >
+                          <Maximize2 size={16} />
+                          Zvětšit obrázek
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Metadata & Odesílatel */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-xs">
@@ -531,31 +536,46 @@ export default function BugReportsManager() {
                     <p className="font-bold text-[#0F2942]">
                       {report.userName} ({report.userEmail})
                     </p>
-                    <div className="pt-1">
-                      <a
-                        href={`mailto:${report.userEmail}?subject=Re:%20Va%C5%A1e%20hl%C3%A1%C5%A1en%C3%AD%20chyby%20v%20ProEdu`}
-                        className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline"
-                      >
-                        <Mail size={13} />
-                        Odpovědět studentovi na e-mail
-                      </a>
-                    </div>
+                    {report.userEmail && !/[\r\n<>]/.test(report.userEmail) && (
+                      <div className="pt-1">
+                        <a
+                          href={`mailto:${encodeURIComponent(report.userEmail.trim())}?subject=Re:%20Va%C5%A1e%20hl%C3%A1%C5%A1en%C3%AD%20chyby%20v%20ProEdu`}
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline"
+                        >
+                          <Mail size={13} />
+                          Odpovědět studentovi na e-mail
+                        </a>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1.5 p-3 rounded-2xl bg-gray-50 border border-gray-100">
                     <p className="font-bold text-gray-500 uppercase tracking-wider text-[10px]">Lokalita a zařízení</p>
                     <div className="flex items-center gap-1">
                       <span className="text-gray-500">URL:</span>
-                      <a
-                        href={report.pageUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="font-mono text-blue-600 hover:underline truncate inline-flex items-center gap-1"
-                        title={report.pageUrl}
-                      >
-                        {report.pageUrl}
-                        <ExternalLink size={11} className="shrink-0" />
-                      </a>
+                      {(() => {
+                        const safePageUrl = sanitizeSafeUrl(report.pageUrl);
+                        if (!safePageUrl) {
+                          return (
+                            <span className="font-mono text-gray-500 truncate" title={report.pageUrl}>
+                              {report.pageUrl || '—'}
+                            </span>
+                          );
+                        }
+                        return (
+                          <a
+                            href={safePageUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-mono text-blue-600 hover:underline truncate inline-flex items-center gap-1"
+                            title={safePageUrl}
+                          >
+                            {report.pageUrl}
+                            <ExternalLink size={11} className="shrink-0" />
+                          </a>
+                        );
+                      })()}
                     </div>
                     {report.screenResolution && (
                       <p className="text-gray-500">
@@ -643,9 +663,9 @@ export default function BugReportsManager() {
               className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
             />
             <a
-              href={previewImage}
+              href={sanitizeSafeUrl(previewImage) || '#'}
               target="_blank"
-              rel="noreferrer"
+              rel="noopener noreferrer"
               className="mt-3 text-xs text-white/80 hover:text-white underline inline-flex items-center gap-1"
             >
               Otevřít v novém okně v plném rozlišení <ExternalLink size={12} />

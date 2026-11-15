@@ -368,9 +368,8 @@ export default function Garden() {
               <div>
                 <label className="text-xs font-bold text-gray-400 uppercase tracking-widest block mb-2 px-1">Délka soustředění</label>
                 <div className="flex flex-wrap gap-2">
-                  {[0.166, 15, 25, 40, 60].map(mins => {
-                    const isTest = mins === 0.166;
-                    const label = isTest ? "10s (Test)" : `${mins}m`;
+                  {[15, 25, 40, 60].map(mins => {
+                    const label = `${mins}m`;
                     return (
                       <button
                         key={mins}

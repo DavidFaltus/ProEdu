@@ -1,4 +1,4 @@
-import { collection, getDocs, query, where, limit } from 'firebase/firestore';
+import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { PracticeSubtopic } from '../types';
 import { getTopics, getSubtopics } from './practiceService';
@@ -28,52 +28,6 @@ interface AttemptStats {
   bestPercentage: number;
   lastAttemptAt: Date;
 }
-
-// Fallback topics if Firestore has no subtopics yet
-const FALLBACK_TOPICS: RecommendedPracticeItem[] = [
-  {
-    subtopicId: 'math-linear-equations',
-    title: 'Lineární rovnice a výrazy',
-    subject: 'Matematika',
-    difficulty: '10 úloh • Střední',
-    icon: 'mozek',
-    bg: 'bg-blue-100 text-blue-700',
-    tagClass: 'bg-blue-50 text-blue-700 border border-blue-200',
-    badge: {
-      text: 'Klíčové k PZ',
-      variant: 'accent'
-    },
-    reasonText: 'Základní pilíř testů Cermat – algebra a rovnice'
-  },
-  {
-    subtopicId: 'cz-spelling-rules',
-    title: 'Pravopis velkých písmen a shoda',
-    subject: 'Čeština',
-    difficulty: '10 úloh • Klíčové',
-    icon: 'kniha',
-    bg: 'bg-rose-100 text-rose-700',
-    tagClass: 'bg-rose-50 text-rose-700 border border-rose-200',
-    badge: {
-      text: 'Časté chyby',
-      variant: 'warning'
-    },
-    reasonText: 'Oblast, kde studenti na zkouškách nejčastěji ztrácejí body'
-  },
-  {
-    subtopicId: 'cz-reading-comprehension',
-    title: 'Práce s textem a porozumění',
-    subject: 'Čeština',
-    difficulty: '10 úloh • Cermat typ',
-    icon: 'material',
-    bg: 'bg-emerald-100 text-emerald-700',
-    tagClass: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
-    badge: {
-      text: 'Cermat formát',
-      variant: 'success'
-    },
-    reasonText: 'Analýza výchozích textů a kritické čtení'
-  }
-];
 
 function getVisualProps(title: string, subject: 'Matematika' | 'Čeština') {
   const t = title.toLowerCase();
@@ -169,6 +123,12 @@ export async function getPersonalizedRecommendations(
       getSubtopics()
     ]);
 
+    const topicTitleMap = new Map<string, string>();
+    allTopics.forEach(t => {
+      topicTitleMap.set(t.id, t.title);
+      if (t.title) topicTitleMap.set(t.title, t.title);
+    });
+
     const hiddenTopicKeys = new Set<string>();
     allTopics.forEach(t => {
       if (t.isHidden) {
@@ -182,7 +142,7 @@ export async function getPersonalizedRecommendations(
     );
 
     if (allSubtopics.length === 0) {
-      return FALLBACK_TOPICS;
+      return [];
     }
 
     // 2. Pokud je přihlášený uživatel, načteme jeho historii testů
@@ -191,13 +151,15 @@ export async function getPersonalizedRecommendations(
     if (userId) {
       try {
         const testsSnap = await getDocs(
-          query(collection(db, 'tests'), where('studentId', '==', userId), limit(30))
+          query(collection(db, 'tests'), where('studentId', '==', userId), orderBy('createdAt', 'desc'), limit(30))
+        ).catch(() =>
+          getDocs(query(collection(db, 'tests'), where('studentId', '==', userId), limit(30)))
         );
 
         testsSnap.docs.forEach((d) => {
           const data = d.data();
           let subtopicId = data.topic || '';
-          let percentage = 0;
+          let percentage = typeof data.percentage === 'number' ? data.percentage : 0;
 
           if (data.description) {
             try {
@@ -398,7 +360,7 @@ export async function getPersonalizedRecommendations(
         subtopicId: item.subtopic.id,
         title: item.subtopic.title,
         subject: item.subject,
-        topicTitle: item.subtopic.topicId,
+        topicTitle: topicTitleMap.get(item.subtopic.topicId) || item.subtopic.topicId,
         icon: visual.icon,
         bg: visual.bg,
         tagClass: visual.tagClass,
@@ -412,6 +374,6 @@ export async function getPersonalizedRecommendations(
     });
   } catch (error) {
     console.error('Error generating personalized recommendations:', error);
-    return FALLBACK_TOPICS;
+    return [];
   }
 }

@@ -25,13 +25,15 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { 
-  getSubtopicById, getQuestionsForSubtopic, recordPracticeAttempt, sampleQuestionsForPractice,
-  saveActivePracticeSession, getActivePracticeSession, deleteActivePracticeSession
+  fetchPracticeCatalog, fetchSubtopicQuestions, checkPracticeAnswerApi,
+  revealPracticeSolutionApi, finishPracticeSessionApi, sampleQuestionsForPractice,
+  saveActivePracticeSession, getActivePracticeSession, deleteActivePracticeSession,
+  getActivePracticeStorageKey
 } from '../services/practiceService';
-import { completeScheduledPracticeTodo } from '../services/calendarService';
 import { submitInquiry } from '../services/inquiryService';
 import { sanitizeSvg } from '../utils/svgUtils';
-import { PracticeSubtopic, PracticeQuestion, ActivePracticeSession, PracticeAttemptAnswer } from '../types';
+import { cn } from '../lib/utils';
+import { PracticeSubtopic, PracticeQuestion, ActivePracticeSession } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
 import { evaluateStudentAnswer } from '../utils/mathEvaluator';
 import RewardedAdModal from '../components/common/RewardedAdModal';
@@ -59,26 +61,45 @@ interface QuestionAnswerState {
   selfScore?: number;
   selfEvaluation?: 'correct' | 'partial' | 'wrong';
   solutionRevealed?: boolean;
+  correctAnswer?: string;
+  explanation?: string;
+  solutionImageUrl?: string | null;
+  solutionSvgContent?: string | null;
 }
+
+const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
+  if (!rawUrl) return null;
+  try {
+    const parsed = new URL(rawUrl, typeof window !== 'undefined' ? window.location.origin : 'https://proedu.cz');
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+};
 
 export default function PracticeSession() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
+  const authCtx = useAuth();
   const { 
     user, 
     profile, 
     isPremium, 
+    isCourseUser,
     isTeacher,
     jokers, 
-    consumeOneJoker, 
     claimVideoReward, 
-    recordPracticeSessionStreak,
     openAuthModal 
-  } = useAuth();
+  } = authCtx;
+  const refreshProfile = (authCtx as { refreshProfile?: () => Promise<void> }).refreshProfile;
   const navigate = useNavigate();
 
   const [subtopic, setSubtopic] = useState<PracticeSubtopic | null>(null);
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isGuestDemoBlocked, setIsGuestDemoBlocked] = useState(false);
+  const [isGuestLimitReached, setIsGuestLimitReached] = useState(false);
+  const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
+  const [isSubmittingAnswer, setIsSubmittingAnswer] = useState(false);
 
   // Stavy pro video a paywall
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
@@ -88,9 +109,10 @@ export default function PracticeSession() {
 
   // Kontrola limitu žolíků a videí pro dnešní den
   const isGuest = !user;
+  const hasUnlimitedAccess = isPremium || isCourseUser || isTeacher;
   const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
   const isVideoLimitReached = videosWatchedToday >= 3;
-  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
+  const isOutOfJokersAndVideos = !hasUnlimitedAccess && jokers <= 0 && isVideoLimitReached;
 
   // Active question index
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -115,7 +137,12 @@ export default function PracticeSession() {
   const [pendingResumeSession, setPendingResumeSession] = useState<ActivePracticeSession | null>(null);
   const [isResumeModalOpen, setIsResumeModalOpen] = useState(false);
   const allSubtopicQuestionsRef = useRef<PracticeQuestion[]>([]);
-  const debouncedInputSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedInputSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const sessionIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `sess_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+  );
 
   // Slider scrolling refs
   const sliderScrollRef = useRef<HTMLDivElement>(null);
@@ -126,39 +153,72 @@ export default function PracticeSession() {
 
   useEffect(() => {
     async function loadData() {
-      if (!subtopicId) return;
+      if (!subtopicId) {
+        setLoading(false);
+        return;
+      }
       setLoading(true);
+      setIsGuestDemoBlocked(false);
+      setIsGuestLimitReached(false);
+      setIsCompleted(false);
+      setPendingResumeSession(null);
+      setIsResumeModalOpen(false);
+      setAnswersMap({});
+      setOpenInputs({});
+      setShowHintMap({});
+      setBookmarkedSet(new Set());
+      setCurrentIndex(0);
+
       try {
-        const [subData, qData, activeSession] = await Promise.all([
-          getSubtopicById(subtopicId),
-          getQuestionsForSubtopic(subtopicId),
-          getActivePracticeSession(subtopicId, user?.uid)
+        const catalog = await fetchPracticeCatalog({ includeHidden: isTeacher });
+        const subData = catalog.subtopics.find(s => s.id === subtopicId) || null;
+        setSubtopic(subData);
+
+        if (!user && (!catalog.firstDemoSubtopicId || subtopicId !== catalog.firstDemoSubtopicId)) {
+          setIsGuestDemoBlocked(true);
+          setQuestions([]);
+          return;
+        }
+
+        const [qRes, activeSession] = await Promise.all([
+          fetchSubtopicQuestions(subtopicId),
+          getActivePracticeSession(subtopicId, user?.uid || 'guest')
         ]);
 
-        setSubtopic(subData);
+        if (typeof qRes.guestRemaining === 'number') {
+          setGuestRemaining(qRes.guestRemaining);
+        }
+
+        const qData = qRes.questions;
         allSubtopicQuestionsRef.current = qData;
 
         // Check if there is an active session to resume
+        const hasSubmittedInSession = Boolean(
+          activeSession?.answersMap &&
+          Object.values(activeSession.answersMap).some(a => a.isSubmitted)
+        );
+        const hasInputsInSession = Boolean(
+          activeSession?.openInputs &&
+          Object.keys(activeSession.openInputs).length > 0
+        );
         const hasValidSession = Boolean(
           activeSession &&
           activeSession.questionIds &&
           activeSession.questionIds.length > 0 &&
-          (activeSession.answeredCount > 0 || Object.keys(activeSession.answersMap || {}).length > 0)
+          (hasSubmittedInSession || activeSession.answeredCount > 0 || hasInputsInSession)
         );
 
         if (hasValidSession && activeSession) {
           const qMap = new Map(qData.map(q => [q.id, q]));
-          const matchedCount = activeSession.questionIds.filter(id => qMap.has(id)).length;
+          const restoredQuestions = activeSession.questionIds
+            .map(id => qMap.get(id))
+            .filter((q): q is PracticeQuestion => Boolean(q));
 
-          if (matchedCount > 0) {
+          if (restoredQuestions.length > 0) {
             setPendingResumeSession(activeSession);
             setIsResumeModalOpen(true);
-            const restoredQuestions = activeSession.questionIds
-              .map(id => qMap.get(id))
-              .filter((q): q is PracticeQuestion => Boolean(q));
             setQuestions(restoredQuestions);
             sessionStartTimeRef.current = Date.now();
-            setLoading(false);
             return;
           }
         }
@@ -175,14 +235,20 @@ export default function PracticeSession() {
             questionCount: sampled.length,
           });
         }
-      } catch (err) {
-        console.error('Failed to load practice questions:', err);
+      } catch (err: any) {
+        if (err?.code === 'GUEST_LIMIT_REACHED' || err?.status === 429) {
+          setIsGuestLimitReached(true);
+        } else if (err?.code === 'DEMO_RESTRICTED' || err?.status === 401 || err?.status === 403) {
+          setIsGuestDemoBlocked(true);
+        } else {
+          console.error('Failed to load practice questions:', err);
+        }
       } finally {
         setLoading(false);
       }
     }
     loadData();
-  }, [subtopicId, user?.uid]);
+  }, [subtopicId, user?.uid, isTeacher]);
 
   // Pokud student vstoupí do procvičování s 0 žolíky a vyčerpaným limitem videí, nepouštíme ho dovnitř a přesměrujeme na hlavní stránku
   useEffect(() => {
@@ -245,7 +311,7 @@ export default function PracticeSession() {
     }
 
     const payload: ActivePracticeSession = {
-      studentId: user?.uid || '',
+      studentId: user?.uid || 'guest',
       subtopicId: subtopic.id,
       topicId: subtopic.topicId || '',
       subjectId: subtopic.subjectId || '',
@@ -289,19 +355,34 @@ export default function PracticeSession() {
       .map(id => qMap.get(id))
       .filter((q): q is PracticeQuestion => Boolean(q));
 
-    if (restoredQuestions.length > 0) {
-      setQuestions(restoredQuestions);
-    } else {
-      const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
-      setQuestions(sampled);
-    }
+    const finalQuestions = restoredQuestions.length > 0
+      ? restoredQuestions
+      : sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
+
+    setQuestions(finalQuestions);
+
+    // Přemapujeme původní indexy podle questionId, aby nedošlo k posunu odpovědí při změně sady otázek
+    const newIndexByQuestionId = new Map<string, number>();
+    finalQuestions.forEach((q, idx) => newIndexByQuestionId.set(q.id, idx));
+
+    const resolveNewIndex = (rawKey: string | number): number | undefined => {
+      if (typeof rawKey === 'string' && newIndexByQuestionId.has(rawKey)) {
+        return newIndexByQuestionId.get(rawKey);
+      }
+      const oldIdx = Number(rawKey);
+      if (!Number.isNaN(oldIdx) && oldIdx >= 0 && oldIdx < pendingResumeSession.questionIds.length) {
+        const qId = pendingResumeSession.questionIds[oldIdx];
+        return newIndexByQuestionId.get(qId);
+      }
+      return undefined;
+    };
 
     const restoredAnswers: Record<number, QuestionAnswerState> = {};
     if (pendingResumeSession.answersMap) {
       for (const [k, v] of Object.entries(pendingResumeSession.answersMap)) {
-        const idx = Number(k);
-        if (!isNaN(idx)) {
-          restoredAnswers[idx] = v;
+        const newIdx = resolveNewIndex(k);
+        if (newIdx !== undefined) {
+          restoredAnswers[newIdx] = v;
         }
       }
     }
@@ -310,9 +391,9 @@ export default function PracticeSession() {
     const restoredInputs: Record<number, string> = {};
     if (pendingResumeSession.openInputs) {
       for (const [k, v] of Object.entries(pendingResumeSession.openInputs)) {
-        const idx = Number(k);
-        if (!isNaN(idx)) {
-          restoredInputs[idx] = v;
+        const newIdx = resolveNewIndex(k);
+        if (newIdx !== undefined) {
+          restoredInputs[newIdx] = v;
         }
       }
     }
@@ -321,22 +402,27 @@ export default function PracticeSession() {
     const restoredHints: Record<number, boolean> = {};
     if (pendingResumeSession.showHintMap) {
       for (const [k, v] of Object.entries(pendingResumeSession.showHintMap)) {
-        const idx = Number(k);
-        if (!isNaN(idx)) {
-          restoredHints[idx] = v;
+        const newIdx = resolveNewIndex(k);
+        if (newIdx !== undefined) {
+          restoredHints[newIdx] = v;
         }
       }
     }
     setShowHintMap(restoredHints);
 
     if (Array.isArray(pendingResumeSession.bookmarkedIndices)) {
-      setBookmarkedSet(new Set(pendingResumeSession.bookmarkedIndices));
+      const remappedBookmarks = new Set<number>();
+      pendingResumeSession.bookmarkedIndices.forEach(oldIdx => {
+        const newIdx = resolveNewIndex(oldIdx);
+        if (newIdx !== undefined) remappedBookmarks.add(newIdx);
+      });
+      setBookmarkedSet(remappedBookmarks);
     }
 
-    const targetIndex = Math.min(
-      Math.max(0, pendingResumeSession.currentIndex || 0),
-      (restoredQuestions.length || 1) - 1
-    );
+    const remappedCurrentIdx = resolveNewIndex(pendingResumeSession.currentIndex || 0);
+    const targetIndex = remappedCurrentIdx !== undefined
+      ? remappedCurrentIdx
+      : 0;
     setCurrentIndex(targetIndex);
 
     setIsResumeModalOpen(false);
@@ -345,7 +431,7 @@ export default function PracticeSession() {
 
   const handleRejectResumeAndRestart = async () => {
     if (subtopicId) {
-      await deleteActivePracticeSession(subtopicId, user?.uid);
+      await deleteActivePracticeSession(subtopicId, user?.uid || 'guest');
     }
     const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
     setQuestions(sampled);
@@ -362,7 +448,7 @@ export default function PracticeSession() {
     toast.info('Procvičování bylo spuštěno od začátku.');
   };
 
-  // Synchronous localStorage backup on tab close
+  // Synchronous localStorage backup on tab close (scoped strictly by uid/'guest')
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (!subtopic || questions.length === 0 || isCompleted) return;
@@ -383,10 +469,11 @@ export default function PracticeSession() {
           ...(v.solutionRevealed ? { solutionRevealed: true } : {})
         };
       }
-      const storageKey = `proedu_active_practice_${subtopic.id}`;
+      const ownerId = user?.uid || 'guest';
+      const storageKey = getActivePracticeStorageKey(ownerId, subtopic.id);
       try {
         localStorage.setItem(storageKey, JSON.stringify({
-          studentId: user?.uid || '',
+          studentId: ownerId,
           subtopicId: subtopic.id,
           topicId: subtopic.topicId || '',
           subjectId: subtopic.subjectId || '',
@@ -400,7 +487,7 @@ export default function PracticeSession() {
           totalCount: questions.length,
           updatedAt: new Date().toISOString()
         }));
-      } catch (err) {
+      } catch {
         // ignore
       }
     };
@@ -424,11 +511,58 @@ export default function PracticeSession() {
     currentQuestion?.subjectId?.toLowerCase().includes('češ')
   );
 
-  // Immediate choice selection & check
-  const handleSelectChoice = async (option: string, optionIndex?: number) => {
-    if (!currentQuestion || isAnswerSubmitted) return;
+  const patchQuestionSolution = (
+    idx: number,
+    res: {
+      correctAnswer?: string;
+      explanation?: string;
+      solutionImageUrl?: string | null;
+      solutionSvgContent?: string | null;
+    }
+  ) => {
+    setQuestions(prev =>
+      prev.map((q, qIdx) =>
+        qIdx === idx
+          ? {
+              ...q,
+              correctAnswer: res.correctAnswer ?? q.correctAnswer,
+              explanation: res.explanation ?? q.explanation,
+              solutionImageUrl: res.solutionImageUrl ?? q.solutionImageUrl,
+              solutionSvgContent: res.solutionSvgContent ?? q.solutionSvgContent,
+            }
+          : q
+      )
+    );
+  };
 
-    if (!isPremium && user && jokers <= 0) {
+  const handleServerCheckError = (err: any): boolean => {
+    if (err?.code === 'GUEST_LIMIT_REACHED' || err?.status === 429) {
+      setIsGuestLimitReached(true);
+      toast.info('Vyčerpal jsi limit demo pokusů pro hosta. Přihlas se zdarma a získej 10 žolíků denně!');
+      return true;
+    }
+    if (err?.code === 'NO_JOKERS') {
+      if (isVideoLimitReached) {
+        navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+      } else {
+        toast.error('Došly ti žolíky! Sleduj 15s video a získej +5 žolíků pro pokračování.');
+        setIsVideoModalOpen(true);
+      }
+      refreshProfile?.().catch(() => {});
+      return true;
+    }
+    if (err?.code === 'DEMO_RESTRICTED' || err?.status === 401 || err?.status === 403) {
+      setIsGuestDemoBlocked(true);
+      return true;
+    }
+    return false;
+  };
+
+  // Immediate choice selection & server-authoritative check
+  const handleSelectChoice = async (option: string, optionIndex?: number) => {
+    if (!currentQuestion || isAnswerSubmitted || isSubmittingAnswer) return;
+
+    if (!hasUnlimitedAccess && user && jokers <= 0) {
       if (isVideoLimitReached) {
         navigate('/', { replace: true, state: { showDailyLimitModal: true } });
         return;
@@ -438,54 +572,74 @@ export default function PracticeSession() {
       return;
     }
 
-    const evalResult = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
-      caseSensitive: Boolean(currentQuestion.caseSensitive)
-    });
-    const usedHint = !!showHintMap[currentIndex];
+    setIsSubmittingAnswer(true);
+    try {
+      const apiRes = await checkPracticeAnswerApi({
+        questionId: currentQuestion.id,
+        subtopicId: subtopic?.id || subtopicId || '',
+        studentAnswer: option,
+        sessionId: sessionIdRef.current,
+      });
 
-    trackPracticeAnswer({
-      subtopicId: subtopic?.id || subtopicId || '',
-      questionId: currentQuestion.id,
-      questionIndex: currentIndex,
-      isCorrect: evalResult.isCorrect,
-      usedHint,
-    });
-
-    const nextAnswers = {
-      ...answersMap,
-      [currentIndex]: {
-        userAnswer: option,
-        selectedOptionIndex: optionIndex,
-        isCorrect: evalResult.isCorrect,
-        usedHint,
-        isSubmitted: true,
-        tutorFeedback: evalResult.tutorFeedback
+      if (typeof apiRes.guestRemaining === 'number') {
+        setGuestRemaining(apiRes.guestRemaining);
       }
-    };
-    setAnswersMap(nextAnswers);
+      patchQuestionSolution(currentIndex, apiRes);
 
-    // Automaticky odebereme označení, jakmile je otázka zodpovězena
-    const nextBookmarks = new Set(bookmarkedSet);
-    if (nextBookmarks.has(currentIndex)) {
-      nextBookmarks.delete(currentIndex);
-      setBookmarkedSet(nextBookmarks);
-    }
+      const usedHint = !!showHintMap[currentIndex];
+      trackPracticeAnswer({
+        subtopicId: subtopic?.id || subtopicId || '',
+        questionId: currentQuestion.id,
+        questionIndex: currentIndex,
+        isCorrect: apiRes.isCorrect,
+        usedHint,
+      });
 
-    persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
+      const nextAnswers: Record<number, QuestionAnswerState> = {
+        ...answersMap,
+        [currentIndex]: {
+          userAnswer: option,
+          selectedOptionIndex: optionIndex,
+          isCorrect: apiRes.isCorrect,
+          usedHint,
+          isSubmitted: true,
+          tutorFeedback: apiRes.tutorFeedback,
+          correctAnswer: apiRes.correctAnswer,
+          explanation: apiRes.explanation,
+          solutionImageUrl: apiRes.solutionImageUrl,
+          solutionSvgContent: apiRes.solutionSvgContent,
+        },
+      };
+      setAnswersMap(nextAnswers);
 
-    if (!isPremium && user) {
-      await consumeOneJoker();
+      const nextBookmarks = new Set(bookmarkedSet);
+      if (nextBookmarks.has(currentIndex)) {
+        nextBookmarks.delete(currentIndex);
+        setBookmarkedSet(nextBookmarks);
+      }
+
+      persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
+
+      if (!hasUnlimitedAccess && user) {
+        await refreshProfile?.();
+      }
+    } catch (err: any) {
+      if (!handleServerCheckError(err)) {
+        toast.error(err?.message || 'Nepodařilo se vyhodnotit odpověď.');
+      }
+    } finally {
+      setIsSubmittingAnswer(false);
     }
   };
 
-  // Open-ended answer submission
+  // Open-ended answer submission via server
   const handleCheckOpenAnswer = async () => {
-    if (!currentQuestion || isAnswerSubmitted) return;
+    if (!currentQuestion || isAnswerSubmitted || isSubmittingAnswer) return;
 
     const answer = (openInputs[currentIndex] || '').trim();
     if (!answer) return;
 
-    if (!isPremium && user && jokers <= 0) {
+    if (!hasUnlimitedAccess && user && jokers <= 0) {
       if (isVideoLimitReached) {
         navigate('/', { replace: true, state: { showDailyLimitModal: true } });
         return;
@@ -495,50 +649,70 @@ export default function PracticeSession() {
       return;
     }
 
-    const evalResult = evaluateStudentAnswer(answer, currentQuestion.correctAnswer, {
-      caseSensitive: Boolean(currentQuestion.caseSensitive)
-    });
-    const usedHint = !!showHintMap[currentIndex];
+    setIsSubmittingAnswer(true);
+    try {
+      const apiRes = await checkPracticeAnswerApi({
+        questionId: currentQuestion.id,
+        subtopicId: subtopic?.id || subtopicId || '',
+        studentAnswer: answer,
+        sessionId: sessionIdRef.current,
+      });
 
-    trackPracticeAnswer({
-      subtopicId: subtopic?.id || subtopicId || '',
-      questionId: currentQuestion.id,
-      questionIndex: currentIndex,
-      isCorrect: evalResult.isCorrect,
-      usedHint,
-    });
-
-    const nextAnswers = {
-      ...answersMap,
-      [currentIndex]: {
-        userAnswer: answer,
-        isCorrect: evalResult.isCorrect,
-        usedHint,
-        isSubmitted: true,
-        tutorFeedback: evalResult.tutorFeedback
+      if (typeof apiRes.guestRemaining === 'number') {
+        setGuestRemaining(apiRes.guestRemaining);
       }
-    };
-    setAnswersMap(nextAnswers);
+      patchQuestionSolution(currentIndex, apiRes);
 
-    // Automaticky odebereme označení, jakmile je otázka zodpovězena
-    const nextBookmarks = new Set(bookmarkedSet);
-    if (nextBookmarks.has(currentIndex)) {
-      nextBookmarks.delete(currentIndex);
-      setBookmarkedSet(nextBookmarks);
-    }
+      const usedHint = !!showHintMap[currentIndex];
+      trackPracticeAnswer({
+        subtopicId: subtopic?.id || subtopicId || '',
+        questionId: currentQuestion.id,
+        questionIndex: currentIndex,
+        isCorrect: apiRes.isCorrect,
+        usedHint,
+      });
 
-    persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
+      const nextAnswers: Record<number, QuestionAnswerState> = {
+        ...answersMap,
+        [currentIndex]: {
+          userAnswer: answer,
+          isCorrect: apiRes.isCorrect,
+          usedHint,
+          isSubmitted: true,
+          tutorFeedback: apiRes.tutorFeedback,
+          correctAnswer: apiRes.correctAnswer,
+          explanation: apiRes.explanation,
+          solutionImageUrl: apiRes.solutionImageUrl,
+          solutionSvgContent: apiRes.solutionSvgContent,
+        },
+      };
+      setAnswersMap(nextAnswers);
 
-    if (!isPremium && user) {
-      await consumeOneJoker();
+      const nextBookmarks = new Set(bookmarkedSet);
+      if (nextBookmarks.has(currentIndex)) {
+        nextBookmarks.delete(currentIndex);
+        setBookmarkedSet(nextBookmarks);
+      }
+
+      persistSession(nextAnswers, openInputs, showHintMap, nextBookmarks, currentIndex);
+
+      if (!hasUnlimitedAccess && user) {
+        await refreshProfile?.();
+      }
+    } catch (err: any) {
+      if (!handleServerCheckError(err)) {
+        toast.error(err?.message || 'Nepodařilo se vyhodnotit odpověď.');
+      }
+    } finally {
+      setIsSubmittingAnswer(false);
     }
   };
 
-  // Self-check solution reveal
+  // Self-check solution reveal via server (neuděluje body ani nedokončuje todo!)
   const handleRevealSolution = async () => {
-    if (!currentQuestion) return;
+    if (!currentQuestion || isSubmittingAnswer) return;
 
-    if (!isPremium && user && jokers <= 0) {
+    if (!hasUnlimitedAccess && user && jokers <= 0) {
       if (isVideoLimitReached) {
         navigate('/', { replace: true, state: { showDailyLimitModal: true } });
         return;
@@ -548,25 +722,49 @@ export default function PracticeSession() {
       return;
     }
 
-    const currentAns = answersMap[currentIndex] || {
-      userAnswer: '',
-      isCorrect: false,
-      usedHint: false,
-      isSubmitted: false
-    };
+    setIsSubmittingAnswer(true);
+    try {
+      const apiRes = await revealPracticeSolutionApi({
+        questionId: currentQuestion.id,
+        subtopicId: subtopic?.id || subtopicId || '',
+        sessionId: sessionIdRef.current,
+      });
 
-    const nextAnswers = {
-      ...answersMap,
-      [currentIndex]: {
-        ...currentAns,
-        solutionRevealed: true
+      if (typeof apiRes.guestRemaining === 'number') {
+        setGuestRemaining(apiRes.guestRemaining);
       }
-    };
-    setAnswersMap(nextAnswers);
-    persistSession(nextAnswers, openInputs, showHintMap, bookmarkedSet, currentIndex);
+      patchQuestionSolution(currentIndex, apiRes);
 
-    if (!isPremium && user) {
-      await consumeOneJoker();
+      const currentAns = answersMap[currentIndex] || {
+        userAnswer: '',
+        isCorrect: false,
+        usedHint: false,
+        isSubmitted: false
+      };
+
+      const nextAnswers: Record<number, QuestionAnswerState> = {
+        ...answersMap,
+        [currentIndex]: {
+          ...currentAns,
+          solutionRevealed: true,
+          correctAnswer: apiRes.correctAnswer,
+          explanation: apiRes.explanation,
+          solutionImageUrl: apiRes.solutionImageUrl,
+          solutionSvgContent: apiRes.solutionSvgContent,
+        }
+      };
+      setAnswersMap(nextAnswers);
+      persistSession(nextAnswers, openInputs, showHintMap, bookmarkedSet, currentIndex);
+
+      if (!hasUnlimitedAccess && user) {
+        await refreshProfile?.();
+      }
+    } catch (err: any) {
+      if (!handleServerCheckError(err)) {
+        toast.error(err?.message || 'Nepodařilo se zobrazit vzorové řešení.');
+      }
+    } finally {
+      setIsSubmittingAnswer(false);
     }
   };
 
@@ -586,9 +784,11 @@ export default function PracticeSession() {
       usedHint,
     });
 
-    const nextAnswers = {
+    const existing = answersMap[currentIndex];
+    const nextAnswers: Record<number, QuestionAnswerState> = {
       ...answersMap,
       [currentIndex]: {
+        ...(existing || {}),
         userAnswer: label,
         isCorrect,
         usedHint,
@@ -596,12 +796,11 @@ export default function PracticeSession() {
         selfScore: score,
         selfEvaluation: evalType,
         solutionRevealed: true,
-        tutorFeedback: currentQuestion.explanation || undefined
+        tutorFeedback: currentQuestion.explanation || existing?.explanation || undefined
       }
     };
     setAnswersMap(nextAnswers);
 
-    // Automaticky odebereme označení, jakmile je otázka zodpovězena
     const nextBookmarks = new Set(bookmarkedSet);
     if (nextBookmarks.has(currentIndex)) {
       nextBookmarks.delete(currentIndex);
@@ -636,25 +835,28 @@ export default function PracticeSession() {
     }
   };
 
-  // Final finish and score submission
+  // Final finish and server-authoritative score submission
   const handleFinishPractice = async () => {
     setIsCompleted(true);
 
     // Pro bezplatné uživatele zobrazíme po dokončení sady 5s povinné promo okno na Premium
-    if (!isPremium && !isTeacher && profile?.role !== 'course') {
+    if (!hasUnlimitedAccess) {
       setIsMandatoryPromoOpen(true);
     }
 
-    // Delete active practice session since practice is completed!
     if (subtopic?.id) {
-      deleteActivePracticeSession(subtopic.id, user?.uid).catch(err => {
+      deleteActivePracticeSession(subtopic.id, user?.uid || 'guest').catch(err => {
         console.warn('Failed to delete active practice session upon completion:', err);
       });
     }
 
-    const earnedScore = Object.values(answersMap).reduce((acc, a) => {
-      if (typeof a.selfScore === 'number') return acc + a.selfScore;
-      return acc + (a.isCorrect ? 1 : 0);
+    const submittedEntries = questions
+      .map((q, idx) => ({ q, ans: answersMap[idx] }))
+      .filter((item): item is { q: PracticeQuestion; ans: QuestionAnswerState } => Boolean(item.ans?.isSubmitted));
+
+    const earnedScore = submittedEntries.reduce((acc, { ans }) => {
+      if (typeof ans.selfScore === 'number') return acc + ans.selfScore;
+      return acc + (ans.isCorrect ? 1 : 0);
     }, 0);
     const total = questions.length;
     const percentage = total > 0 ? Math.round((earnedScore / total) * 100) : 0;
@@ -670,74 +872,30 @@ export default function PracticeSession() {
       durationSeconds,
     });
 
-    if (!user && subtopic) {
+    if (!user && subtopic && submittedEntries.length > 0) {
       recordGuestCompletedSubtopic(subtopic.id);
     }
 
-    if (user && subtopic) {
-      const answersRecord: Record<string, string> = {};
-      const detailedAnswers: PracticeAttemptAnswer[] = [];
-      questions.forEach((q, idx) => {
-        const ans = answersMap[idx];
-        if (ans) {
-          answersRecord[q.id] = ans.userAnswer;
-          detailedAnswers.push({
-            questionId: q.id,
-            questionText: q.question,
-            userAnswer: ans.userAnswer,
-            correctAnswer: q.correctAnswer,
-            isCorrect: Boolean(ans.isCorrect),
-            explanation: q.explanation || ans.tutorFeedback || '',
-            options: q.options || [],
-            selfScore: ans.selfScore
-          });
-        }
-      });
-
+    if (user && subtopic && submittedEntries.length > 0) {
       try {
-        await recordPracticeAttempt({
-          studentId: user.uid,
+        await finishPracticeSessionApi({
           subtopicId: subtopic.id,
           topicId: subtopic.topicId,
           subjectId: subtopic.subjectId,
-          score: earnedScore,
-          totalQuestions: total,
-          percentage,
-          answers: answersRecord,
-          detailedAnswers,
-          durationSeconds
+          sessionId: sessionIdRef.current,
+          answers: submittedEntries.map(({ q, ans }) => ({
+            questionId: q.id,
+            userAnswer: ans.userAnswer,
+            isCorrect: Boolean(ans.isCorrect),
+            usedHint: Boolean(ans.usedHint),
+            ...(ans.selfEvaluation ? { selfCheckStatus: ans.selfEvaluation } : {}),
+            ...(typeof ans.selfScore === 'number' ? { selfScore: ans.selfScore } : {}),
+          })),
+          durationSeconds,
         });
+        await refreshProfile?.();
       } catch (err) {
-        console.error('Failed to record attempt:', err);
-      }
-
-      if (Object.keys(answersMap).length > 0) {
-        try {
-          await recordPracticeSessionStreak();
-        } catch (streakErr) {
-          console.error('Failed to update streak:', streakErr);
-        }
-
-        try {
-          const calRes = await completeScheduledPracticeTodo(
-            user.uid,
-            subtopic.id,
-            isPremium
-          );
-          if (calRes.completedTodoId) {
-            if (calRes.quotaMetToday) {
-              toast.success('🎉 Denní kvóta splněna! Dnešní pole v kalendáři zezelenalo.');
-            } else if (calRes.totalTodayCount > 0) {
-              toast.success(
-                `✅ Cvičení splněno v kalendáři (${calRes.completedTodayCount}/${calRes.totalTodayCount} dnešní kvóty).`
-              );
-            } else {
-              toast.success('✅ Naplánované cvičení v kalendáři bylo označeno jako splněné!');
-            }
-          }
-        } catch (calErr) {
-          console.error('Failed to update scheduled practice todo:', calErr);
-        }
+        console.error('Failed to finish practice attempt:', err);
       }
     }
   };
@@ -748,7 +906,7 @@ export default function PracticeSession() {
       return;
     }
     if (subtopicId) {
-      await deleteActivePracticeSession(subtopicId, user?.uid);
+      await deleteActivePracticeSession(subtopicId, user?.uid || 'guest');
     }
     const sampled = sampleQuestionsForPractice(allSubtopicQuestionsRef.current, subtopic?.practiceConfig);
     setQuestions(sampled);
@@ -793,12 +951,12 @@ export default function PracticeSession() {
     try {
       await submitInquiry({
         studentId: user.uid,
-        studentName: profile?.name || user.displayName || (profile?.role === 'teacher' ? 'Učitel' : 'Student'),
+        studentName: profile?.name || user.displayName || (isTeacher ? 'Učitel' : 'Student'),
         questionId: currentQuestion?.id || 'question',
         questionText: currentQuestion?.question || '',
         topic: subtopic?.title || 'Procvičování',
         comment,
-        senderRole: profile?.role === 'teacher' ? 'teacher' : 'student',
+        senderRole: isTeacher ? 'teacher' : 'student',
       });
 
       toast.success('Tvůj dotaz byl úspěšně odeslán lektorovi!');
@@ -822,6 +980,39 @@ export default function PracticeSession() {
     );
   }
 
+  if (isGuestDemoBlocked || isGuestLimitReached) {
+    return (
+      <div className="max-w-2xl mx-auto py-16 px-4 text-center space-y-5">
+        <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center mx-auto text-3xl shadow-xs">
+          🔒
+        </div>
+        <h2 className="text-3xl font-display font-black text-[#1E1B18]">
+          {isGuestLimitReached
+            ? 'Vyčerpal/a jsi limit ukázkových pokusů'
+            : 'Toto cvičení je dostupné po přihlášení'}
+        </h2>
+        <p className="text-gray-600 font-medium text-sm sm:text-base max-w-lg mx-auto">
+          {isGuestLimitReached
+            ? 'Jako host si můžeš vyzkoušet až 5 úloh z ukázkového tématu. Zaregistruj se zdarma a získej 10 žolíků každý den!'
+            : 'Neregistrovaní hosté si mohou vyzkoušet pouze první ukázkové podtéma. Zaregistruj se zdarma a odemkni všechna procvičování.'}
+        </p>
+        <div className="flex flex-wrap justify-center gap-3 pt-2">
+          <Button
+            onClick={openAuthModal}
+            className="rounded-xl bg-[#1E1B18] text-white font-black px-6 h-11 cursor-pointer"
+          >
+            Přihlásit se / Registrovat zdarma
+          </Button>
+          <Link to="/practice">
+            <Button variant="outline" className="rounded-xl font-bold h-11 px-5 cursor-pointer">
+              Zpět na výběr témat
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   if (questions.length === 0) {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center space-y-4">
@@ -833,7 +1024,7 @@ export default function PracticeSession() {
           Pro téma "{subtopic?.title || 'Zvolené téma'}" zatím nebyly v administraci vloženy otázky k procvičování.
         </p>
         <div className="flex justify-center gap-3 pt-2">
-          {subtopic?.hasStudyMaterial && (
+          {hasUnlimitedAccess && (subtopic?.hasStudyMaterial || subtopic?.hasStudyContent) && (
             <Link to={`/study/${subtopic.id}`}>
               <Button className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black border border-blue-200/80 cursor-pointer shadow-xs">
                 Přejít na teorii (Studovat)
@@ -854,9 +1045,14 @@ export default function PracticeSession() {
   // SUMMARY RESULTS SCREEN
   // -------------------------------------------------------------
   if (isCompleted) {
-    const correctCount = Object.values(answersMap).filter(r => r.isCorrect).length;
+    const submittedList = Object.values(answersMap).filter(r => r.isSubmitted);
+    const earnedScore = submittedList.reduce((acc, r) => {
+      if (typeof r.selfScore === 'number') return acc + r.selfScore;
+      return acc + (r.isCorrect ? 1 : 0);
+    }, 0);
+    const formattedScore = Number.isInteger(earnedScore) ? String(earnedScore) : earnedScore.toFixed(1).replace('.', ',');
     const totalCount = questions.length;
-    const percentage = Math.round((correctCount / totalCount) * 100);
+    const percentage = totalCount > 0 ? Math.round((earnedScore / totalCount) * 100) : 0;
 
     return (
       <div className="max-w-4xl mx-auto space-y-8 py-6 px-4">
@@ -884,8 +1080,8 @@ export default function PracticeSession() {
           {/* Score Counter */}
           <div className="inline-flex items-center justify-center gap-6 bg-[#FAF7F0] px-8 py-5 rounded-3xl border border-gray-200/60">
             <div>
-              <div className="text-4xl font-display font-black text-[#1E1B18]">{correctCount} / {totalCount}</div>
-              <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-0.5">Správných odpovědí</div>
+              <div className="text-4xl font-display font-black text-[#1E1B18]">{formattedScore} / {totalCount}</div>
+              <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-0.5">Získaných bodů</div>
             </div>
             <div className="w-px h-12 bg-gray-200" />
             <div>
@@ -906,7 +1102,7 @@ export default function PracticeSession() {
               <RotateCcw size={16} /> Zkusit znovu
             </Button>
 
-            {subtopic?.hasStudyMaterial && (
+            {hasUnlimitedAccess && (subtopic?.hasStudyMaterial || subtopic?.hasStudyContent) && (
               <Link to={`/study/${subtopic.id}`}>
                 <Button
                   variant="outline"
@@ -937,15 +1133,20 @@ export default function PracticeSession() {
           <div className="space-y-3">
             {questions.map((q, i) => {
               const res = answersMap[i];
+              const isPartial = res?.selfEvaluation === 'partial' || res?.selfScore === 0.5;
               const isCorrect = res?.isCorrect;
               const hasAnswered = !!res?.isSubmitted;
+              const resolvedCorrectAnswer = res?.correctAnswer ?? q.correctAnswer;
+              const resolvedExplanation = res?.explanation ?? q.explanation;
 
               return (
                 <div 
-                  key={i} 
+                  key={q.id || i} 
                   className={`p-6 rounded-3xl border bg-white shadow-sm space-y-3 transition-all ${
                     !hasAnswered
                       ? 'border-gray-200'
+                      : isPartial
+                      ? 'border-amber-200/80'
                       : isCorrect
                       ? 'border-emerald-200/80'
                       : 'border-rose-200/80'
@@ -964,6 +1165,10 @@ export default function PracticeSession() {
                       <span className="text-xs font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full shrink-0">
                         Nezodpovězeno
                       </span>
+                    ) : isPartial ? (
+                      <span className="flex items-center gap-1.5 text-xs font-black text-amber-800 bg-amber-50 px-3 py-1 rounded-full shrink-0">
+                        Částečně (+0,5 bodu)
+                      </span>
                     ) : isCorrect ? (
                       <span className="flex items-center gap-1.5 text-xs font-black text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full shrink-0">
                         <CorrectCyanIcon size={16} /> Správně {res.usedHint && '(s nápovědou)'}
@@ -976,24 +1181,26 @@ export default function PracticeSession() {
                   </div>
 
                   <div className="text-sm space-y-1.5 pl-11">
-                    {hasAnswered && !isCorrect && (
+                    {hasAnswered && (!isCorrect || isPartial) && (
                       <div className="text-gray-500 flex items-center gap-1 flex-wrap">
                         <span>Tvoje odpověď:</span>
-                        <span className="font-bold text-rose-700 line-through">
+                        <span className={cn('font-bold', isPartial ? 'text-amber-700' : 'text-rose-700 line-through')}>
                           <MathRenderer content={res.userAnswer || '(nevyplněno)'} inline />
                         </span>
                       </div>
                     )}
-                    <div className="text-gray-700 flex items-center gap-1 flex-wrap">
-                      <span>Správná odpověď:</span>
-                      <span className="font-black text-emerald-700">
-                        <MathRenderer content={q.correctAnswer} inline />
-                      </span>
-                    </div>
-                    {q.explanation && (
+                    {resolvedCorrectAnswer && (
+                      <div className="text-gray-700 flex items-center gap-1 flex-wrap">
+                        <span>Správná odpověď:</span>
+                        <span className="font-black text-emerald-700">
+                          <MathRenderer content={resolvedCorrectAnswer} inline />
+                        </span>
+                      </div>
+                    )}
+                    {resolvedExplanation && (
                       <div className="mt-2 p-3 bg-gray-50 rounded-xl text-xs text-gray-600 font-medium leading-relaxed">
                         <span className="font-bold text-gray-800 flex items-center gap-1.5 mb-0.5"><BulbYellowIcon size={15} /> Vysvětlení:</span>
-                        <MathRenderer content={q.explanation} />
+                        <MathRenderer content={resolvedExplanation} />
                       </div>
                     )}
                   </div>
@@ -1025,8 +1232,8 @@ export default function PracticeSession() {
   // -------------------------------------------------------------
   // ACTIVE QUESTION SCREEN WITH HORIZONTAL QUESTION SLIDER
   // -------------------------------------------------------------
-  const answeredCount = Object.keys(answersMap).length;
-  const progressPercent = Math.round((answeredCount / questions.length) * 100);
+  const answeredCount = Object.values(answersMap).filter(a => a.isSubmitted).length;
+  const progressPercent = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
 
   return (
     <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 py-2 sm:py-6 px-0.5 sm:px-6">
@@ -1053,7 +1260,7 @@ export default function PracticeSession() {
         </div>
 
         <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
-          {!isPremium && user ? (
+          {!hasUnlimitedAccess && user ? (
             <div
               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-950 border border-amber-300/80 rounded-xl text-xs font-bold shadow-2xs select-none"
               title="Zbývající žolíky pro dnešní den"
@@ -1062,14 +1269,14 @@ export default function PracticeSession() {
               <span className="font-mono font-black">{jokers}</span>
               <span className="text-[11px] text-amber-800 font-semibold hidden sm:inline">žolíků</span>
             </div>
-          ) : isPremium ? (
+          ) : hasUnlimitedAccess ? (
             <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
               <StarPinkIcon size={14} />
-              <span>Premium</span>
+              <span>{isTeacher ? 'Učitel' : isCourseUser ? 'Kurz' : 'Premium'}</span>
             </span>
           ) : (
             <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold select-none">
-              <span>Host</span>
+              <span>Host{guestRemaining !== null ? ` (${guestRemaining})` : ''}</span>
             </div>
           )}
 
@@ -1223,7 +1430,7 @@ export default function PracticeSession() {
               variant="ghost"
               size="sm"
               onClick={() => {
-                if (!isPremium) {
+                if (!hasUnlimitedAccess) {
                   setIsPremiumFeatureModalOpen(true);
                 } else {
                   setIsInquiryModalOpen(true);
@@ -1294,7 +1501,12 @@ export default function PracticeSession() {
                 src={currentQuestion.imageUrl}
                 alt="Obrázek k úloze"
                 className="max-h-[360px] w-auto max-w-full rounded-xl object-contain hover:scale-[1.01] transition-transform cursor-pointer mx-auto"
-                onClick={() => window.open(currentQuestion.imageUrl, '_blank')}
+                onClick={() => {
+                  const safeImgUrl = getSafeExternalUrl(currentQuestion.imageUrl);
+                  if (safeImgUrl) {
+                    window.open(safeImgUrl, '_blank', 'noopener,noreferrer');
+                  }
+                }}
                 title="Kliknutím otevřete obrázek v plné velikosti"
               />
             </div>
@@ -1310,9 +1522,12 @@ export default function PracticeSession() {
                 currentAnswer?.selectedOptionIndex !== undefined
                   ? currentAnswer.selectedOptionIndex === idx
                   : currentAnswer?.userAnswer === option;
-              const isCorrectOption = evaluateStudentAnswer(option, currentQuestion.correctAnswer, {
-                caseSensitive: Boolean(currentQuestion.caseSensitive)
-              }).isCorrect;
+              const resolvedCorrectAns = currentAnswer?.correctAnswer ?? currentQuestion.correctAnswer;
+              const isCorrectOption = isAnswerSubmitted && resolvedCorrectAns
+                ? evaluateStudentAnswer(option, resolvedCorrectAns, {
+                    caseSensitive: Boolean(currentQuestion.caseSensitive)
+                  }).isCorrect
+                : (isAnswerSubmitted && isSelected && Boolean(currentAnswer?.isCorrect));
               
               let optionStyle = 'bg-[#FAF7F0] border-gray-200/80 hover:bg-gray-100 hover:border-gray-300 text-gray-800';
 
@@ -1329,7 +1544,7 @@ export default function PracticeSession() {
               return (
                 <button
                   key={idx}
-                  disabled={isAnswerSubmitted}
+                  disabled={isAnswerSubmitted || isSubmittingAnswer}
                   onClick={() => handleSelectChoice(option, idx)}
                   className={`p-5 sm:p-6 rounded-2xl border text-left font-medium text-sm sm:text-base flex items-center gap-4 transition-all cursor-pointer ${optionStyle} ${
                     isAnswerSubmitted ? 'cursor-default' : ''
@@ -1374,12 +1589,12 @@ export default function PracticeSession() {
             )}
 
             <div className="flex flex-col sm:flex-row gap-3">
-              <Input
-                disabled={isAnswerSubmitted}
+                <Input
+                disabled={isAnswerSubmitted || isSubmittingAnswer}
                 value={openInputs[currentIndex] ?? currentAnswer?.userAnswer ?? ''}
                 onChange={e => handleOpenInputChange(e.target.value)}
                 onKeyDown={e => {
-                  if (e.key === 'Enter' && !isAnswerSubmitted && (openInputs[currentIndex] || '').trim()) {
+                  if (e.key === 'Enter' && !isAnswerSubmitted && !isSubmittingAnswer && (openInputs[currentIndex] || '').trim()) {
                     handleCheckOpenAnswer();
                   }
                 }}
@@ -1393,7 +1608,7 @@ export default function PracticeSession() {
               {!isAnswerSubmitted && (
                 <Button
                   onClick={handleCheckOpenAnswer}
-                  disabled={!(openInputs[currentIndex] || '').trim()}
+                  disabled={!(openInputs[currentIndex] || '').trim() || isSubmittingAnswer}
                   className="h-16 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 font-black text-base cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
                 >
                   Zkontrolovat
@@ -1404,7 +1619,11 @@ export default function PracticeSession() {
         )}
 
         {/* Self check question UI (porovnání s papírovým rýsováním / vzorovým řešením) */}
-        {currentQuestion.type === 'self_check' && (
+        {currentQuestion.type === 'self_check' && (() => {
+          const resolvedSolutionSvg = currentAnswer?.solutionSvgContent ?? currentQuestion.solutionSvgContent;
+          const resolvedSolutionImage = getSafeExternalUrl(currentAnswer?.solutionImageUrl ?? currentQuestion.solutionImageUrl);
+          const resolvedExplanation = currentAnswer?.explanation ?? currentQuestion.explanation;
+          return (
           <div className="pt-2 space-y-4 relative z-10">
             {/* Instrukce pro samostatnou práci na papír */}
             <div className="p-4 sm:p-5 rounded-2xl bg-amber-50/70 border border-amber-200/80 text-amber-950 space-y-1.5">
@@ -1422,7 +1641,8 @@ export default function PracticeSession() {
               <div className="flex justify-center py-2">
                 <Button
                   onClick={handleRevealSolution}
-                  className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 py-6 font-black text-base shadow-sm flex items-center gap-2.5 transition-transform hover:scale-102 cursor-pointer"
+                  disabled={isSubmittingAnswer}
+                  className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 py-6 font-black text-base shadow-sm flex items-center gap-2.5 transition-transform hover:scale-102 cursor-pointer disabled:opacity-50"
                 >
                   <Eye size={20} />
                   <span>Zobrazit vzorové řešení pro kontrolu</span>
@@ -1438,7 +1658,7 @@ export default function PracticeSession() {
                     <span className="text-xs sm:text-sm font-black text-gray-800 uppercase tracking-wider flex items-center gap-1.5">
                       <span>📐</span> Vzorové řešení pro kontrolu
                     </span>
-                    {(currentQuestion.solutionImageUrl || currentQuestion.solutionSvgContent) && (
+                    {(resolvedSolutionImage || resolvedSolutionSvg) && (
                       <span className="text-[11px] font-bold text-gray-400">
                         Kliknutím na obrázek jej zvětšíte
                       </span>
@@ -1446,20 +1666,20 @@ export default function PracticeSession() {
                   </div>
 
                   {/* SVG nebo obrázek řešení */}
-                  {currentQuestion.solutionSvgContent ? (
+                  {resolvedSolutionSvg ? (
                     <div 
                       className="w-full flex justify-center [&>svg]:w-full [&>svg]:max-w-xl [&>svg]:h-auto rounded-xl bg-[#FAF7F0] p-3 border border-gray-200/80 overflow-hidden"
-                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(currentQuestion.solutionSvgContent) }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeSvg(resolvedSolutionSvg) }}
                     />
-                  ) : currentQuestion.solutionImageUrl ? (
+                  ) : resolvedSolutionImage ? (
                     <div className="flex justify-center">
                       <div 
                         className="rounded-xl overflow-hidden border border-gray-200/80 bg-[#FAF7F0] p-2 shadow-2xs max-w-full cursor-zoom-in group relative"
-                        onClick={() => setLightboxImageUrl(currentQuestion.solutionImageUrl || null)}
+                        onClick={() => setLightboxImageUrl(resolvedSolutionImage)}
                         title="Kliknutím otevřít v plné velikosti"
                       >
                         <img
-                          src={currentQuestion.solutionImageUrl}
+                          src={resolvedSolutionImage}
                           alt="Vzorové řešení"
                           className="max-h-[380px] w-auto max-w-full rounded-lg object-contain group-hover:scale-[1.01] transition-transform"
                         />
@@ -1473,12 +1693,12 @@ export default function PracticeSession() {
                   ) : null}
 
                   {/* Textové vysvětlení / konstrukční postup */}
-                  {currentQuestion.explanation && (
+                  {resolvedExplanation && (
                     <div className="text-xs sm:text-sm font-medium leading-relaxed pt-2 text-gray-700 bg-gray-50/80 p-3.5 rounded-xl border border-gray-100">
                       <div className="font-bold text-gray-800 mb-1 flex items-center gap-1.5">
                         <BulbYellowIcon size={16} /> Postup řešení / konstrukce:
                       </div>
-                      <MathRenderer content={currentQuestion.explanation} />
+                      <MathRenderer content={resolvedExplanation} />
                     </div>
                   )}
                 </div>
@@ -1525,7 +1745,8 @@ export default function PracticeSession() {
               </div>
             )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Feedback Banner after submission */}
         {isAnswerSubmitted && (
@@ -1573,10 +1794,12 @@ export default function PracticeSession() {
                 <>
                   <WrongPinkIcon size={22} className="shrink-0" />
                   <span className="flex items-center gap-1.5 flex-wrap">
-                    <span>Bohužel nesprávně. Správně je:</span>
-                    <strong className="inline-flex items-center">
-                      <MathRenderer content={currentQuestion.correctAnswer} inline />
-                    </strong>
+                    <span>Bohužel nesprávně.{(currentAnswer.correctAnswer ?? currentQuestion.correctAnswer) ? ' Správně je:' : ''}</span>
+                    {(currentAnswer.correctAnswer ?? currentQuestion.correctAnswer) && (
+                      <strong className="inline-flex items-center">
+                        <MathRenderer content={(currentAnswer.correctAnswer ?? currentQuestion.correctAnswer) || ''} inline />
+                      </strong>
+                    )}
                   </span>
                 </>
               )}
@@ -1590,10 +1813,10 @@ export default function PracticeSession() {
               </div>
             )}
 
-            {currentQuestion.type !== 'self_check' && currentQuestion.explanation && (
+            {currentQuestion.type !== 'self_check' && (currentAnswer.explanation ?? currentQuestion.explanation) && (
               <div className="text-xs sm:text-sm font-medium leading-relaxed pt-1 border-t border-gray-200/50">
                 <div className="font-bold text-gray-700 mb-0.5 flex items-center gap-1.5"><BulbYellowIcon size={15} /> Vysvětlení:</div>
-                <MathRenderer content={currentQuestion.explanation} />
+                <MathRenderer content={(currentAnswer.explanation ?? currentQuestion.explanation) || ''} />
               </div>
             )}
           </motion.div>
@@ -1761,6 +1984,8 @@ export default function PracticeSession() {
             const res = await claimVideoReward();
             if (!res.success && (res as any).limitReached) {
               navigate('/', { replace: true, state: { showDailyLimitModal: true } });
+            } else if (res.success) {
+              await refreshProfile?.();
             }
           } else {
             const res = recordGuestVideo();

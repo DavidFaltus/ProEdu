@@ -1,66 +1,88 @@
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 import { 
-  Wrench, ChevronDown, ChevronUp, Play, RotateCcw, 
-  Trash2, Shield, Sparkles, GraduationCap, UserCheck, 
-  Crown, Zap, EyeOff 
+  Wrench, ChevronDown, ChevronUp, Play, 
+  Trash2, Shield, GraduationCap, UserCheck, 
+  Crown, EyeOff 
 } from 'lucide-react';
 import { Button } from '../ui/button';
 import { useAuth } from '../../context/AuthContext';
-import { resetGuestState, getGuestState, DEFAULT_DAILY_JOKERS } from '../../services/jokerService';
+import { resetGuestState, getGuestState, BASE_JOKER_CAP } from '../../services/jokerService';
 import { toast } from 'sonner';
 import RewardedAdModal from './RewardedAdModal';
 import { UserRole } from '../../types';
 
+function isLoopbackHost(): boolean {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
 export default function DevMonetizationToolbar() {
-  const { user, profile, updateProfileData, signOut } = useAuth();
+  // V produkci a mimo explicitně povolené lokální vývojové prostředí se dev lišta nikdy nerenderuje
+  if (!import.meta.env.DEV || import.meta.env.VITE_ENABLE_DEV_TOOLBAR !== 'true' || !isLoopbackHost()) {
+    return null;
+  }
+
+  return <DevMonetizationToolbarInner />;
+}
+
+function DevMonetizationToolbarInner() {
+  const { user, profile, refreshProfile, signOut } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
+  const [isHidden, setIsHidden] = useState(false);
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
 
-  // Na live serveru skryté, aktivace přes URL parametr (?dev=1 nebo ?debug=1)
-  const [isDevMode, setIsDevMode] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const devParam = params.get('dev') || params.get('debug');
-      if (devParam === '1' || devParam === 'true') {
-        localStorage.setItem('proedu_dev_mode', 'true');
-        return true;
-      }
-      if (devParam === '0' || devParam === 'false') {
-        localStorage.setItem('proedu_dev_mode', 'false');
-        return false;
-      }
-      const stored = localStorage.getItem('proedu_dev_mode');
-      if (stored === 'false') return false;
-      if (stored === 'true') return true;
-      // V lokálním vývojovém prostředí (dev) je výchozí zapnuto
-      return Boolean(import.meta.env.DEV);
-    } catch {
-      return Boolean(import.meta.env.DEV);
-    }
-  });
-
-  if (!isDevMode) {
+  if (isHidden) {
     return null;
   }
 
   const handleDisableDevMode = () => {
     try {
-      localStorage.setItem('proedu_dev_mode', 'false');
+      localStorage.removeItem('proedu_dev_mode');
       localStorage.removeItem('proedu_dev_role_override');
     } catch {}
-    setIsDevMode(false);
+    setIsHidden(true);
     setIsOpen(false);
-    toast.info('Testovací dev lišta byla vypnuta. Pro opětovné zapnutí zadejte do URL adresy ?dev=1');
+    toast.info('Testovací dev lišta byla skryta pro tuto relaci.');
   };
 
-  const currentRole = profile?.role || 'host (neregistrovaný)';
-  const currentJokers = profile?.jokers !== undefined ? profile.jokers : DEFAULT_DAILY_JOKERS;
+  const currentJokers = user ? (profile?.jokers ?? 0) : BASE_JOKER_CAP;
+
+  const callDevEndpoint = async (payload: { role?: UserRole; jokers?: number }) => {
+    if (!user) {
+      if (payload.role && typeof window !== 'undefined') {
+        localStorage.setItem('proedu_dev_role_override', payload.role);
+        window.location.reload();
+      }
+      return;
+    }
+
+    const token = await user.getIdToken();
+    if (payload.role && typeof window !== 'undefined') {
+      localStorage.setItem('proedu_dev_role_override', payload.role);
+    }
+    const res = await fetch('/api/dev/set-role', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        uid: user.uid,
+        ...payload,
+      }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Dev endpoint není dostupný.');
+    }
+    await refreshProfile();
+  };
 
   const handleRoleChange = async (newRole: UserRole) => {
     try {
-      await updateProfileData({ role: newRole });
+      await callDevEndpoint({ role: newRole });
       toast.success(`Role změněna na: ${newRole.toUpperCase()}`);
     } catch (err: any) {
       toast.error('Chyba při změně role: ' + err.message);
@@ -73,7 +95,7 @@ export default function DevMonetizationToolbar() {
       return;
     }
     try {
-      await updateProfileData({ jokers: amount });
+      await callDevEndpoint({ jokers: amount });
       toast.success(`Žolíky nastaveny na: ${amount}`);
     } catch (err: any) {
       toast.error('Chyba při nastavení žolíků: ' + err.message);
@@ -85,9 +107,9 @@ export default function DevMonetizationToolbar() {
       toast.info('Pro úpravu žolíků se přihlaste.');
       return;
     }
-    const nextVal = (profile?.jokers ?? DEFAULT_DAILY_JOKERS) + add;
+    const nextVal = (profile?.jokers ?? 0) + add;
     try {
-      await updateProfileData({ jokers: nextVal });
+      await callDevEndpoint({ jokers: nextVal });
       toast.success(`Přidáno +${add} žolíků (celkem: ${nextVal})`);
     } catch (err: any) {
       toast.error('Chyba: ' + err.message);
@@ -284,7 +306,7 @@ export default function DevMonetizationToolbar() {
                 className="w-full h-7 text-[10px] text-gray-400 hover:text-white hover:bg-white/10 rounded-lg flex items-center justify-center gap-1.5"
               >
                 <EyeOff className="w-3 h-3 text-gray-400" />
-                Vypnout dev lištu (pro zapnutí ?dev=1)
+                Vypnout dev lištu pro tuto relaci
               </Button>
             </div>
           </motion.div>

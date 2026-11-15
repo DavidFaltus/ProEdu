@@ -1,17 +1,15 @@
-import { db } from '../lib/firebase';
+import { auth, db } from '../lib/firebase';
 import { cacheManager } from '../lib/cacheManager';
-import { 
-  collection, 
-  doc, 
-  getDocs, 
-  getDoc, 
-  addDoc, 
+import {
+  collection,
+  doc,
+  getDocs,
+  getDoc,
+  addDoc,
   setDoc,
-  updateDoc, 
-  deleteDoc, 
+  updateDoc,
+  deleteDoc,
   serverTimestamp,
-  query,
-  orderBy 
 } from 'firebase/firestore';
 import { Course } from '../types';
 
@@ -30,7 +28,6 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     endDate: '2027-04-10',
     color: 'purple',
     studentCount: 42,
-    meetUrl: 'https://meet.google.com/proedu-combo',
     syllabus: [
       'Úvod do CERMAT testů – typologie úloh a časový management',
       'Číselné obory, zlomky, desetinná čísla a priority operací',
@@ -58,7 +55,6 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     endDate: '2027-04-10',
     color: 'blue',
     studentCount: 38,
-    meetUrl: 'https://meet.google.com/proedu-math',
     syllabus: [
       'Zlomky, desetinná čísla a racionální čísla v praxi',
       'Mocniny, odmocniny a algebraické výrazy',
@@ -86,7 +82,6 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     endDate: '2027-04-10',
     color: 'orange',
     studentCount: 35,
-    meetUrl: 'https://meet.google.com/proedu-czech',
     syllabus: [
       'Pravopis: i/y, s/z, bě/bje, pě, vě/vje, mě/mně',
       'Tvarosloví a slovní druhy – určování gramatických kategorií',
@@ -102,32 +97,68 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
   }
 ];
 
+async function getOptionalAuthHeaders(): Promise<Record<string, string>> {
+  const user = auth.currentUser;
+  if (!user) return {};
+  try {
+    const token = await user.getIdToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 export async function getAllCourses(): Promise<Course[]> {
-  return cacheManager.getOrFetch('courses:all', async () => {
+  const uidKey = auth.currentUser?.uid || 'guest';
+  return cacheManager.getOrFetch(`courses:all:${uidKey}`, async () => {
+    try {
+      const headers = await getOptionalAuthHeaders();
+      const res = await fetch('/api/courses', { headers });
+      if (res.ok) {
+        const data = await res.json();
+        return Array.isArray(data) ? data : (data.courses || []);
+      }
+    } catch (err) {
+      console.warn('API /api/courses nedostupné, zkouším Firestore fallback:', err);
+    }
+
     try {
       const snap = await getDocs(collection(db, 'courses'));
-      if (snap.empty) {
-        // Pokud je kolekce prázdná, inicializujeme výchozí kurzy
-        await seedDefaultCourses();
-        const newSnap = await getDocs(collection(db, 'courses'));
-        return newSnap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
+      if (!snap.empty) {
+        return snap.docs.map(d => {
+          const { meetUrl: _m, studentIds: _s, ...publicFields } = d.data() as Partial<Course>;
+          return { id: d.id, ...publicFields } as Course;
+        });
       }
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Course));
     } catch (err) {
       console.warn('Nepodařilo se načíst kurzy z Firestore, vráceny výchozí:', err);
-      return DEFAULT_FLAGSHIP_COURSES as Course[];
     }
+    return DEFAULT_FLAGSHIP_COURSES as Course[];
   }, 15 * 60 * 1000);
 }
 
 export async function getCourseById(id: string): Promise<Course | null> {
   try {
+    const headers = await getOptionalAuthHeaders();
+    const res = await fetch(`/api/courses/${encodeURIComponent(id)}`, { headers });
+    if (res.ok) {
+      const data = await res.json();
+      return (data.course || data) as Course;
+    }
+    if (res.status === 404) {
+      return null;
+    }
+  } catch (err) {
+    console.warn('API /api/courses/:id nedostupné, zkouším Firestore fallback:', err);
+  }
+
+  try {
     const docRef = doc(db, 'courses', id);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return { id: snap.id, ...snap.data() } as Course;
+      const { meetUrl: _m, studentIds: _s, ...publicFields } = snap.data() as Partial<Course>;
+      return { id: snap.id, ...publicFields } as Course;
     }
-    // Fallback z výchozích
     const found = DEFAULT_FLAGSHIP_COURSES.find(c => c.id === id);
     return found ? (found as Course) : null;
   } catch (err) {
@@ -135,6 +166,44 @@ export async function getCourseById(id: string): Promise<Course | null> {
     const found = DEFAULT_FLAGSHIP_COURSES.find(c => c.id === id);
     return found ? (found as Course) : null;
   }
+}
+
+export async function enrollStudentInCourse(courseId: string, studentUid: string): Promise<void> {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) {
+    throw new Error('Pro zapsání studenta do kurzu musíte být přihlášen jako učitel.');
+  }
+  const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}/enroll`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ studentUid }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Nepodařilo se zapsat studenta do kurzu.');
+  }
+  cacheManager.invalidate('courses');
+}
+
+export async function unenrollStudentFromCourse(courseId: string, studentUid: string): Promise<void> {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) {
+    throw new Error('Pro odebrání studenta z kurzu musíte být přihlášen jako učitel.');
+  }
+  const res = await fetch(`/api/courses/${encodeURIComponent(courseId)}/enroll/${encodeURIComponent(studentUid)}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Nepodařilo se odebrat studenta z kurzu.');
+  }
+  cacheManager.invalidate('courses');
 }
 
 export async function createCourse(data: Omit<Course, 'id'>, teacherId?: string): Promise<string> {

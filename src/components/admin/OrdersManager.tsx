@@ -425,7 +425,7 @@ export default function OrdersManager() {
                     </Button>
                   )}
 
-                  {isPaid && order.iuctoInvoiceId && !order.iuctoCreditNoteId && (
+                  {isPaid && !order.iuctoCreditNoteId && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -436,7 +436,7 @@ export default function OrdersManager() {
                       className="border-purple-200 text-purple-700 hover:bg-purple-50 font-bold text-xs h-9 px-3 rounded-xl cursor-pointer flex items-center gap-1.5"
                     >
                       <RotateCcw size={13} />
-                      <span>Dobropis</span>
+                      <span>{order.iuctoInvoiceId ? 'Dobropis' : 'Refundovat'}</span>
                     </Button>
                   )}
 
@@ -452,19 +452,21 @@ export default function OrdersManager() {
                     </Button>
                   )}
 
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setOrderToDelete(order)}
-                    disabled={deletingOrderId === currentOrderId || confirmingOrderId === currentOrderId}
-                    title="Smazat objednávku"
-                    className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs h-9 px-2.5 rounded-xl cursor-pointer flex items-center gap-1"
-                  >
-                    <Trash2 size={14} />
-                    <span className="hidden sm:inline">
-                      {deletingOrderId === currentOrderId ? 'Mažu...' : 'Smazat'}
-                    </span>
-                  </Button>
+                  {!isPaid && !isRefunded && !order.iuctoInvoiceId && !order.comgateTransId && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setOrderToDelete(order)}
+                      disabled={deletingOrderId === currentOrderId || confirmingOrderId === currentOrderId}
+                      title="Smazat neuhrazenou objednávku"
+                      className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs h-9 px-2.5 rounded-xl cursor-pointer flex items-center gap-1"
+                    >
+                      <Trash2 size={14} />
+                      <span className="hidden sm:inline">
+                        {deletingOrderId === currentOrderId ? 'Mažu...' : 'Smazat'}
+                      </span>
+                    </Button>
+                  )}
                 </div>
               </Card>
             );
@@ -480,11 +482,17 @@ export default function OrdersManager() {
               <RotateCcw size={24} />
             </div>
             <DialogTitle className="text-xl sm:text-2xl font-sans font-black text-gray-900">
-              Stornovat a vystavit dobropis?
+              {orderToRefund?.iuctoInvoiceId ? 'Stornovat a vystavit dobropis?' : 'Refundovat objednávku?'}
             </DialogTitle>
             <DialogDescription className="text-xs sm:text-sm text-gray-600 leading-relaxed">
-              V iÚčtu se vytvoří opravný daňový doklad (dobropis) k faktuře{' '}
-              <strong>{orderToRefund?.iuctoInvoiceNumber || orderToRefund?.iuctoInvoiceId}</strong> a odešle se na e-mail klienta.
+              {orderToRefund?.iuctoInvoiceId ? (
+                <>
+                  V iÚčtu se vytvoří opravný daňový doklad (dobropis) k faktuře{' '}
+                  <strong>{orderToRefund?.iuctoInvoiceNumber || orderToRefund?.iuctoInvoiceId}</strong> a odebere se předplatné Premium.
+                </>
+              ) : (
+                'Objednávka bude označena jako refundovaná, u živých Comgate plateb proběhne vratka a účtu bude odebráno předplatné Premium.'
+              )}
             </DialogDescription>
           </div>
 

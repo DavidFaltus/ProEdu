@@ -17,18 +17,25 @@ import {
 } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
-import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import { Course } from '../types';
 import { getCourseById } from '../services/courseService';
 
+const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
+  if (!rawUrl || typeof rawUrl !== 'string') return null;
+  try {
+    const parsed = new URL(rawUrl, window.location.origin);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch {
+    return null;
+  }
+};
+
 export default function CourseDetail() {
   const { id } = useParams<{ id: string }>();
-  const { user, profile, isTeacher, hasCourseAccess } = useAuth();
-  const navigate = useNavigate();
+  const { isTeacher, hasCourseAccess } = useAuth();
 
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isPaywallOpen, setIsPaywallOpen] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -275,24 +282,27 @@ export default function CourseDetail() {
                   Lekce probíhají pravidelně dle harmonogramu. Odkaz na Google Meet je aktivní před začátkem hodiny.
                 </p>
 
-                {course.meetUrl ? (
-                  <a 
-                    href={course.meetUrl} 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className="block"
-                  >
-                    <Button className="w-full h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md cursor-pointer">
-                      <Video size={18} />
-                      <span>Vstoupit do Google Meet lekce</span>
-                      <ExternalLink size={14} className="opacity-70 ml-1" />
-                    </Button>
-                  </a>
-                ) : (
-                  <div className="p-3 rounded-xl bg-gray-50 text-gray-500 text-xs italic text-center">
-                    Odkaz na Google Meet bude doplněn lektorem před začátkem kurzu.
-                  </div>
-                )}
+                {(() => {
+                  const safeMeetUrl = getSafeExternalUrl(course.meetUrl);
+                  return safeMeetUrl ? (
+                    <a 
+                      href={safeMeetUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="block"
+                    >
+                      <Button className="w-full h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md cursor-pointer">
+                        <Video size={18} />
+                        <span>Vstoupit do Google Meet lekce</span>
+                        <ExternalLink size={14} className="opacity-70 ml-1" />
+                      </Button>
+                    </a>
+                  ) : (
+                    <div className="p-3 rounded-xl bg-gray-50 text-gray-500 text-xs italic text-center">
+                      Odkaz na Google Meet bude doplněn lektorem před začátkem kurzu.
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="pt-4 border-t border-gray-100 space-y-2 text-xs text-gray-600">
@@ -307,7 +317,7 @@ export default function CourseDetail() {
               </div>
             </div>
           ) : (
-            /* Ne-kurzový uživatel: Cenová karta a zápis */
+            /* Ne-kurzový uživatel: Cenová karta a pokyn k individuálnímu zápisu lektorem */
             <div className="bg-white rounded-3xl p-6 sm:p-7 border border-indigo-100 shadow-xl shadow-indigo-500/5 space-y-6">
               <div className="space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md inline-block">
@@ -317,17 +327,18 @@ export default function CourseDetail() {
                   {course.price || '2 490 Kč / sezóna'}
                 </div>
                 <p className="text-xs text-gray-500 font-medium">
-                  Jednorázová platba na celou přijímačkovou sezónu až do dubna.
+                  Přístup do vybraného kurzu přiřazuje lektor individuálně po předchozí domluvě.
                 </p>
               </div>
 
-              <Button
-                onClick={() => setIsPaywallOpen(true)}
-                className="w-full h-14 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-base shadow-lg shadow-yellow-500/25 transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <CapIcon size={22} />
-                <span>Zapsat se do kurzu</span>
-              </Button>
+              <Link to="/contact" className="block">
+                <Button
+                  className="w-full h-14 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-base shadow-lg shadow-yellow-500/25 transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <CapIcon size={22} />
+                  <span>Domluvit si zápis do kurzu</span>
+                </Button>
+              </Link>
 
               {/* Locked Google Meet Card */}
               <div className="p-4 rounded-2xl bg-gray-50 border border-dashed border-gray-200 text-center space-y-2">
@@ -338,7 +349,7 @@ export default function CourseDetail() {
                   Google Meet odkaz a interní výuka
                 </h5>
                 <p className="text-[11px] text-gray-400 leading-snug">
-                  Odkazy na živé online hodiny, videozáznamy a úkoly budou odemčeny po zápisu do kurzu.
+                  Odkazy na živé online hodiny, videozáznamy a úkoly jsou odemčeny po přiřazení kurzu lektorem.
                 </p>
               </div>
 
@@ -349,7 +360,7 @@ export default function CourseDetail() {
                 </div>
                 <div className="flex items-center gap-2">
                   <CorrectCyanIcon size={16} />
-                  <span>Okamžitý přístup k materiálům</span>
+                  <span>Okamžitý přístup po přiřazení lektorem</span>
                 </div>
               </div>
             </div>
@@ -370,21 +381,6 @@ export default function CourseDetail() {
           </div>
         </div>
       </div>
-
-      {/* Sjednocený Paywall Modal pro aktivaci kurzu */}
-      <UnifiedPaywallModal
-        isOpen={isPaywallOpen}
-        onClose={() => setIsPaywallOpen(false)}
-        type="course"
-        defaultCourseId={course.id}
-        title={`Zápis do kurzu: ${course.title}`}
-        description="Potvrď výběr kurzu a získej okamžitý přístup k živým lekcím, materiálům a záznamům."
-        onSuccess={() => {
-          setIsPaywallOpen(false);
-          // Obnovit stav, uživatel má nyní kurz přiřazen
-          window.location.reload();
-        }}
-      />
     </div>
   );
 }

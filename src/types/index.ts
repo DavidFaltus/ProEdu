@@ -48,6 +48,8 @@ export interface UserProfile {
   subscriptionExpiredAt?: string | null;
   iuctoCustomerId?: number | null; // ID odběratele v iÚčtu (spravuje pouze server)
   lastRecurringAttemptDate?: string; // YYYY-MM-DD posledního automatického stržení
+  subscriptionGraceUntil?: string; // ISO datum konce 3denní ochranné lhůty při expiraci
+  subscriptionExpiresAt?: string | null; // Legacy alias konce předplatného
 }
 
 export type QuestionType = 'choice' | 'open' | 'self_check'; // Výběr ze 4 možností | Volná odpověď | Self check (vlastní porovnání)
@@ -60,7 +62,7 @@ export interface PracticeQuestion {
   type: QuestionType;
   question: string;
   options?: string[]; // 4 možnosti při výběru
-  correctAnswer: string;
+  correctAnswer?: string; // Vynecháno před vyhodnocením na serveru; doplněno po odeslání odpovědi
   hint?: string;
   explanation?: string;
   difficulty?: 'Lehká' | 'Střední' | 'Těžká';
@@ -93,7 +95,7 @@ export interface StudyStep {
 export interface SampleProblem {
   problem: string;
   options?: string[];
-  correctAnswer: string;
+  correctAnswer?: string;
   explanation?: string;
   theoryImages?: Record<string, string>;
 }
@@ -114,6 +116,8 @@ export interface PracticeSubtopic {
   order?: number;
   isHidden?: boolean;
   hasStudyMaterial?: boolean;
+  hasStudyContent?: boolean;
+  isDemo?: boolean;
   svgUrl?: string | null; // např. '/materials/cz-shoda.svg' nebo externí link
   svgContent?: string | null; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
   materialId?: string | null;
@@ -192,6 +196,10 @@ export interface ActivePracticeAnswerItem {
   selfScore?: number;
   selfEvaluation?: 'correct' | 'partial' | 'wrong';
   solutionRevealed?: boolean;
+  correctAnswer?: string;
+  explanation?: string;
+  solutionImageUrl?: string | null;
+  solutionSvgContent?: string | null;
 }
 
 export interface ActivePracticeSession {
@@ -203,6 +211,7 @@ export interface ActivePracticeSession {
   questionIds: string[];
   currentIndex: number;
   answersMap: Record<string, ActivePracticeAnswerItem>;
+  answersByQuestionId?: Record<string, ActivePracticeAnswerItem>;
   openInputs?: Record<string, string>;
   showHintMap?: Record<string, boolean>;
   bookmarkedIndices?: number[];
@@ -257,7 +266,7 @@ export interface Course {
 
 export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
 export type OrderStatus = 'pending' | 'paid' | 'cancelled' | 'refunded';
-export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive';
+export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive' | 'expired';
 export type IuctoSyncStatus = 'pending' | 'synced' | 'failed' | 'skipped_sandbox' | 'refunded';
 
 export interface BillingAddress {
@@ -397,6 +406,7 @@ export interface ExistingMaterialItem {
   fileType?: string;
   fileSize?: number;
   hiddenFromLibrary?: boolean;
+  locked?: boolean;
   createdAt?: any;
   updatedAt?: any;
   createdBy?: string;

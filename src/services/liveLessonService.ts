@@ -8,6 +8,7 @@ import {
   query, 
   where, 
   orderBy, 
+  limit,
   onSnapshot, 
   Timestamp 
 } from 'firebase/firestore';
@@ -86,7 +87,18 @@ export const deleteLiveLesson = async (lessonId: string): Promise<void> => {
 };
 
 /**
- * Fetches all lessons for a specific teacher.
+ * Helper to convert Firestore Timestamp / Date / string to millis safely.
+ */
+const safeToMillis = (ts: any): number => {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  const parsed = new Date(ts).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+/**
+ * Fetches all live lessons created by a teacher.
  */
 export const getTeacherLiveLessons = async (teacherId: string): Promise<LiveLesson[]> => {
   try {
@@ -101,41 +113,89 @@ export const getTeacherLiveLessons = async (teacherId: string): Promise<LiveLess
     }));
 
     // Sort by scheduledAt desc locally
-    return lessons.sort((a, b) => b.scheduledAt.toMillis() - a.scheduledAt.toMillis());
+    return lessons.sort((a, b) => safeToMillis(b.scheduledAt) - safeToMillis(a.scheduledAt));
   } catch (error) {
     console.error('Error fetching teacher live lessons:', error);
     throw error;
   }
 };
 
+interface SharedLessonChannel {
+  listeners: Set<(lessons: LiveLesson[]) => void>;
+  errorListeners: Set<(err: Error) => void>;
+  latestData: LiveLesson[] | null;
+  unsubscribeFirestore: () => void;
+}
+
+const teacherLessonChannels = new Map<string, SharedLessonChannel>();
+const studentLessonChannels = new Map<string, SharedLessonChannel>();
+
 /**
- * Real-time listener for teacher's lessons.
+ * Real-time listener for teacher's lessons (multiplexed across subscribers).
  */
 export const subscribeToTeacherLiveLessons = (
   teacherId: string,
   onUpdate: (lessons: LiveLesson[]) => void,
   onError?: (err: Error) => void
 ) => {
-  const q = query(
-    collection(db, COLLECTION_NAME),
-    where('teacherId', '==', teacherId)
-  );
+  if (!teacherId) {
+    onUpdate([]);
+    return () => {};
+  }
 
-  return onSnapshot(
-    q,
-    (snapshot) => {
-      const lessons: LiveLesson[] = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<LiveLesson, 'id'>),
-      }));
-      lessons.sort((a, b) => b.scheduledAt.toMillis() - a.scheduledAt.toMillis());
-      onUpdate(lessons);
-    },
-    (err) => {
-      console.error('Error in subscribeToTeacherLiveLessons:', err);
-      if (onError) onError(err);
+  let channel = teacherLessonChannels.get(teacherId);
+  if (!channel) {
+    const listeners = new Set<(lessons: LiveLesson[]) => void>();
+    const errorListeners = new Set<(err: Error) => void>();
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('teacherId', '==', teacherId),
+      limit(100)
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const lessons: LiveLesson[] = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<LiveLesson, 'id'>),
+        }));
+        lessons.sort((a, b) => safeToMillis(b.scheduledAt) - safeToMillis(a.scheduledAt));
+        if (channel) {
+          channel.latestData = lessons;
+        }
+        listeners.forEach((cb) => cb(lessons));
+      },
+      (err) => {
+        console.error('Error in subscribeToTeacherLiveLessons:', err);
+        errorListeners.forEach((cb) => cb(err));
+      }
+    );
+
+    channel = {
+      listeners,
+      errorListeners,
+      latestData: null,
+      unsubscribeFirestore: unsub,
+    };
+    teacherLessonChannels.set(teacherId, channel);
+  }
+
+  channel.listeners.add(onUpdate);
+  if (onError) channel.errorListeners.add(onError);
+  if (channel.latestData !== null) {
+    onUpdate(channel.latestData);
+  }
+
+  const currentChannel = channel;
+  return () => {
+    currentChannel.listeners.delete(onUpdate);
+    if (onError) currentChannel.errorListeners.delete(onError);
+    if (currentChannel.listeners.size === 0) {
+      currentChannel.unsubscribeFirestore();
+      teacherLessonChannels.delete(teacherId);
     }
-  );
+  };
 };
 
 export interface StudentUserItem {
@@ -150,7 +210,8 @@ export interface StudentUserItem {
 export const getAllStudents = async (): Promise<StudentUserItem[]> => {
   const q = query(
     collection(db, 'users'),
-    where('role', '==', 'student')
+    where('role', 'in', ['student', 'free', 'premium', 'course']),
+    limit(200)
   );
   const snapshot = await getDocs(q);
   const students: StudentUserItem[] = snapshot.docs.map((d) => {
@@ -165,62 +226,81 @@ export const getAllStudents = async (): Promise<StudentUserItem[]> => {
 };
 
 /**
- * Real-time listener for active and scheduled lessons available to students.
- * Combines public lessons ('all') and individual lessons targeted to studentId.
+ * Real-time listener for active and scheduled lessons available to students (multiplexed across subscribers).
+ * Combines public lessons ('all'), individual lessons targeted to studentId, and course lessons.
  */
 export const subscribeToStudentLiveLessons = (
   studentId: string | undefined,
   onUpdate: (lessons: LiveLesson[]) => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
+  enrolledCourseIds?: string[]
 ) => {
-  let publicLessons: LiveLesson[] = [];
-  let individualLessons: LiveLesson[] = [];
+  if (!studentId) {
+    onUpdate([]);
+    return () => {};
+  }
 
-  const updateCombined = () => {
-    const map = new Map<string, LiveLesson>();
-    publicLessons.forEach((l) => { if (l.id) map.set(l.id, l); });
-    individualLessons.forEach((l) => { if (l.id) map.set(l.id, l); });
+  const cleanCourseIds = Array.isArray(enrolledCourseIds)
+    ? Array.from(new Set(enrolledCourseIds.filter((c) => typeof c === 'string' && c.trim().length > 0)))
+        .sort()
+        .slice(0, 10)
+    : [];
+  const channelKey = `${studentId}:${cleanCourseIds.join(',')}`;
 
-    const combined = Array.from(map.values());
-    combined.sort((a, b) => {
-      if (a.status === 'live' && b.status !== 'live') return -1;
-      if (b.status === 'live' && a.status !== 'live') return 1;
-      const aTime = a.scheduledAt?.toMillis ? a.scheduledAt.toMillis() : (a.scheduledAt?.seconds ? a.scheduledAt.seconds * 1000 : 0);
-      const bTime = b.scheduledAt?.toMillis ? b.scheduledAt.toMillis() : (b.scheduledAt?.seconds ? b.scheduledAt.seconds * 1000 : 0);
-      return aTime - bTime;
-    });
-    onUpdate(combined);
-  };
+  let channel = studentLessonChannels.get(channelKey);
+  if (!channel) {
+    const listeners = new Set<(lessons: LiveLesson[]) => void>();
+    const errorListeners = new Set<(err: Error) => void>();
 
-  const qPublic = query(
-    collection(db, COLLECTION_NAME),
-    where('targetAudience', '==', 'all'),
-    where('status', 'in', ['live', 'scheduled'])
-  );
+    let publicLessons: LiveLesson[] = [];
+    let individualLessons: LiveLesson[] = [];
+    let courseLessons: LiveLesson[] = [];
 
-  const unsubPublic = onSnapshot(
-    qPublic,
-    (snapshot) => {
-      publicLessons = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<LiveLesson, 'id'>),
-      }));
-      updateCombined();
-    },
-    (err) => {
-      console.error('Error in subscribeToStudentLiveLessons (public):', err);
-      if (onError) onError(err);
-    }
-  );
+    const updateCombined = () => {
+      const map = new Map<string, LiveLesson>();
+      publicLessons.forEach((l) => { if (l.id) map.set(l.id, l); });
+      individualLessons.forEach((l) => { if (l.id) map.set(l.id, l); });
+      courseLessons.forEach((l) => { if (l.id) map.set(l.id, l); });
 
-  let unsubIndiv = () => {};
-  if (studentId) {
+      const combined = Array.from(map.values());
+      combined.sort((a, b) => {
+        if (a.status === 'live' && b.status !== 'live') return -1;
+        if (b.status === 'live' && a.status !== 'live') return 1;
+        return safeToMillis(a.scheduledAt) - safeToMillis(b.scheduledAt);
+      });
+      if (channel) {
+        channel.latestData = combined;
+      }
+      listeners.forEach((cb) => cb(combined));
+    };
+
+    const qPublic = query(
+      collection(db, COLLECTION_NAME),
+      where('targetAudience', '==', 'all'),
+      where('status', 'in', ['live', 'scheduled'])
+    );
+
+    const unsubPublic = onSnapshot(
+      qPublic,
+      (snapshot) => {
+        publicLessons = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as Omit<LiveLesson, 'id'>),
+        }));
+        updateCombined();
+      },
+      (err) => {
+        console.error('Error in subscribeToStudentLiveLessons (public):', err);
+        errorListeners.forEach((cb) => cb(err));
+      }
+    );
+
     const qIndiv = query(
       collection(db, COLLECTION_NAME),
       where('studentIds', 'array-contains', studentId),
       where('status', 'in', ['live', 'scheduled'])
     );
-    unsubIndiv = onSnapshot(
+    const unsubIndiv = onSnapshot(
       qIndiv,
       (snapshot) => {
         individualLessons = snapshot.docs.map((d) => ({
@@ -233,10 +313,130 @@ export const subscribeToStudentLiveLessons = (
         console.error('Error in subscribeToStudentLiveLessons (individual):', err);
       }
     );
+
+    let unsubCourse = () => {};
+    if (cleanCourseIds.length > 0) {
+      const qCourse = query(
+        collection(db, COLLECTION_NAME),
+        where('courseId', 'in', cleanCourseIds),
+        where('status', 'in', ['live', 'scheduled'])
+      );
+      unsubCourse = onSnapshot(
+        qCourse,
+        (snapshot) => {
+          courseLessons = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<LiveLesson, 'id'>),
+          }));
+          updateCombined();
+        },
+        (err) => {
+          console.error('Error in subscribeToStudentLiveLessons (course):', err);
+        }
+      );
+    }
+
+    channel = {
+      listeners,
+      errorListeners,
+      latestData: null,
+      unsubscribeFirestore: () => {
+        unsubPublic();
+        unsubIndiv();
+        unsubCourse();
+      },
+    };
+    studentLessonChannels.set(channelKey, channel);
   }
 
+  channel.listeners.add(onUpdate);
+  if (onError) channel.errorListeners.add(onError);
+  if (channel.latestData !== null) {
+    onUpdate(channel.latestData);
+  }
+
+  const currentChannel = channel;
   return () => {
-    unsubPublic();
-    unsubIndiv();
+    currentChannel.listeners.delete(onUpdate);
+    if (onError) currentChannel.errorListeners.delete(onError);
+    if (currentChannel.listeners.size === 0) {
+      currentChannel.unsubscribeFirestore();
+      studentLessonChannels.delete(channelKey);
+    }
+  };
+};
+
+interface SharedTodoChannel {
+  listeners: Set<(todos: any[]) => void>;
+  errorListeners: Set<(err: Error) => void>;
+  latestData: any[] | null;
+  unsubscribeFirestore: () => void;
+}
+
+const studentTodoChannels = new Map<string, SharedTodoChannel>();
+
+/**
+ * Multiplexed real-time listener for a student's todos collection so StudentDashboard,
+ * Practice, and useNotifications share a single Firestore onSnapshot listener.
+ */
+export const subscribeToStudentTodos = (
+  studentId: string | undefined,
+  onUpdate: (todos: any[]) => void,
+  onError?: (err: Error) => void
+) => {
+  if (!studentId) {
+    onUpdate([]);
+    return () => {};
+  }
+
+  let channel = studentTodoChannels.get(studentId);
+  if (!channel) {
+    const listeners = new Set<(todos: any[]) => void>();
+    const errorListeners = new Set<(err: Error) => void>();
+
+    const qTodos = query(
+      collection(db, 'todos'),
+      where('studentId', '==', studentId),
+      limit(300)
+    );
+
+    const unsub = onSnapshot(
+      qTodos,
+      (snap) => {
+        const items = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        if (channel) {
+          channel.latestData = items;
+        }
+        listeners.forEach((cb) => cb(items));
+      },
+      (err) => {
+        console.warn('Error in subscribeToStudentTodos:', err);
+        errorListeners.forEach((cb) => cb(err));
+      }
+    );
+
+    channel = {
+      listeners,
+      errorListeners,
+      latestData: null,
+      unsubscribeFirestore: unsub,
+    };
+    studentTodoChannels.set(studentId, channel);
+  }
+
+  channel.listeners.add(onUpdate);
+  if (onError) channel.errorListeners.add(onError);
+  if (channel.latestData !== null) {
+    onUpdate(channel.latestData);
+  }
+
+  const currentChannel = channel;
+  return () => {
+    currentChannel.listeners.delete(onUpdate);
+    if (onError) currentChannel.errorListeners.delete(onError);
+    if (currentChannel.listeners.size === 0) {
+      currentChannel.unsubscribeFirestore();
+      studentTodoChannels.delete(studentId);
+    }
   };
 };

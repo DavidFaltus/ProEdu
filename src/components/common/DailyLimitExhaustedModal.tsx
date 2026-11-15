@@ -105,7 +105,7 @@ export default function DailyLimitExhaustedModal({
                   className="w-full h-11 rounded-xl font-bold text-xs border-gray-200 hover:bg-gray-50 text-[#0F2942] flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <Sparkles size={14} className="text-amber-500" />
-                  <span>Bezplatná registrace (+15 žolíků)</span>
+                  <span>Bezplatná registrace (+10 žolíků denně)</span>
                 </Button>
               )
             ) : (

@@ -1,13 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import http from 'node:http';
+import fs from 'node:fs';
 
 test('Materials chunking & background processing API flow', async (t) => {
-  // Let's create a simulated base64 file payload (~500 KB to trigger multiple chunks)
+  // Let's create a simulated base64 file payload (~500 KB to trigger multiple chunks) with valid PDF magic bytes
   const simulatedFileSize = 500 * 1024;
   const rawBytes = Buffer.alloc(simulatedFileSize, 'A');
+  rawBytes.write('%PDF-1.4\n', 0, 'latin1');
   const base64Data = rawBytes.toString('base64');
-  const thumbBytes = Buffer.from('FAKE_JPEG_THUMBNAIL_BYTES', 'utf8');
+  const thumbBytes = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from('FAKE_JPEG_THUMBNAIL_BYTES', 'utf8')]);
   const thumbBase64 = `data:image/jpeg;base64,${thumbBytes.toString('base64')}`;
 
   // Helper to make HTTP requests to local server on port 3005
@@ -38,16 +40,23 @@ test('Materials chunking & background processing API flow', async (t) => {
   const health = await makeRequest({ path: '/api/health', method: 'GET' });
   assert.strictEqual(health.statusCode, 200, 'Server should be reachable on port 3005');
 
-  // 2. We need a valid teacher auth token. In dev mode, verifyIdToken falls back to JWT payload decode:
-  const teacherPayload = {
-    user_id: 'teacher-dev-uid',
-    sub: 'teacher-dev-uid',
-    email: 'ucitel@ucitel.cz',
-    role: 'teacher'
-  };
-  const tokenHeader = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64');
-  const tokenPayload = Buffer.from(JSON.stringify(teacherPayload)).toString('base64');
-  const mockTeacherToken = `${tokenHeader}.${tokenPayload}.signature`;
+  // 2. Sign in as teacher (ucitel@ucitel.cz) via Firebase IdentityToolkit to obtain a real signed ID token
+  const appletCfg = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+  const authResp = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${appletCfg.apiKey}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'ucitel@ucitel.cz',
+        password: 'ucitel123',
+        returnSecureToken: true,
+      }),
+    }
+  );
+  const authData: any = await authResp.json();
+  assert.ok(authData.idToken, 'Should obtain valid Firebase ID token for ucitel@ucitel.cz');
+  const mockTeacherToken = authData.idToken;
 
   // 3. POST /api/materials/upload
   const uploadPayload = JSON.stringify({
@@ -78,12 +87,14 @@ test('Materials chunking & background processing API flow', async (t) => {
   const materialId = uploadResult.materialId;
 
   // 4. Wait for background processing to finish (poll thumbnail or file until ready, up to 10s)
+  const authHeaders = { 'Authorization': `Bearer ${mockTeacherToken}` };
   let isReady = false;
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 500));
     const fileRes = await makeRequest({
       path: `/api/materials/${materialId}/file`,
-      method: 'GET'
+      method: 'GET',
+      headers: authHeaders
     });
     if (fileRes.statusCode === 200) {
       isReady = true;
@@ -94,10 +105,18 @@ test('Materials chunking & background processing API flow', async (t) => {
   }
   assert.ok(isReady, 'Material file should become ready after background processing');
 
+  // 4b. Verify unauthenticated access to protected material file is blocked with 401
+  const unauthFileRes = await makeRequest({
+    path: `/api/materials/${materialId}/file`,
+    method: 'GET'
+  });
+  assert.strictEqual(unauthFileRes.statusCode, 401, 'Unauthenticated material file request must return 401');
+
   // 5. Test GET /api/materials/:id/thumbnail
   const thumbRes = await makeRequest({
     path: `/api/materials/${materialId}/thumbnail`,
-    method: 'GET'
+    method: 'GET',
+    headers: authHeaders
   });
   assert.strictEqual(thumbRes.statusCode, 200, 'Thumbnail should be accessible');
   assert.ok(thumbRes.headers['content-type']?.includes('image/'), 'Thumbnail should have image content-type');
@@ -105,7 +124,8 @@ test('Materials chunking & background processing API flow', async (t) => {
   // 6. Test GET /api/materials/:id/download
   const downloadRes = await makeRequest({
     path: `/api/materials/${materialId}/download`,
-    method: 'GET'
+    method: 'GET',
+    headers: authHeaders
   });
   assert.strictEqual(downloadRes.statusCode, 200, 'Download should be accessible');
   assert.ok(downloadRes.headers['content-disposition']?.includes('attachment'), 'Content-Disposition must be attachment');
@@ -114,9 +134,7 @@ test('Materials chunking & background processing API flow', async (t) => {
   const deleteRes = await makeRequest({
     path: `/api/materials/${materialId}`,
     method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${mockTeacherToken}`
-    }
+    headers: authHeaders
   });
   assert.strictEqual(deleteRes.statusCode, 200, 'Delete should return HTTP 200');
   const deleteResult = JSON.parse(deleteRes.data.toString('utf8'));
@@ -125,7 +143,8 @@ test('Materials chunking & background processing API flow', async (t) => {
   // 8. Verify it is no longer accessible
   const afterDeleteRes = await makeRequest({
     path: `/api/materials/${materialId}/file`,
-    method: 'GET'
+    method: 'GET',
+    headers: authHeaders
   });
   assert.strictEqual(afterDeleteRes.statusCode, 404, 'Deleted material file should return 404');
 });

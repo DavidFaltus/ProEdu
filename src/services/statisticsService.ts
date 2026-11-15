@@ -357,10 +357,13 @@ export async function fetchStudentRawStatisticsData(userId?: string): Promise<{
             });
           });
 
-          // Pokud score nebylo nastaveno, spočítáme ho z detailedAnswers
+          // Pokud score nebylo nastaveno, spočítáme ho z detailedAnswers (včetně 0.5 za částečné sebehodnocení)
           if (totalQuestions === 0 && detailedAnswers.length > 0) {
             totalQuestions = detailedAnswers.length;
-            score = detailedAnswers.filter(a => a.isCorrect).length;
+            score = detailedAnswers.reduce((sum, a) => {
+              if (typeof a.selfScore === 'number') return sum + a.selfScore;
+              return sum + (a.isCorrect ? 1 : 0);
+            }, 0);
             percentage = Math.round((score / totalQuestions) * 100);
           }
         }
@@ -832,7 +835,15 @@ export function computeStudentStatistics(
   const totalUnpracticedTopicsCount = subtopicMasteryList.filter(s => s.attemptsCount === 0).length;
 
   // 9. Vývoj v čase (kap. 3.5: spojnicový graf, >= 3 dny s daty)
-  const daysToShow = periodFilter === '7d' ? 7 : periodFilter === '30d' ? 30 : 14;
+  let daysToShow = periodFilter === '7d' ? 7 : periodFilter === '30d' ? 30 : 14;
+  if (periodFilter === 'all' && filteredAttempts.length > 0) {
+    const earliestTime = filteredAttempts.reduce(
+      (min, a) => Math.min(min, a.createdAt.getTime()),
+      now
+    );
+    const spanDays = Math.ceil((now - earliestTime) / dayMs) + 1;
+    daysToShow = Math.max(14, spanDays);
+  }
   const byDayMap = new Map<string, StudentAttemptRecord[]>();
   filteredAttempts.forEach(a => {
     const k = toDateKey(a.createdAt);

@@ -33,6 +33,7 @@ import { Order } from '../types';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
+import { sanitizeSafeUrl } from '../utils/svgUtils';
 
 const CANCEL_REASONS = [
   'Už mám po přijímacích zkouškách',
@@ -44,7 +45,7 @@ const CANCEL_REASONS = [
 ];
 
 export default function SubscriptionManager() {
-  const { profile, updateProfileData } = useAuth();
+  const { profile, isPremium: authIsPremium, isCourseUser, isTeacher: authIsTeacher, refreshProfile } = useAuth();
 
   // Stavy modálů
   const [isPaywallOpen, setIsPaywallOpen] = useState(false);
@@ -71,9 +72,9 @@ export default function SubscriptionManager() {
   const [dic, setDic] = useState(profile?.billingDetails?.dic || '');
   const [isSavingBilling, setIsSavingBilling] = useState(false);
 
-  const isPremium = profile?.role === 'premium';
-  const isCourse = profile?.role === 'course';
-  const isTeacher = profile?.role === 'teacher';
+  const isCourse = isCourseUser;
+  const isTeacher = authIsTeacher;
+  const isPremium = profile?.role === 'premium' && authIsPremium;
 
   // Výpočet data konce období
   const periodEndDate = React.useMemo(() => {
@@ -162,9 +163,7 @@ export default function SubscriptionManager() {
       await saveBillingAndPaymentSettings({
         billingDetails
       });
-      await updateProfileData({
-        billingDetails
-      });
+      await refreshProfile();
       toast.success('Fakturační údaje byly úspěšně uloženy.');
     } catch (err: any) {
       toast.error(err.message || 'Nepodařilo se uložit fakturační údaje.');
@@ -181,38 +180,19 @@ export default function SubscriptionManager() {
 
     setIsProcessingCancel(true);
     try {
-      // 1. Provede zápis a počká na potvrzení z databáze Firestore
       const res = await cancelSubscription({
         reason: finalReason,
         immediate,
         currentPeriodEnd: periodEndDate.toISOString()
       });
 
-      if (immediate) {
-        await updateProfileData({
-          role: 'free',
-          subscriptionStatus: 'inactive',
-          subscriptionCancelledAt: new Date().toISOString(),
-          subscriptionCancelReason: finalReason
-        });
-      } else {
-        await updateProfileData({
-          subscriptionStatus: 'cancelled_at_period_end',
-          subscriptionCancelledAt: new Date().toISOString(),
-          subscriptionCancelReason: finalReason,
-          subscriptionPeriodEnd: res.subscriptionPeriodEnd || periodEndDate.toISOString()
-        });
-      }
-
+      await refreshProfile();
+      await loadMyOrders();
       toast.success(res.message);
       setIsCancelModalOpen(false);
-
-      // 2. Po potvrzení z databáze obnovíme stránku, aby se stav okamžitě a konzistentně propsal v celé aplikaci
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
     } catch (err: any) {
       toast.error(err.message || 'Nepodařilo se zrušit předplatné.');
+    } finally {
       setIsProcessingCancel(false);
     }
   };
@@ -221,18 +201,12 @@ export default function SubscriptionManager() {
     setIsProcessingReactivate(true);
     try {
       const res = await reactivateSubscription(periodEndDate.toISOString());
-      await updateProfileData({
-        role: 'premium',
-        subscriptionStatus: 'active',
-        subscriptionCancelledAt: null,
-        subscriptionPeriodEnd: res.subscriptionPeriodEnd
-      });
+      await refreshProfile();
+      await loadMyOrders();
       toast.success(res.message);
-      setTimeout(() => {
-        window.location.reload();
-      }, 500);
     } catch (err: any) {
       toast.error(err.message || 'Nepodařilo se obnovit předplatné.');
+    } finally {
       setIsProcessingReactivate(false);
     }
   };
@@ -397,7 +371,7 @@ export default function SubscriptionManager() {
                 <ul className="space-y-2 text-xs text-gray-600 font-medium">
                   <li className="flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-gray-400 shrink-0" />
-                    Denní příděl 5 žolíků na procvičování
+                    Denní příděl 10 žolíků na procvičování
                   </li>
                   <li className="flex items-center gap-2">
                     <CheckCircle2 size={14} className="text-gray-400 shrink-0" />
@@ -672,9 +646,9 @@ export default function SubscriptionManager() {
                           <FileText size={14} className="text-[#B80053]" />
                           <span>{order.iuctoInvoiceId ? 'Faktura PDF' : 'Doklad'}</span>
                         </Button>
-                        {order.iuctoCreditNoteShareUrl && (
+                        {sanitizeSafeUrl(order.iuctoCreditNoteShareUrl) && (
                           <a
-                            href={order.iuctoCreditNoteShareUrl}
+                            href={sanitizeSafeUrl(order.iuctoCreditNoteShareUrl)!}
                             target="_blank"
                             rel="noopener noreferrer"
                             onClick={e => e.stopPropagation()}
@@ -925,6 +899,7 @@ export default function SubscriptionManager() {
           loadMyOrders();
         }}
         onSuccess={() => {
+          refreshProfile();
           loadMyOrders();
         }}
         initialOrder={selectedOrderForPayment}

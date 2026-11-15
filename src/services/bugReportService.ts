@@ -1,19 +1,20 @@
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc, getDocs, doc, updateDoc, deleteDoc, serverTimestamp, query, orderBy } from 'firebase/firestore';
-import { db, auth, storage } from '../lib/firebase';
+import { auth, storage } from '../lib/firebase';
 import { BugReport, CreateBugReportInput, BugReportStatus } from '../types/bugReport';
 
+const ALLOWED_SCREENSHOT_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024; // 5 MB
+
 /**
- * Nahraje screenshot k hlášení chyby do Firebase Storage do cesty /bugReports/{userId}/{fileId}
+ * Nahraje screenshot k hlášení chyby do Firebase Storage do cesty bugReports/{userId}/{fileId}
  */
 export async function uploadBugReportScreenshot(userId: string, file: File): Promise<string> {
-  if (!file.type.startsWith('image/')) {
-    throw new Error('Povoleny jsou pouze obrázky (PNG, JPG, WEBP).');
+  if (!ALLOWED_SCREENSHOT_TYPES.includes(file.type)) {
+    throw new Error('Povoleny jsou pouze obrázky PNG, JPG nebo WEBP.');
   }
 
-  // Limit 10 MB dle storage.rules
-  if (file.size > 10 * 1024 * 1024) {
-    throw new Error('Velikost obrázku nesmí přesáhnout 10 MB.');
+  if (file.size > MAX_SCREENSHOT_BYTES) {
+    throw new Error('Velikost obrázku nesmí přesáhnout 5 MB.');
   }
 
   const cleanName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
@@ -28,7 +29,7 @@ export async function uploadBugReportScreenshot(userId: string, file: File): Pro
 }
 
 /**
- * Odešle hlášení chyby přes backendové API (uloží do Firestore a pošle e-mail na netkova.nela@gmail.com)
+ * Odešle hlášení chyby výhradně přes zabezpečené backendové API.
  */
 export async function submitBugReport(input: CreateBugReportInput): Promise<{ success: boolean; reportId: string }> {
   const currentUser = auth.currentUser;
@@ -38,13 +39,8 @@ export async function submitBugReport(input: CreateBugReportInput): Promise<{ su
 
   let finalScreenshotUrl = input.screenshotUrl || null;
 
-  // Pokud byl přiložen soubor, nejdříve ho nahrajeme do Storage
   if (input.screenshotFile) {
-    try {
-      finalScreenshotUrl = await uploadBugReportScreenshot(currentUser.uid, input.screenshotFile);
-    } catch (uploadErr: any) {
-      console.warn('[BugReport] Nepodařilo se nahrát screenshot, pokračuji bez něj:', uploadErr?.message);
-    }
+    finalScreenshotUrl = await uploadBugReportScreenshot(currentUser.uid, input.screenshotFile);
   }
 
   const token = await currentUser.getIdToken();
@@ -58,153 +54,91 @@ export async function submitBugReport(input: CreateBugReportInput): Promise<{ su
     userName: input.userName || currentUser.displayName || currentUser.email?.split('@')[0] || 'Student'
   };
 
-  try {
-    const response = await fetch('/api/bug-reports/submit', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify(payload)
-    });
+  const response = await fetch('/api/bug-reports/submit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify(payload)
+  });
 
-    if (response.ok) {
-      const data = await response.json();
-      return { success: true, reportId: data.reportId };
-    }
-
-    const errorData = await response.json().catch(() => null);
-    throw new Error(errorData?.error || `Chyba serveru (${response.status})`);
-  } catch (apiErr: any) {
-    console.warn('[BugReport] API endpoint selhal, zkouším přímý zápis do Firestore:', apiErr?.message);
-
-    // Fallback: Zápis přímo do Firestore podle pravidel
-    const docRef = await addDoc(collection(db, 'bugReports'), {
-      userId: currentUser.uid,
-      userEmail: currentUser.email || '',
-      userName: payload.userName,
-      category: payload.category,
-      categoryLabel: getCategoryLabel(payload.category),
-      description: payload.description,
-      pageUrl: payload.pageUrl,
-      screenshotUrl: payload.screenshotUrl,
-      userAgent: payload.userAgent,
-      screenResolution: payload.screenResolution,
-      status: 'pending',
-      resolutionNotes: null,
-      resolvedAt: null,
-      createdAt: serverTimestamp()
-    });
-
-    return { success: true, reportId: docRef.id };
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.reportId) {
+    throw new Error(data?.error || `Nepodařilo se odeslat hlášení (${response.status}).`);
   }
+
+  return { success: true, reportId: data.reportId };
 }
 
 /**
- * Načte všechna hlášení chyb pro učitele/administrátora
+ * Načte všechna hlášení chyb pro učitele/administrátora přes autorizované API.
  */
 export async function getBugReports(): Promise<BugReport[]> {
   const currentUser = auth.currentUser;
   if (!currentUser) return [];
 
-  try {
-    const token = await currentUser.getIdToken();
-    const response = await fetch('/api/admin/bug-reports', {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      if (Array.isArray(data.reports)) {
-        return data.reports;
-      }
+  const token = await currentUser.getIdToken();
+  const response = await fetch('/api/admin/bug-reports', {
+    headers: {
+      'Authorization': `Bearer ${token}`
     }
-  } catch (err) {
-    console.warn('[BugReport] Nelze načíst z API, zkouším Firestore fallback:', err);
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'Nepodařilo se načíst hlášení chyb.');
   }
 
-  // Fallback přímo z Firestore
-  try {
-    const q = query(collection(db, 'bugReports'), orderBy('createdAt', 'desc'));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    })) as BugReport[];
-  } catch (firestoreErr) {
-    console.error('[BugReport] Selhalo načtení z Firestore:', firestoreErr);
-    // Poslední pokus bez orderBy (kdyby chyběl index)
-    const snapshot = await getDocs(collection(db, 'bugReports'));
-    return snapshot.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    })) as BugReport[];
-  }
+  return Array.isArray(data.reports) ? data.reports : [];
 }
 
 /**
- * Změní stav hlášení chyby a případnou interní poznámku (učitel)
+ * Změní stav hlášení chyby a případnou interní poznámku (učitel) přes backend.
  */
 export async function updateBugReportStatus(
-  reportId: string, 
-  status: BugReportStatus, 
+  reportId: string,
+  status: BugReportStatus,
   resolutionNotes?: string
 ): Promise<void> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error('Nejste přihlášeni');
 
-  try {
-    const token = await currentUser.getIdToken();
-    const response = await fetch(`/api/admin/bug-reports/${reportId}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ status, resolutionNotes })
-    });
+  const token = await currentUser.getIdToken();
+  const response = await fetch(`/api/admin/bug-reports/${encodeURIComponent(reportId)}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`
+    },
+    body: JSON.stringify({ status, resolutionNotes })
+  });
 
-    if (response.ok) return;
-  } catch (err) {
-    console.warn('[BugReport] API patch selhal, fallback na Firestore:', err);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'Nepodařilo se změnit stav hlášení.');
   }
-
-  // Fallback: přímý update ve Firestore
-  const updates: any = { status };
-  if (status === 'resolved') {
-    updates.resolvedAt = serverTimestamp();
-  }
-  if (typeof resolutionNotes === 'string') {
-    updates.resolutionNotes = resolutionNotes;
-  }
-
-  await updateDoc(doc(db, 'bugReports', reportId), updates);
 }
 
 /**
- * Smaže hlášení chyby (učitel)
+ * Smaže hlášení chyby (učitel) přes backend.
  */
 export async function deleteBugReport(reportId: string): Promise<void> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error('Nejste přihlášeni');
 
-  try {
-    const token = await currentUser.getIdToken();
-    const response = await fetch(`/api/admin/bug-reports/${reportId}`, {
-      method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
+  const token = await currentUser.getIdToken();
+  const response = await fetch(`/api/admin/bug-reports/${encodeURIComponent(reportId)}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`
+    }
+  });
 
-    if (response.ok) return;
-  } catch (err) {
-    console.warn('[BugReport] API delete selhal, fallback na Firestore:', err);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'Nepodařilo se smazat hlášení.');
   }
-
-  await deleteDoc(doc(db, 'bugReports', reportId));
 }
 
 /**

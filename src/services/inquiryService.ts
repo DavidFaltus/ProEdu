@@ -1,5 +1,5 @@
-import { collection, addDoc, doc, updateDoc, getDocs, query, where, Timestamp } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { collection, addDoc, doc, updateDoc, getDocs, query, where, orderBy, limit, Timestamp } from 'firebase/firestore';
+import { auth, db } from '../lib/firebase';
 
 export interface InquiryInput {
   studentId: string;
@@ -64,19 +64,29 @@ export function validateInquiryPayload(input: InquiryInput): ValidatedInquiry {
 }
 
 export async function submitInquiry(input: InquiryInput): Promise<{ id: string }> {
+  const currentUid = auth.currentUser?.uid;
+  if (!currentUid) {
+    throw new Error('Pro odeslání dotazu se musíte přihlásit.');
+  }
   const validated = validateInquiryPayload(input);
+  if (validated.senderRole !== 'teacher' && validated.studentId !== currentUid) {
+    throw new Error('Neoprávněné studentId v dotazu.');
+  }
 
   const docRef = await addDoc(collection(db, 'questionInquiries'), {
     ...validated,
+    status: 'pending',
+    isReadByStudent: false,
     createdAt: Timestamp.now(),
   });
 
   return { id: docRef.id };
 }
 
-export async function getStudentInquiries(studentId: string): Promise<QuestionInquiry[]> {
+export async function getStudentInquiries(studentId: string, maxLimit: number = 50): Promise<QuestionInquiry[]> {
   try {
-    const q = query(collection(db, 'questionInquiries'), where('studentId', '==', studentId));
+    const safeLimit = Math.min(200, Math.max(10, maxLimit));
+    const q = query(collection(db, 'questionInquiries'), where('studentId', '==', studentId), limit(safeLimit));
     const snap = await getDocs(q);
     const items: QuestionInquiry[] = [];
     snap.forEach(docSnap => {
@@ -102,9 +112,12 @@ export async function markInquiryAsRead(inquiryId: string): Promise<void> {
   });
 }
 
-export async function getAllInquiries(fallbackStudentId?: string): Promise<QuestionInquiry[]> {
+export async function getAllInquiries(fallbackStudentId?: string, maxLimit: number = 100): Promise<QuestionInquiry[]> {
   try {
-    const snap = await getDocs(collection(db, 'questionInquiries'));
+    const safeLimit = Math.min(300, Math.max(20, maxLimit));
+    const snap = await getDocs(
+      query(collection(db, 'questionInquiries'), orderBy('createdAt', 'desc'), limit(safeLimit))
+    ).catch(() => getDocs(query(collection(db, 'questionInquiries'), limit(safeLimit))));
     const items: QuestionInquiry[] = [];
     snap.forEach(docSnap => {
       items.push({ id: docSnap.id, ...(docSnap.data() as any) });

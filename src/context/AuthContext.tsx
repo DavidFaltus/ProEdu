@@ -1,19 +1,18 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { 
   onAuthStateChanged, 
   User, 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
   signInWithCustomToken,
   signInWithPopup,
   GoogleAuthProvider,
   signOut as firebaseSignOut,
-  updateEmail,
   updatePassword,
   updateProfile as updateAuthProfile
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, Timestamp, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
+import { cacheManager } from '../lib/cacheManager';
 import { UserProfile, UserRole } from '../types';
 import { 
   checkAndResetDailyJokers, 
@@ -23,9 +22,9 @@ import {
   calculateMaxJokersCap,
   claimReferralCodeApi,
   submitSurveyAnswerApi,
+  consumePendingVideoToken,
   BASE_JOKER_CAP, 
   DEFAULT_DAILY_JOKERS, 
-  getTodayDateString 
 } from '../services/jokerService';
 import { 
   setAnalyticsUser, 
@@ -34,7 +33,19 @@ import {
   trackRewardedVideoComplete 
 } from '../services/analyticsService';
 import { toast } from 'sonner';
-import { checkSubscriptionExpiry } from '../services/orderService';
+
+const GRACE_PERIOD_MS = 3 * 24 * 60 * 60 * 1000;
+
+const CLIENT_WRITABLE_PROFILE_FIELDS = new Set([
+  'name',
+  'photoURL',
+  'avatarEmoji',
+  'avatarBgColor',
+  'preferredPaymentMethod',
+  'billingDetails',
+  'lastViewedActivityAt',
+  'focusAreas',
+]);
 
 interface AuthContextType {
   user: User | null;
@@ -42,6 +53,7 @@ interface AuthContextType {
   loading: boolean;
   isAuthReady: boolean;
   isTeacher: boolean;
+  isAdmin: boolean;
   isPremium: boolean;
   isCourseUser: boolean;
   enrolledCourseIds: string[];
@@ -61,10 +73,12 @@ interface AuthContextType {
   resendRegistrationOtp: (email: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   confirmRegistration: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
   signOut: () => Promise<void>;
+  logout: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
   updateProfileData: (data: Partial<UserProfile>) => Promise<void>;
   updateUserPassword: (newPassword: string) => Promise<void>;
   consumeOneJoker: () => Promise<boolean>;
-  claimVideoReward: () => Promise<{ success: boolean; reachedCap?: boolean; newJokers?: number; added?: number }>;
+  claimVideoReward: (videoToken?: string) => Promise<{ success: boolean; reachedCap?: boolean; newJokers?: number; added?: number; cap?: number; limitReached?: boolean; error?: string }>;
   claimReferralReward: (code: string) => Promise<{ success: boolean; reward: number; referrerName: string }>;
   submitSurvey: (answer: string, customAnswer: string | undefined, school: string, grade: string) => Promise<{ success: boolean; reward: number }>;
   recordPracticeSessionStreak: () => Promise<{ streakIncreased: boolean; newStreak: number }>;
@@ -76,6 +90,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAuthReady: false,
   isTeacher: false,
+  isAdmin: false,
   isPremium: false,
   isCourseUser: false,
   enrolledCourseIds: [],
@@ -95,6 +110,8 @@ const AuthContext = createContext<AuthContextType>({
   resendRegistrationOtp: async () => ({ success: false }),
   confirmRegistration: async () => ({ success: false }),
   signOut: async () => {},
+  logout: async () => {},
+  refreshProfile: async () => {},
   updateProfileData: async () => {},
   updateUserPassword: async () => {},
   consumeOneJoker: async () => true,
@@ -104,90 +121,149 @@ const AuthContext = createContext<AuthContextType>({
   recordPracticeSessionStreak: async () => ({ streakIncreased: false, newStreak: 0 }),
 });
 
-const checkIsDevModeActive = (): boolean => {
-  if (typeof window === 'undefined') return Boolean(import.meta.env.DEV);
+const isLoopbackHost = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+};
+
+const isDevToolbarAllowed = (): boolean => {
   return Boolean(
-    import.meta.env.DEV || 
-    localStorage.getItem('proedu_dev_mode') === 'true'
+    import.meta.env.DEV &&
+    import.meta.env.VITE_ENABLE_DEV_TOOLBAR === 'true' &&
+    isLoopbackHost()
   );
 };
 
 const getDevRoleOverride = (): UserRole | null => {
   if (typeof window === 'undefined') return null;
-  if (!checkIsDevModeActive()) return null;
-  return (localStorage.getItem('proedu_dev_role_override') as UserRole) || null;
-};
-
-const CACHED_PROFILE_KEY = 'proedu_cached_profile';
-
-const getCachedProfile = (): UserProfile | null => {
-  if (typeof window === 'undefined') return null;
+  if (!isDevToolbarAllowed()) return null;
   try {
-    const raw = localStorage.getItem(CACHED_PROFILE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (parsed && parsed.uid && parsed.uid !== 'guest-preview' && parsed.role) {
-      if (parsed.createdAt && typeof parsed.createdAt.seconds === 'number') {
-        parsed.createdAt = new Timestamp(parsed.createdAt.seconds, parsed.createdAt.nanoseconds || 0);
-      } else {
-        parsed.createdAt = Timestamp.now();
-      }
-      return parsed;
+    const val = localStorage.getItem('proedu_dev_role_override') as UserRole | null;
+    if (val && ['free', 'student', 'premium', 'course', 'teacher'].includes(val)) {
+      return val;
     }
-  } catch (e) {
-    console.warn('Failed to parse cached profile:', e);
+  } catch {
+    return null;
   }
   return null;
 };
 
-const setCachedProfile = (profile: UserProfile | null) => {
-  if (typeof window === 'undefined') return;
-  try {
-    if (!profile || profile.uid === 'guest-preview') {
-      localStorage.removeItem(CACHED_PROFILE_KEY);
-    } else {
-      localStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify(profile));
-    }
-  } catch (e) {
-    console.warn('Failed to save profile cache:', e);
-  }
-};
+const CACHED_PROFILE_KEY = 'proedu_cached_profile';
 
-const clearCachedProfile = () => {
+const clearSessionStorageKeys = () => {
   if (typeof window === 'undefined') return;
   try {
     localStorage.removeItem(CACHED_PROFILE_KEY);
+    localStorage.removeItem('proedu_dev_mode');
+    localStorage.removeItem('proedu_dev_role_override');
+    localStorage.removeItem('proedu_pending_referral');
+    localStorage.removeItem('proedu_last_viewed_activity');
+    localStorage.removeItem('proedu_joined_lessons');
+
+    for (const store of [localStorage, sessionStorage]) {
+      const keysToDelete: string[] = [];
+      for (let i = 0; i < store.length; i++) {
+        const key = store.key(i);
+        if (key && key.startsWith('proedu_') && key !== 'proedu_guest_monetization') {
+          keysToDelete.push(key);
+        }
+      }
+      keysToDelete.forEach((k) => store.removeItem(k));
+    }
   } catch (e) {
-    console.warn('Failed to clear profile cache:', e);
+    console.warn('Failed to clear session storage keys:', e);
   }
 };
 
+function toFirestoreTimestamp(value: any): Timestamp {
+  if (value instanceof Timestamp) return value;
+  if (value && typeof value.seconds === 'number') {
+    return new Timestamp(value.seconds, value.nanoseconds || 0);
+  }
+  if (value && typeof value._seconds === 'number') {
+    return new Timestamp(value._seconds, value._nanoseconds || 0);
+  }
+  if (typeof value === 'string' || typeof value === 'number') {
+    const d = new Date(value);
+    if (!isNaN(d.getTime())) {
+      return Timestamp.fromDate(d);
+    }
+  }
+  return Timestamp.now();
+}
+
+function getEffectivePeriodEnd(profile: Partial<UserProfile> | null | undefined): string | null {
+  if (!profile) return null;
+  return profile.subscriptionPeriodEnd || (profile as any).subscriptionExpiresAt || null;
+}
+
+function isSubscriptionPeriodExpired(profile: Partial<UserProfile> | null | undefined): boolean {
+  if (!profile || profile.role !== 'premium') return false;
+  if (profile.subscriptionStatus === 'inactive' || profile.subscriptionStatus === 'expired') {
+    return true;
+  }
+
+  const rawEnd = getEffectivePeriodEnd(profile);
+  if (!rawEnd) return false;
+  const endMs = new Date(rawEnd).getTime();
+  if (isNaN(endMs)) return false;
+
+  if (profile.subscriptionStatus === 'cancelled_at_period_end') {
+    return Date.now() > endMs;
+  }
+
+  if (profile.subscriptionStatus === 'active') {
+    return Date.now() > endMs + GRACE_PERIOD_MS;
+  }
+
+  return false;
+}
+
+function normalizeUserProfile(raw: Partial<UserProfile>, authUser: User): UserProfile {
+  const validRoles: UserRole[] = ['free', 'student', 'premium', 'course', 'teacher'];
+  const role: UserRole = raw.role && validRoles.includes(raw.role) ? raw.role : 'free';
+  const periodEnd = getEffectivePeriodEnd(raw);
+
+  return {
+    ...raw,
+    uid: raw.uid || authUser.uid,
+    email: raw.email || authUser.email || '',
+    name: raw.name || authUser.displayName || 'Uživatel',
+    role,
+    jokers: typeof raw.jokers === 'number' ? raw.jokers : 0,
+    streak: typeof raw.streak === 'number' ? raw.streak : 0,
+    dailyVideosWatched: typeof raw.dailyVideosWatched === 'number' ? raw.dailyVideosWatched : 0,
+    enrolledCourseIds: Array.isArray(raw.enrolledCourseIds)
+      ? raw.enrolledCourseIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : [],
+    subscriptionPeriodEnd: periodEnd ?? undefined,
+    createdAt: toFirestoreTimestamp(raw.createdAt),
+  } as UserProfile;
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const initialCachedProfile = React.useMemo(() => getCachedProfile(), []);
   const [user, setUser] = useState<User | null>(() => auth.currentUser || null);
-  const [profile, setProfile] = useState<UserProfile | null>(initialCachedProfile);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [claimRole, setClaimRole] = useState<UserRole | null>(null);
+  const [claimCourseIds, setClaimCourseIds] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [isProfileSettingsOpen, setIsProfileSettingsOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
 
-  const setProfileAndCache = (value: React.SetStateAction<UserProfile | null>) => {
-    setProfile(prev => {
-      const next = typeof value === 'function' ? (value as (prev: UserProfile | null) => UserProfile | null)(prev) : value;
-      if (next && next.uid !== 'guest-preview') {
-        setCachedProfile(next);
-      } else if (!next) {
-        clearCachedProfile();
-      }
-      return next;
-    });
-  };
-
   const openAuthModal = () => setIsAuthModalOpen(true);
 
-  // Zachycení referral parametru z URL při příchodu na web
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      if (!isDevToolbarAllowed()) {
+        try {
+          localStorage.removeItem('proedu_dev_mode');
+          localStorage.removeItem('proedu_dev_role_override');
+        } catch {
+          // Ignore storage errors
+        }
+      }
       try {
         const params = new URLSearchParams(window.location.search);
         const refParam = params.get('ref');
@@ -200,207 +276,211 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  useEffect(() => {
-    let isCancelled = false;
+  const syncUserProfile = useCallback(async (authUser: User, isCancelledRef?: { current: boolean }) => {
+    let rawProfile: UserProfile | null = null;
+    let idToken = await authUser.getIdToken();
+    let claimsWereUpdated = false;
 
-    const syncUserProfile = async (authUser: User) => {
-      const docRef = doc(db, 'users', authUser.uid);
-      let docSnap;
-      try {
-        docSnap = await getDoc(docRef);
-      } catch (fetchErr: any) {
-        console.warn('Initial profile getDoc warning (trying fallback to cache):', fetchErr);
-        const cached = getCachedProfile();
-        if (cached && cached.uid === authUser.uid) {
-          if (!isCancelled) {
-            setProfileAndCache(cached);
-          }
-          // Tichý retry po 3 sekundách na pozadí
-          setTimeout(() => {
-            if (!isCancelled && auth.currentUser) {
-              syncUserProfile(auth.currentUser).catch(console.warn);
-            }
-          }, 3000);
-          return;
+    try {
+      const res = await fetch('/api/auth/session-bootstrap', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data?.claimsUpdated === true) {
+          claimsWereUpdated = true;
+          idToken = await authUser.getIdToken(true);
         }
-        throw fetchErr;
+        if (data?.profile && typeof data.profile === 'object') {
+          rawProfile = normalizeUserProfile(data.profile, authUser);
+        }
       }
+    } catch (bootstrapErr) {
+      console.warn('Session bootstrap request warning:', bootstrapErr);
+    }
 
-      if (isCancelled) return;
+    const tokenResult = await authUser.getIdTokenResult(claimsWereUpdated).catch(() => null);
+    let verifiedClaimRole = (tokenResult?.claims?.role as UserRole | undefined) || null;
+    const verifiedClaimCourses = Array.isArray(tokenResult?.claims?.enrolledCourseIds)
+      ? (tokenResult!.claims.enrolledCourseIds as unknown[]).filter(
+          (id): id is string => typeof id === 'string' && id.trim().length > 0
+        )
+      : null;
 
-      if (docSnap && docSnap.exists()) {
-        const rawProfile = docSnap.data() as UserProfile;
-        let freshProfile: UserProfile;
-        try {
-          freshProfile = await checkAndResetDailyJokers(rawProfile);
-        } catch (jokerErr) {
-          console.warn('checkAndResetDailyJokers error, using raw profile:', jokerErr);
-          freshProfile = rawProfile;
-        }
+    if (!isCancelledRef?.current) {
+      setClaimRole(verifiedClaimRole);
+      setClaimCourseIds(verifiedClaimCourses);
+    }
 
-        // Zajistit, aby každý existující profil měl vygenerovaný referral kód
-        if (!freshProfile.referralCode) {
-          const code = authUser.uid.slice(0, 8).toUpperCase();
-          freshProfile.referralCode = code;
-          updateDoc(docRef, { referralCode: code }).catch(console.warn);
-        }
-
-        // Inicializovat lastViewedActivityAt na aktuální čas, pokud chybí (čistý štít bez starého backlogu)
-        if (!freshProfile.lastViewedActivityAt) {
-          const nowTimestamp = Timestamp.now();
-          freshProfile.lastViewedActivityAt = nowTimestamp;
-          updateDoc(docRef, { lastViewedActivityAt: nowTimestamp }).catch(console.warn);
-        }
-
-        // Kontrola, zda předplatné zrušené ke konci období již nevypršelo
-        if (
-          freshProfile.role === 'premium' &&
-          freshProfile.subscriptionStatus === 'cancelled_at_period_end' &&
-          freshProfile.subscriptionPeriodEnd
-        ) {
-          const endMs = new Date(freshProfile.subscriptionPeriodEnd).getTime();
-          if (!isNaN(endMs) && Date.now() > endMs) {
-            console.log('[AuthContext] Placené období předplatného vypršelo. Přepínám účet na Free.');
-            freshProfile.role = 'free';
-            freshProfile.subscriptionStatus = 'inactive';
-            const nowIso = new Date().toISOString();
-            updateDoc(docRef, {
-              role: 'free',
-              subscriptionStatus: 'inactive',
-              subscriptionExpiredAt: nowIso
-            }).catch(console.warn);
-            checkSubscriptionExpiry().catch(console.warn);
+    if (!rawProfile) {
+      try {
+        const docRef = doc(db, 'users', authUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          rawProfile = normalizeUserProfile(docSnap.data() as Partial<UserProfile>, authUser);
+          if (verifiedClaimRole && ['free', 'student', 'premium', 'course', 'teacher'].includes(verifiedClaimRole)) {
+            rawProfile.role = verifiedClaimRole;
+          }
+          if (verifiedClaimCourses) {
+            rawProfile.enrolledCourseIds = verifiedClaimCourses;
           }
         }
+      } catch (docErr) {
+        console.warn('Fallback Firestore user read warning:', docErr);
+      }
+    }
 
-        const override = getDevRoleOverride();
-        if (override) {
-          freshProfile.role = override;
-        }
-
-        if (!isCancelled) {
-          setProfileAndCache(freshProfile);
-        }
-
-        // Pokud nově přihlášený uživatel přišel přes referral odkaz a ještě ho nemá uplatněný
-        if (typeof window !== 'undefined' && !freshProfile.referredBy) {
-          const pendingRef = localStorage.getItem('proedu_pending_referral');
-          if (pendingRef) {
-            try {
-              const token = await authUser.getIdToken();
-              const res = await claimReferralCodeApi(pendingRef, token);
-              if (res.success) {
-                freshProfile.jokers = res.newJokers;
-                freshProfile.referredBy = pendingRef;
-                if (!isCancelled) {
-                  setProfileAndCache({ ...freshProfile });
-                }
-                localStorage.removeItem('proedu_pending_referral');
-                toast.success(`Uplatněn bonus za doporučení od ${res.referrerName}! +${res.reward} žolíků připsáno.`);
-              }
-            } catch (claimErr) {
-              console.warn('Auto referral claim info:', claimErr);
-              localStorage.removeItem('proedu_pending_referral');
-            }
-          }
-        }
-      } else {
-        // Rule 4: Role never derived from email in frontend.
-        // Rule 16: Least privilege - default to free.
-        const today = getTodayDateString();
-        const refCode = authUser.uid.slice(0, 8).toUpperCase();
-        const nowTimestamp = Timestamp.now();
-        const newProfile: UserProfile = {
+    if (!rawProfile) {
+      rawProfile = normalizeUserProfile(
+        {
           uid: authUser.uid,
           email: authUser.email || '',
           name: authUser.displayName || 'Nový uživatel',
-          role: 'free',
-          jokers: BASE_JOKER_CAP,
+          role: verifiedClaimRole || 'free',
+          jokers: 0,
           streak: 0,
-          referralCode: refCode,
-          referralsCount: 0,
-          lastDailyGrantDate: today,
-          lastJokerResetDate: today,
-          dailyVideosWatched: 0,
-          lastViewedActivityAt: nowTimestamp,
-          createdAt: nowTimestamp,
-        };
-        const override = getDevRoleOverride();
-        if (override) {
-          newProfile.role = override;
-        }
-        try {
-          await setDoc(docRef, newProfile);
-        } catch (setDocErr) {
-          console.warn('setDoc user profile error:', setDocErr);
-        }
-        if (!isCancelled) {
-          setProfileAndCache(newProfile);
-        }
+          enrolledCourseIds: verifiedClaimCourses || [],
+        },
+        authUser
+      );
+    }
 
-        // Automatické uplatnění referral odkazu pro nového uživatele
-        if (typeof window !== 'undefined') {
-          const pendingRef = localStorage.getItem('proedu_pending_referral');
-          if (pendingRef) {
-            try {
-              const token = await authUser.getIdToken();
-              const res = await claimReferralCodeApi(pendingRef, token);
-              if (res.success) {
-                newProfile.jokers = res.newJokers;
-                newProfile.referredBy = pendingRef;
-                if (!isCancelled) {
-                  setProfileAndCache({ ...newProfile });
-                }
-                localStorage.removeItem('proedu_pending_referral');
-                toast.success(`Uplatněn bonus za doporučení od ${res.referrerName}! +${res.reward} žolíků připsáno.`);
-              }
-            } catch (claimErr) {
-              console.warn('Auto referral claim info:', claimErr);
-              localStorage.removeItem('proedu_pending_referral');
-            }
+    if (isCancelledRef?.current) return;
+
+    // Nejprve respektujeme případnou expiraci předplatného před kontrolou denních žolíků
+    let effectiveProfile = rawProfile;
+    const hasEnrolledCourses =
+      (effectiveProfile.enrolledCourseIds && effectiveProfile.enrolledCourseIds.length > 0) ||
+      Boolean(effectiveProfile.courseId);
+
+    if (isSubscriptionPeriodExpired(effectiveProfile)) {
+      const targetRole: UserRole = hasEnrolledCourses ? 'course' : 'free';
+      effectiveProfile = {
+        ...effectiveProfile,
+        role: targetRole,
+        subscriptionStatus: 'inactive',
+      };
+      try {
+        const expiryRes = await fetch('/api/subscription/check-expiry', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+        if (expiryRes.ok) {
+          idToken = await authUser.getIdToken(true);
+          const refreshedResult = await authUser.getIdTokenResult(true).catch(() => null);
+          verifiedClaimRole = (refreshedResult?.claims?.role as UserRole | undefined) || targetRole;
+          if (!isCancelledRef?.current) {
+            setClaimRole(verifiedClaimRole);
           }
         }
+      } catch (expErr) {
+        console.warn('Subscription check-expiry sync warning:', expErr);
       }
-    };
+    } else if (effectiveProfile.role === 'course' && !hasEnrolledCourses) {
+      effectiveProfile = {
+        ...effectiveProfile,
+        role: 'free',
+      };
+    }
+
+    const effectiveHasUnlimited =
+      effectiveProfile.role === 'teacher' ||
+      hasEnrolledCourses ||
+      effectiveProfile.role === 'premium';
+
+    if (!effectiveHasUnlimited) {
+      try {
+        effectiveProfile = await checkAndResetDailyJokers(effectiveProfile);
+      } catch (jokerErr) {
+        console.warn('checkAndResetDailyJokers warning:', jokerErr);
+      }
+    }
+
+    const devOverride = getDevRoleOverride();
+    if (devOverride) {
+      effectiveProfile = {
+        ...effectiveProfile,
+        role: devOverride,
+      };
+    }
+
+    if (!isCancelledRef?.current) {
+      setProfile(effectiveProfile);
+    }
+
+    if (typeof window !== 'undefined' && !effectiveProfile.referredBy) {
+      const pendingRef = localStorage.getItem('proedu_pending_referral');
+      if (pendingRef) {
+        try {
+          const claimRes = await claimReferralCodeApi(pendingRef, idToken);
+          if (claimRes.success) {
+            effectiveProfile = {
+              ...effectiveProfile,
+              jokers: claimRes.newJokers,
+              referredBy: pendingRef,
+            };
+            if (!isCancelledRef?.current) {
+              setProfile(effectiveProfile);
+            }
+            localStorage.removeItem('proedu_pending_referral');
+            toast.success(`Uplatněn bonus za doporučení od ${claimRes.referrerName}! +${claimRes.reward} žolíků připsáno.`);
+          }
+        } catch (claimErr) {
+          console.warn('Auto referral claim info:', claimErr);
+          localStorage.removeItem('proedu_pending_referral');
+        }
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const cancelledRef = { current: false };
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (authUser) => {
-      if (isCancelled) return;
+      if (cancelledRef.current) return;
       setUser(authUser);
 
       try {
         if (authUser) {
-          await syncUserProfile(authUser);
+          await syncUserProfile(authUser, cancelledRef);
         } else {
-          const override = getDevRoleOverride();
-          if (override) {
-            if (!isCancelled) {
+          setClaimRole(null);
+          setClaimCourseIds(null);
+          const devOverride = getDevRoleOverride();
+          if (devOverride && isDevToolbarAllowed()) {
+            if (!cancelledRef.current) {
               setProfile({
                 uid: 'guest-preview',
                 email: 'host@proedu.cz',
-                name: `Host (${override.toUpperCase()})`,
-                role: override,
+                name: `Host (${devOverride.toUpperCase()})`,
+                role: devOverride,
                 jokers: BASE_JOKER_CAP,
                 streak: 0,
                 createdAt: Timestamp.now(),
               });
             }
           } else {
-            if (!isCancelled) {
+            if (!cancelledRef.current) {
               setProfile(null);
-              clearCachedProfile();
+              clearSessionStorageKeys();
             }
           }
         }
       } catch (err) {
         console.error('Unhandled auth state change error:', err);
-        if (authUser) {
-          const cached = getCachedProfile();
-          if (cached && cached.uid === authUser.uid && !isCancelled) {
-            setProfileAndCache(cached);
-          }
+        if (!cancelledRef.current) {
+          setProfile(null);
         }
       } finally {
-        if (!isCancelled) {
+        if (!cancelledRef.current) {
           setLoading(false);
           setIsAuthReady(true);
         }
@@ -408,27 +488,88 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => {
-      isCancelled = true;
+      cancelledRef.current = true;
       unsubscribeAuth();
     };
-  }, []);
+  }, [syncUserProfile]);
+
+  const refreshProfile = useCallback(async () => {
+    if (!auth.currentUser) return;
+    await syncUserProfile(auth.currentUser);
+  }, [syncUserProfile]);
+
+  const devOverrideActive = getDevRoleOverride();
+  const effectiveRole: UserRole | undefined =
+    devOverrideActive ?? (profile?.role || claimRole || undefined);
+
+  const enrolledCourseIds = React.useMemo(() => {
+    const list: string[] = [];
+    const addId = (id: unknown) => {
+      if (typeof id === 'string' && id.trim().length > 0 && !list.includes(id)) {
+        list.push(id);
+      }
+    };
+    if (Array.isArray(profile?.enrolledCourseIds)) {
+      profile.enrolledCourseIds.forEach(addId);
+    }
+    if (profile?.courseId) {
+      addId(profile.courseId);
+    }
+    if (Array.isArray(claimCourseIds)) {
+      claimCourseIds.forEach(addId);
+    }
+    return list;
+  }, [profile?.enrolledCourseIds, profile?.courseId, claimCourseIds]);
+
+  const isCancelledExpired = Boolean(
+    effectiveRole === 'premium' &&
+    profile?.subscriptionStatus === 'cancelled_at_period_end' &&
+    isSubscriptionPeriodExpired(profile)
+  );
+
+  const isSubscriptionExpired = Boolean(
+    effectiveRole === 'premium' &&
+    isSubscriptionPeriodExpired(profile)
+  );
+
+  const isTeacher = Boolean(
+    (user && (effectiveRole === 'teacher' || (!devOverrideActive && claimRole === 'teacher'))) ||
+    (!user && isDevToolbarAllowed() && devOverrideActive === 'teacher')
+  );
+  const isAdmin = isTeacher;
+
+  const isCourseUser = Boolean(
+    isTeacher ||
+    enrolledCourseIds.length > 0 ||
+    (isDevToolbarAllowed() && devOverrideActive === 'course')
+  );
+
+  const hasActivePaidPremium = Boolean(
+    effectiveRole === 'premium' &&
+    !isSubscriptionExpired &&
+    !isCancelledExpired
+  );
+
+  const isPremium = Boolean(
+    (user || (isDevToolbarAllowed() && Boolean(devOverrideActive))) &&
+    (isTeacher || isCourseUser || hasActivePaidPremium)
+  );
+
+  const hasCourseAccess = React.useCallback((courseId: string | undefined): boolean => {
+    if (!courseId) return false;
+    if (isTeacher) return true;
+    return enrolledCourseIds.includes(courseId);
+  }, [isTeacher, enrolledCourseIds]);
 
   // Synchronizace uživatelských vlastností a role do Google Analytics
   useEffect(() => {
     if (isAuthReady) {
-      const isExpired = Boolean(
-        profile?.role === 'premium' &&
-        profile?.subscriptionStatus === 'cancelled_at_period_end' &&
-        profile?.subscriptionPeriodEnd &&
-        !isNaN(new Date(profile.subscriptionPeriodEnd).getTime()) &&
-        Date.now() > new Date(profile.subscriptionPeriodEnd).getTime()
-      );
       setAnalyticsUser(user ? user.uid : null, {
-        role: isExpired ? 'free' : (profile?.role || 'guest'),
-        isPremium: !isExpired && (profile?.role === 'premium' || profile?.role === 'course' || profile?.role === 'teacher'),
+        role: isSubscriptionExpired ? (enrolledCourseIds.length > 0 ? 'course' : 'free') : (effectiveRole || 'guest'),
+        isPremium,
       });
     }
-  }, [user?.uid, profile?.role, profile?.subscriptionStatus, profile?.subscriptionPeriodEnd, isAuthReady]);
+  }, [user?.uid, effectiveRole, isSubscriptionExpired, isPremium, enrolledCourseIds.length, isAuthReady]);
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
@@ -507,86 +648,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signUpWithEmail = async (email: string, pass: string, name: string) => {
-    // Pro zpětnou kompatibilitu: inicializuje registraci s kódem
     await initRegistration(email, pass, name);
   };
 
   const signOut = async () => {
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('proedu_dev_role_override');
-      clearCachedProfile();
-    }
-    await firebaseSignOut(auth);
+    clearSessionStorageKeys();
+    cacheManager.clear();
+    setClaimRole(null);
+    setClaimCourseIds(null);
     setProfile(null);
+    await firebaseSignOut(auth);
   };
 
   const updateProfileData = async (data: Partial<UserProfile>) => {
-    // V dev režimu nebo pro učitele umožnit změnu role pro testování
-    const isDevModeActive = checkIsDevModeActive();
-    const canChangeRole = isDevModeActive || profile?.role === 'teacher';
+    if (!user) {
+      throw new Error('Pro úpravu profilu se musíte přihlásit.');
+    }
 
-    const { uid, createdAt, role, ...rest } = data as any;
-    const safeData: any = { ...rest };
-    if (canChangeRole && role) {
-      safeData.role = role;
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('proedu_dev_role_override', role);
-      }
-      // V dev režimu synchronizujeme změnu role do Firestore přes serverový backend, pokud se role skutečně liší nebo měníme kurzy
-      if (isDevModeActive && user?.uid && (profile?.role !== role || safeData.enrolledCourseIds !== undefined)) {
-        try {
-          await fetch('/api/dev/set-role', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-              uid: user.uid, 
-              role,
-              enrolledCourseIds: safeData.enrolledCourseIds,
-              courseId: safeData.courseId
-            })
-          });
-        } catch (apiErr) {
-          console.warn('Backend dev set-role sync failed:', apiErr);
-        }
+    const safeData: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (CLIENT_WRITABLE_PROFILE_FIELDS.has(key) && value !== undefined) {
+        safeData[key] = value;
       }
     }
 
-    if (!user) {
-      if (safeData.role) {
-        setProfile(prev => prev ? { ...prev, ...safeData } : {
-          uid: 'guest-preview',
-          email: 'host@proedu.cz',
-          name: `Host (${safeData.role.toUpperCase()})`,
-          role: safeData.role,
-          jokers: DEFAULT_DAILY_JOKERS,
-          createdAt: Timestamp.now(),
-        });
-      }
+    if (Object.keys(safeData).length === 0) {
       return;
     }
 
     const docRef = doc(db, 'users', user.uid);
-    if (Object.keys(safeData).length > 0) {
-      try {
-        await updateDoc(docRef, safeData);
-      } catch (err: any) {
-        console.warn('Firestore updateDoc note (falling back to local dev state):', err);
-        // Pokud Firestore odmítne roli v dev módu, necháme proběhnout lokální změnu v aplikaci bez chyby
-        if (!isDevModeActive && profile?.role !== 'teacher') throw err;
-      }
-    }
-    
-    // Also update Auth profile if name or photoURL is changed
+    await updateDoc(docRef, safeData);
+
+    // Also update Firebase Auth profile if name or non-base64 photoURL changed
     if (safeData.name || safeData.photoURL) {
-      const authUpdates: any = {};
+      const authUpdates: Record<string, string> = {};
       if (safeData.name) authUpdates.displayName = safeData.name;
-      
-      // ONLY update Auth photoURL if it's NOT a base64 (because Auth has strict length limits)
-      // We rely on Firestore profile for the actual photo
-      if (safeData.photoURL && !safeData.photoURL.startsWith('data:')) {
+      if (safeData.photoURL && !String(safeData.photoURL).startsWith('data:')) {
         authUpdates.photoURL = safeData.photoURL;
       }
-      
       if (Object.keys(authUpdates).length > 0) {
         try {
           await updateAuthProfile(user, authUpdates);
@@ -596,43 +695,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    setProfileAndCache(prev => prev ? { ...prev, ...safeData } : null);
+    setProfile(prev => (prev ? { ...prev, ...safeData } : null));
   };
 
-  const isCancelledExpired = Boolean(
-    profile?.role === 'premium' &&
-    profile?.subscriptionStatus === 'cancelled_at_period_end' &&
-    profile?.subscriptionPeriodEnd &&
-    !isNaN(new Date(profile.subscriptionPeriodEnd).getTime()) &&
-    Date.now() > new Date(profile.subscriptionPeriodEnd).getTime()
-  );
-
-  const isTeacher = profile?.role === 'teacher';
-
-  const enrolledCourseIds = React.useMemo(() => {
-    const list: string[] = [];
-    if (profile?.enrolledCourseIds && Array.isArray(profile.enrolledCourseIds)) {
-      list.push(...profile.enrolledCourseIds.filter(id => typeof id === 'string' && id.trim().length > 0));
-    }
-    if (profile?.courseId && !list.includes(profile.courseId)) {
-      list.push(profile.courseId);
-    }
-    return list;
-  }, [profile?.enrolledCourseIds, profile?.courseId]);
-
-  // Student má kurzové výhody, pokud je učitel, má roli 'course' nebo má přiřazen alespoň jeden kurz
-  const isCourseUser = isTeacher || enrolledCourseIds.length > 0 || profile?.role === 'course';
-  // Všichni kurzoví studenti mají automaticky v ceně kurzu i všechny Premium funkce (neomezené procvičování atd.)
-  const isPremium = !isCancelledExpired && (profile?.role === 'premium' || isCourseUser || isTeacher);
-
-  // Granulární přístup k jednotlivým kurzům:
-  // Do konkrétního kurzu se dostane pouze student, který ho má v enrolledCourseIds (nebo lektor/učitel)
-  const hasCourseAccess = React.useCallback((courseId: string | undefined): boolean => {
-    if (!courseId) return false;
-    if (isTeacher) return true;
-    return enrolledCourseIds.includes(courseId);
-  }, [isTeacher, enrolledCourseIds]);
-  const jokers = profile?.jokers ?? BASE_JOKER_CAP;
+  const jokers = user ? (profile?.jokers ?? 0) : BASE_JOKER_CAP;
   const streak = profile?.streak ?? 0;
   const maxJokersCap = calculateMaxJokersCap(streak);
 
@@ -641,7 +707,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isPremium) return true;
     const res = await consumeJoker(profile);
     if (res.success) {
-      setProfileAndCache(prev => prev ? { ...prev, jokers: res.remainingJokers } : null);
+      setProfile(prev => (prev ? { ...prev, jokers: res.remainingJokers } : null));
       trackJokerConsumed(res.remainingJokers);
       if (res.remainingJokers <= 0) {
         trackJokersExhausted();
@@ -650,21 +716,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return res.success;
   };
 
-  const claimVideoReward = async (): Promise<{ success: boolean; reachedCap?: boolean; newJokers?: number; added?: number; cap: number }> => {
-    if (!profile) return { success: false, cap: maxJokersCap };
-    const res = await rewardVideoJokers(profile);
+  const claimVideoReward = async (
+    videoToken?: string
+  ): Promise<{ success: boolean; reachedCap?: boolean; newJokers?: number; added?: number; cap?: number; limitReached?: boolean; error?: string }> => {
+    if (!profile || !user) {
+      return { success: false, cap: maxJokersCap, error: 'Pro připsání žolíků se musíte přihlásit.' };
+    }
+    const resolvedToken = videoToken ?? consumePendingVideoToken() ?? undefined;
+    const res = await rewardVideoJokers(profile, resolvedToken);
     if (res.success) {
-      setProfileAndCache(prev => prev ? {
-        ...prev,
-        jokers: res.newJokers,
-        dailyVideosWatched: (prev.dailyVideosWatched || 0) + 1,
-      } : null);
+      setProfile(prev =>
+        prev
+          ? {
+              ...prev,
+              jokers: res.newJokers,
+              dailyVideosWatched: res.dailyVideosWatched ?? (prev.dailyVideosWatched ?? 0) + 1,
+            }
+          : null
+      );
       trackRewardedVideoComplete('joker');
       toast.success(`Získáno +${res.added} žolíků! Stav: ${res.newJokers}/${res.cap}`);
     } else if (res.limitReached) {
       toast.info('Dnes jsi již vyčerpal limit 3 odměňovacích videí. Další budou k dispozici zítra!');
     } else if (res.reachedCap) {
-      toast.info(`Máš již plnou kapacitu (${profile.jokers}/${res.cap} žolíků). Pro další dobití si nejdříve procvič pár otázek!`);
+      toast.info(`Máš již plnou kapacitu (${res.newJokers}/${res.cap} žolíků). Pro další dobití si nejdříve procvič pár otázek!`);
+    } else if (res.error) {
+      toast.error(res.error);
     }
     return res;
   };
@@ -678,11 +755,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const token = await user.getIdToken();
       const res = await claimReferralCodeApi(code, token);
       if (res.success) {
-        setProfileAndCache(prev => prev ? {
-          ...prev,
-          jokers: res.newJokers,
-          referredBy: code,
-        } : null);
+        setProfile(prev =>
+          prev
+            ? {
+                ...prev,
+                jokers: res.newJokers,
+                referredBy: code,
+              }
+            : null
+        );
         toast.success(`Skvělé! Získal jsi +${res.reward} bonusových žolíků za doporučení od ${res.referrerName}!`);
         if (typeof window !== 'undefined') {
           localStorage.removeItem('proedu_pending_referral');
@@ -696,9 +777,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const submitSurvey = async (
-    answer: string, 
-    customAnswer: string | undefined, 
-    school: string, 
+    answer: string,
+    customAnswer: string | undefined,
+    school: string,
     grade: string
   ): Promise<{ success: boolean; reward: number }> => {
     if (!user) {
@@ -707,54 +788,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     try {
       const token = await user.getIdToken();
-      let res: { success: boolean; reward: number; newJokers: number };
-      try {
-        res = await submitSurveyAnswerApi(answer, customAnswer, school, grade, token);
-      } catch (apiErr: any) {
-        console.warn('Backend survey API error, using direct profile update:', apiErr?.message);
-        res = {
-          success: true,
-          reward: 15,
-          newJokers: (profile?.jokers || 10) + 15,
-        };
-        try {
-          const userRef = doc(db, 'users', user.uid);
-          await updateDoc(userRef, {
-            surveyCompleted: true,
-            surveyAnswer: answer,
-            surveyAnswerCustom: customAnswer || null,
-            surveySchool: school,
-            surveyGrade: grade,
-            jokers: res.newJokers,
-          });
+      const res = await submitSurveyAnswerApi(answer, customAnswer, school, grade, token);
 
-          // Uložíme také přímo do kolekce surveyResponses pro okamžitou viditelnost v adminu
-          const respId = 'survey_' + user.uid;
-          await setDoc(doc(db, 'surveyResponses', respId), {
-            userId: user.uid,
-            userEmail: user.email || '',
-            userName: profile?.name || user.displayName || '',
-            answer: answer,
-            customAnswer: customAnswer || null,
-            school: school,
-            grade: grade,
-            bonusAwarded: 15,
-            createdAt: serverTimestamp(),
-          }, { merge: true });
-        } catch (dbErr) {
-          console.warn('Direct Firestore write warning:', dbErr);
-        }
-      }
-
-      setProfileAndCache(prev => prev ? {
-        ...prev,
-        jokers: res.newJokers,
-        surveyCompleted: true,
-        surveyAnswer: answer,
-        surveyAnswerCustom: customAnswer,
-        surveySchool: school,
-        surveyGrade: grade,
-      } : null);
+      setProfile(prev =>
+        prev
+          ? {
+              ...prev,
+              jokers: typeof res.newJokers === 'number' ? res.newJokers : prev.jokers,
+              surveyCompleted: true,
+              surveyAnswer: answer,
+              surveyAnswerCustom: customAnswer,
+              surveySchool: school,
+              surveyGrade: grade,
+            }
+          : null
+      );
       toast.success(`Děkujeme za zpětnou vazbu! +${res.reward} bonusových žolíků bylo připsáno.`);
       return res;
     } catch (err: any) {
@@ -767,7 +815,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!profile || !user) return { streakIncreased: false, newStreak: 0 };
     const res = await recordPracticeStreak(profile);
     if (res.streakIncreased) {
-      setProfileAndCache(res.updatedProfile);
+      setProfile(res.updatedProfile);
       if (res.newStreak === 10) {
         toast.success('🔥 Gratulujeme k 10dennímu streaku! Tvoje denní kapacita žolíků se trvale navýšila na 15!');
       } else {
@@ -788,6 +836,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loading, 
     isAuthReady, 
     isTeacher,
+    isAdmin,
     isPremium,
     isCourseUser,
     enrolledCourseIds,
@@ -807,6 +856,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     resendRegistrationOtp,
     confirmRegistration,
     signOut,
+    logout: signOut,
+    refreshProfile,
     updateProfileData,
     updateUserPassword,
     consumeOneJoker,
@@ -819,7 +870,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profile, 
     loading, 
     isAuthReady, 
-    isTeacher, 
+    isTeacher,
+    isAdmin,
     isPremium, 
     isCourseUser, 
     enrolledCourseIds,
@@ -828,7 +880,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     streak,
     maxJokersCap,
     isProfileSettingsOpen, 
-    isAuthModalOpen
+    isAuthModalOpen,
+    refreshProfile,
   ]);
 
   return (

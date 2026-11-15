@@ -12,7 +12,7 @@ import {
   Dialog, DialogContent, DialogTitle, DialogDescription 
 } from '../components/ui/dialog';
 import { 
-  getTopics, getSubtopics, getQuestionsForSubtopic, getUserActivePracticeSessions,
+  fetchPracticeCatalog, getUserActivePracticeSessions,
   PREDEFINED_SUBJECTS 
 } from '../services/practiceService';
 import { PracticeTopic, PracticeSubtopic, TodoItem } from '../types';
@@ -20,8 +20,7 @@ import { toast } from 'sonner';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import PracticeScheduleModal from '../components/PracticeScheduleModal';
 import { trackPracticeSubjectChange, trackSectionClick } from '../services/analyticsService';
-import { db } from '../lib/firebase';
-import { collection, query, where, onSnapshot, limit } from 'firebase/firestore';
+import { subscribeToStudentTodos } from '../services/liveLessonService';
 import { getGuestState } from '../services/jokerService';
 
 const getSubjectIcon = (id: string, isActive: boolean) => {
@@ -32,18 +31,19 @@ const getSubjectIcon = (id: string, isActive: boolean) => {
 };
 
 export default function Practice() {
-  const { user, profile, isPremium, jokers, openAuthModal } = useAuth();
+  const { user, profile, isPremium, isTeacher, isCourseUser, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
 
-  const isTeacher = profile?.role === 'teacher';
   const isGuest = !user;
+  const hasStudyAccess = isPremium || isCourseUser || isTeacher;
   const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
   const isVideoLimitReached = videosWatchedToday >= 3;
-  const isOutOfJokersAndVideos = !isPremium && !isTeacher && profile?.role !== 'course' && jokers <= 0 && isVideoLimitReached;
+  const isOutOfJokersAndVideos = !hasStudyAccess && jokers <= 0 && isVideoLimitReached;
 
   const [activeSubject, setActiveSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [topics, setTopics] = useState<PracticeTopic[]>([]);
   const [subtopics, setSubtopics] = useState<PracticeSubtopic[]>([]);
+  const [firstDemoSubtopicId, setFirstDemoSubtopicId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [isPremiumModalOpen, setIsPremiumModalOpen] = useState(false);
   const [selectedSubtopicForStudy, setSelectedSubtopicForStudy] = useState<PracticeSubtopic | null>(null);
@@ -59,7 +59,7 @@ export default function Practice() {
   useEffect(() => {
     async function loadActiveSessions() {
       try {
-        const sessions = await getUserActivePracticeSessions(user?.uid);
+        const sessions = await getUserActivePracticeSessions(user?.uid || 'guest');
         setActiveSessions(sessions);
       } catch (err) {
         console.warn('Failed to load active practice sessions:', err);
@@ -73,21 +73,11 @@ export default function Practice() {
       setStudentTodos([]);
       return;
     }
-    const qTodos = query(
-      collection(db, 'todos'),
-      where('studentId', '==', user.uid),
-      limit(300)
+    return subscribeToStudentTodos(
+      user.uid,
+      (items) => setStudentTodos(items as TodoItem[]),
+      (err) => console.error('Error loading student todos in Practice:', err)
     );
-    const unsub = onSnapshot(
-      qTodos,
-      (snap) => {
-        setStudentTodos(snap.docs.map(d => ({ id: d.id, ...(d.data() as Omit<TodoItem, 'id'>) })));
-      },
-      (err) => {
-        console.error('Error loading student todos in Practice:', err);
-      }
-    );
-    return () => unsub();
   }, [user?.uid]);
 
   const handleOpenScheduleForTopic = (e: React.MouseEvent, topic: PracticeTopic, topicSubtopics: PracticeSubtopic[]) => {
@@ -111,9 +101,17 @@ export default function Practice() {
     }));
   };
 
+  const normalizeSubject = (s?: string) => {
+    const val = (s || '').trim().toLowerCase();
+    if (val === 'český jazyk' || val === 'cesky jazyk' || val === 'čeština' || val === 'cestina' || val === 'czech' || val === 'cj' || val === 'čj') {
+      return 'Čeština';
+    }
+    return 'Matematika';
+  };
+
   const visibleSubtopics = React.useMemo(
-    () => subtopics.filter(s => !s.isHidden),
-    [subtopics]
+    () => subtopics.filter(s => !s.isHidden && normalizeSubject(s.subjectId) === activeSubject),
+    [subtopics, activeSubject]
   );
 
   const visibleTopics = React.useMemo(
@@ -121,31 +119,28 @@ export default function Practice() {
       topics.filter(
         t =>
           !t.isHidden &&
+          normalizeSubject(t.subjectId) === activeSubject &&
           visibleSubtopics.some(s => s.topicId === t.id || s.topicId === t.title)
       ),
-    [topics, visibleSubtopics]
+    [topics, visibleSubtopics, activeSubject]
   );
 
-  // Najdeme první reálně zobrazené podtéma v daném předmětu (pro neregistrovaného)
+  // Demo podtéma pro neregistrovaného hosta (první viditelné podtéma v aktivním předmětu nebo určené backendem)
   const firstVisibleSubtopicId = React.useMemo(() => {
     for (const topic of visibleTopics) {
-      const matching = visibleSubtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
-      if (matching.length > 0) {
-        return matching[0].id;
-      }
+      const match = visibleSubtopics.find(s => s.topicId === topic.id || s.topicId === topic.title);
+      if (match) return match.id;
     }
-    return null;
-  }, [visibleTopics, visibleSubtopics]);
+    return visibleSubtopics[0]?.id || firstDemoSubtopicId;
+  }, [visibleTopics, visibleSubtopics, firstDemoSubtopicId]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [fetchedTopics, fetchedSubtopics] = await Promise.all([
-        getTopics(activeSubject),
-        getSubtopics(undefined, activeSubject)
-      ]);
-      setTopics(fetchedTopics);
-      setSubtopics(fetchedSubtopics);
+      const catalog = await fetchPracticeCatalog({ includeHidden: isTeacher });
+      setTopics(catalog.topics);
+      setSubtopics(catalog.subtopics);
+      setFirstDemoSubtopicId(catalog.firstDemoSubtopicId);
     } catch (err) {
       console.error('Failed to load practice content:', err);
     } finally {
@@ -155,7 +150,7 @@ export default function Practice() {
 
   useEffect(() => {
     loadData();
-  }, [activeSubject]);
+  }, [user?.uid, isTeacher]);
 
   return (
     <div className="page-container max-w-7xl mx-auto space-y-8 pb-16">
@@ -325,7 +320,7 @@ export default function Practice() {
                         >
                           <Calendar size={14} className="text-brand-blue" />
                           <span className="hidden sm:inline">Naplánovat téma</span>
-                          {!isPremium && (
+                          {!hasStudyAccess && (
                             <span className="text-[9px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded">
                               PRO
                             </span>
@@ -366,9 +361,9 @@ export default function Practice() {
                         ) : (
                           <div className="grid gap-3.5">
                             {topicSubtopics.map((subtopic) => {
-                              const isFirstDemo = subtopic.id === firstVisibleSubtopicId;
+                              const isFirstDemo = Boolean(firstVisibleSubtopicId && subtopic.id === firstVisibleSubtopicId);
                               const isLockedForGuest = !user && !isFirstDemo;
-                              const isStudyLocked = !isPremium;
+                              const isStudyLocked = !hasStudyAccess;
                               const subtopicActive = activeSessions[subtopic.id];
 
                               const handlePracticeClick = (e: React.MouseEvent) => {
@@ -466,7 +461,7 @@ export default function Practice() {
                                     >
                                       <Calendar size={14} className="text-brand-blue" />
                                       <span>Do kalendáře</span>
-                                      {!isPremium && (
+                                      {!hasStudyAccess && (
                                         <span className="text-[10px] font-black uppercase text-amber-700 bg-amber-100 px-1 py-0.5 rounded ml-0.5">
                                           PRO
                                         </span>

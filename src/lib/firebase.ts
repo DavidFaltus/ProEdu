@@ -1,8 +1,15 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
-import { getStorage } from 'firebase/storage';
+import { getAuth, connectAuthEmulator } from 'firebase/auth';
+import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache, connectFirestoreEmulator } from 'firebase/firestore';
+import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
+
+const isLoopbackHost =
+  typeof window !== 'undefined' &&
+  (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+export const isFirebaseEmulatorEnabled =
+  import.meta.env?.VITE_USE_EMULATOR === 'true' && isLoopbackHost;
 
 const resolvedFirebaseConfig = {
   ...firebaseConfig,
@@ -10,16 +17,30 @@ const resolvedFirebaseConfig = {
 };
 
 export const app = initializeApp(resolvedFirebaseConfig);
-console.log('Firebase initialized with project:', resolvedFirebaseConfig.projectId);
-console.log('Storage bucket:', resolvedFirebaseConfig.storageBucket);
+if (import.meta.env?.DEV) {
+  console.log('Firebase initialized with project:', resolvedFirebaseConfig.projectId);
+  if (isFirebaseEmulatorEnabled) {
+    console.warn('[Firebase] Connected to LOCAL EMULATORS (Auth:9099, Firestore:8080, Storage:9199)');
+  }
+}
 
-// Enable persistence to heavily reduce read quota
-export const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
-}, resolvedFirebaseConfig.firestoreDatabaseId);
+export const db = initializeFirestore(
+  app,
+  {
+    localCache: isFirebaseEmulatorEnabled
+      ? memoryLocalCache()
+      : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+  },
+  resolvedFirebaseConfig.firestoreDatabaseId
+);
 
 export const auth = getAuth(app);
-// Explicitly pass the bucket to ensure it's correctly targeted
 export const storage = getStorage(app, `gs://${resolvedFirebaseConfig.storageBucket}`);
 // Nastavíme dostatečný limit pro nahrávání velkých souborů (až 30 MB)
 storage.maxUploadRetryTime = 60000;
+
+if (isFirebaseEmulatorEnabled) {
+  connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+  connectFirestoreEmulator(db, '127.0.0.1', 8080);
+  connectStorageEmulator(storage, '127.0.0.1', 9199);
+}

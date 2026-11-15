@@ -49,7 +49,6 @@ import { trackSectionClick } from '../services/analyticsService';
 import {
   fetchStudentRawStatisticsData,
   computeStudentStatistics,
-  getDemoStatisticsPreview,
   StatsSubjectFilter,
   StatsPeriodFilter,
   MasteryStatus,
@@ -61,8 +60,9 @@ import {
 } from '../services/statisticsService';
 
 export default function Statistics() {
-  const { user, profile, isPremium, streak } = useAuth();
+  const { user, profile, isPremium, isCourseUser, isTeacher, streak, openAuthModal } = useAuth();
   const navigate = useNavigate();
+  const hasStatsAccess = isPremium || isCourseUser || isTeacher;
 
   const [loading, setLoading] = useState(true);
   const [rawData, setRawData] = useState<Awaited<ReturnType<typeof fetchStudentRawStatisticsData>> | null>(null);
@@ -106,19 +106,25 @@ export default function Statistics() {
   // Modaly
   const [selectedAttemptForDetails, setSelectedAttemptForDetails] = useState<StudentAttemptRecord | null>(null);
   const [isErrorTypesModalOpen, setIsErrorTypesModalOpen] = useState(false);
-  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleInitialSubtopics, setScheduleInitialSubtopics] = useState<PracticeSubtopic[]>([]);
   const [scheduleInitialSubject, setScheduleInitialSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [todos, setTodos] = useState<any[]>([]);
 
-  // Načtení surových dat
+  // Načtení surových dat (pouze pokud má uživatel přístup ke statistikám)
   useEffect(() => {
     let isMounted = true;
     async function load() {
+      if (!user?.uid || !hasStatsAccess) {
+        if (isMounted) {
+          setRawData(null);
+          setLoading(false);
+        }
+        return;
+      }
       setLoading(true);
       try {
-        const res = await fetchStudentRawStatisticsData(user?.uid);
+        const res = await fetchStudentRawStatisticsData(user.uid);
         if (isMounted) {
           setRawData(res);
         }
@@ -134,11 +140,14 @@ export default function Statistics() {
     return () => {
       isMounted = false;
     };
-  }, [user?.uid]);
+  }, [user?.uid, hasStatsAccess]);
 
   // Načtení todos pro studijní plánovač
   useEffect(() => {
-    if (!user?.uid) return;
+    if (!user?.uid || !hasStatsAccess) {
+      setTodos([]);
+      return;
+    }
     const qTodos = query(
       collection(db, 'todos'),
       where('studentId', '==', user.uid),
@@ -154,23 +163,18 @@ export default function Statistics() {
       }
     );
     return () => unsub();
-  }, [user?.uid]);
+  }, [user?.uid, hasStatsAccess]);
 
-  // Výpočet statistik podle nové doporučovací logiky a pravidel
+  // Výpočet statistik podle doporučovací logiky a pravidel (žádný demo preview pro 0 pokusů)
   const stats = useMemo(() => {
-    if (!rawData) {
-      return getDemoStatisticsPreview();
-    }
-    if (!isPremium && rawData.attempts.length === 0) {
-      return getDemoStatisticsPreview();
-    }
+    const emptyData = { topics: [], subtopics: [], attempts: [] };
     return computeStudentStatistics(
-      rawData,
+      hasStatsAccess && rawData ? rawData : emptyData,
       subjectFilter,
       periodFilter,
       streak || profile?.streak || 0
     );
-  }, [rawData, isPremium, subjectFilter, periodFilter, streak, profile?.streak]);
+  }, [rawData, hasStatsAccess, subjectFilter, periodFilter, streak, profile?.streak]);
 
   // Otevření plánovače do kalendáře s předvyplněným tématem
   const handleOpenSchedule = (subtopicId: string, title: string, subject: 'Matematika' | 'Čeština', topicId = '') => {
@@ -245,6 +249,51 @@ export default function Statistics() {
           <div className="h-32 bg-gray-200 rounded-3xl" />
           <div className="h-32 bg-gray-200 rounded-3xl" />
         </div>
+      </div>
+    );
+  }
+
+  if (!hasStatsAccess) {
+    return (
+      <div className="page-container max-w-3xl mx-auto py-12 px-4">
+        <Card className="p-8 sm:p-10 rounded-[2.5rem] border border-amber-200/80 bg-white text-center space-y-5 shadow-sm">
+          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/70">
+            <Lock size={30} />
+          </div>
+          <div className="space-y-2 max-w-lg mx-auto">
+            <h1 className="text-2xl sm:text-3xl font-playful font-black text-[#0F2942]">
+              Statistiky a analýza pokroku vyžadují Premium
+            </h1>
+            <p className="text-sm text-gray-600 font-medium leading-relaxed">
+              Detailní přehled úspěšnosti, mapa témat CERMAT a chytrá doporučení na míru jsou dostupné pro držitele předplatného ProEdu Premium nebo zapsané studenty kurzů.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+            {!user && (
+              <Button
+                variant="outline"
+                onClick={() => openAuthModal()}
+                className="rounded-xl font-bold h-11 px-5 cursor-pointer"
+              >
+                Přihlásit se
+              </Button>
+            )}
+            <Button
+              onClick={() => navigate('/')}
+              variant="outline"
+              className="rounded-xl font-bold h-11 px-5 cursor-pointer"
+            >
+              Zpět na přehled
+            </Button>
+          </div>
+        </Card>
+
+        <UnifiedPaywallModal
+          isOpen={!hasStatsAccess}
+          onClose={() => navigate('/')}
+          type="premium"
+          description="Kompletní rozbor úspěšnosti, mapa témat CERMAT k přijímačkám, spojnicový graf vývoje a chytrá doporučení na míru jsou k dispozici v rámci předplatného ProEdu Premium."
+        />
       </div>
     );
   }
@@ -808,7 +857,7 @@ export default function Statistics() {
 
           {stats.timeline.hasEnoughData && (
             <span className="text-xs font-bold text-gray-500 hidden sm:inline">
-              Posledních {periodFilter === '7d' ? '7 dní' : periodFilter === '30d' ? '30 dní' : '14 dní'}
+              {periodFilter === '7d' ? 'Posledních 7 dní' : periodFilter === '30d' ? 'Posledních 30 dní' : 'Celá historie'}
             </span>
           )}
         </div>
@@ -856,7 +905,7 @@ export default function Statistics() {
                 </div>
 
                 {/* SVG spojnice křivky */}
-                <svg className="absolute inset-0 w-full h-full p-2 overflow-visible" preserveAspectRatio="none">
+                <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full p-2 overflow-visible" preserveAspectRatio="none">
                   {(() => {
                     const pts = stats.timeline.points;
                     if (pts.length < 2) return null;
@@ -1209,14 +1258,6 @@ export default function Statistics() {
         initialSubject={scheduleInitialSubject}
         initialSubtopics={scheduleInitialSubtopics}
         existingTodos={todos}
-      />
-
-      {/* Paywall modal pro ne-PRO uživatele */}
-      <UnifiedPaywallModal
-        isOpen={!isPremium && !isPaywallDismissed}
-        onClose={() => setIsPaywallDismissed(true)}
-        type="premium"
-        description="Kompletní rozbor úspěšnosti, mapa témat CERMAT k přijímačkám, spojnicový graf vývoje a chytrá doporučení na míru jsou k dispozici v rámci předplatného ProEdu Premium."
       />
     </div>
   );

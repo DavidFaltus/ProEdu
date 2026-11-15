@@ -18,7 +18,7 @@ import { Card } from './ui/card';
 import { QuestionInquiry } from '../services/inquiryService';
 import { getQuestionById } from '../services/practiceService';
 import { PracticeQuestion } from '../types';
-import { sanitizeSvg } from '../utils/svgUtils';
+import { sanitizeSvg, sanitizeSafeUrl } from '../utils/svgUtils';
 import { useNavigate } from 'react-router-dom';
 
 interface StudentInquiriesSectionProps {
@@ -188,13 +188,16 @@ export default function StudentInquiriesSection({
                       className="p-3 bg-white rounded-xl border border-gray-200 flex justify-center [&>svg]:max-h-56 [&>svg]:w-full [&>svg]:h-auto"
                       dangerouslySetInnerHTML={{ __html: sanitizeSvg(qDetails.svgContent) }}
                     />
-                  ) : qDetails.imageUrl ? (
+                  ) : sanitizeSafeUrl(qDetails.imageUrl) ? (
                     <div className="p-2 bg-white rounded-xl border border-gray-200 flex justify-center">
                       <img
-                        src={qDetails.imageUrl}
+                        src={sanitizeSafeUrl(qDetails.imageUrl)!}
                         alt="Obrázek k úloze"
                         className="max-h-48 rounded-lg object-contain cursor-pointer hover:scale-[1.01] transition-transform"
-                        onClick={() => window.open(qDetails.imageUrl, '_blank')}
+                        onClick={() => {
+                          const safeUrl = sanitizeSafeUrl(qDetails.imageUrl);
+                          if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
+                        }}
                         title="Kliknutím otevřete v plné velikosti"
                       />
                     </div>
@@ -250,12 +253,15 @@ export default function StudentInquiriesSection({
                       <span className="font-bold block text-[10px] uppercase tracking-wider text-amber-800">
                         Vzorové řešení (Self-check):
                       </span>
-                      {qDetails.solutionImageUrl && (
+                      {sanitizeSafeUrl(qDetails.solutionImageUrl) && (
                         <img
-                          src={qDetails.solutionImageUrl}
+                          src={sanitizeSafeUrl(qDetails.solutionImageUrl)!}
                           alt="Vzorové řešení"
                           className="max-h-48 rounded-lg object-contain cursor-pointer"
-                          onClick={() => window.open(qDetails.solutionImageUrl, '_blank')}
+                          onClick={() => {
+                            const safeUrl = sanitizeSafeUrl(qDetails.solutionImageUrl);
+                            if (safeUrl) window.open(safeUrl, '_blank', 'noopener,noreferrer');
+                          }}
                         />
                       )}
                     </div>

@@ -3,7 +3,7 @@ import { collection, query, where, onSnapshot, Timestamp, limit } from 'firebase
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { safeToDate } from '../lib/utils';
-import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons } from '../services/liveLessonService';
+import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons, subscribeToStudentTodos } from '../services/liveLessonService';
 import { markInquiryAsRead } from '../services/inquiryService';
 import { LiveLesson } from '../types';
 
@@ -30,8 +30,29 @@ export interface AppNotification {
   tagText: string;
 }
 
+const getLastViewedStorageKey = (userId?: string): string | null =>
+  userId ? `proedu_last_viewed_activity_${userId}` : null;
+
+const getSafeExternalUrl = (url?: string | null): string | undefined => {
+  if (!url) return undefined;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:' ? parsed.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 export function useNotifications() {
-  const { profile, updateProfileData } = useAuth();
+  const {
+    user,
+    profile,
+    isTeacher,
+    isCourseUser,
+    isPremium,
+    enrolledCourseIds,
+    updateProfileData,
+  } = useAuth();
   const [todosList, setTodosList] = useState<any[]>([]);
   const [testsList, setTestsList] = useState<any[]>([]);
   const [sheetsList, setSheetsList] = useState<any[]>([]);
@@ -40,34 +61,30 @@ export function useNotifications() {
   const [lessonsList, setLessonsList] = useState<LiveLesson[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Optimistic last viewed date for immediate UI updates without network delay
-  const [optimisticLastViewed, setOptimisticLastViewed] = useState<Date | null>(() => {
-    try {
-      const stored = localStorage.getItem('proedu_last_viewed_activity');
-      return stored ? new Date(stored) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  const role = profile?.role || 'free';
-  const isTeacher = role === 'teacher';
-  const isCourseUser = role === 'course';
-  const isPremium = role === 'premium' || isCourseUser;
   const isFree = !isTeacher && !isPremium;
   const uid = profile?.uid;
 
-  // Enrolled courses for course student
-  const enrolledCourseIds = useMemo(() => {
-    const list: string[] = [];
-    if (profile?.enrolledCourseIds && Array.isArray(profile.enrolledCourseIds)) {
-      list.push(...profile.enrolledCourseIds);
+  // Optimistic last viewed date scoped strictly to current uid
+  const [optimisticLastViewed, setOptimisticLastViewed] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const key = getLastViewedStorageKey(uid);
+    if (!key) {
+      setOptimisticLastViewed(null);
+      return;
     }
-    if (profile?.courseId && !list.includes(profile.courseId)) {
-      list.push(profile.courseId);
+    try {
+      const stored = localStorage.getItem(key);
+      if (stored) {
+        const parsed = new Date(stored);
+        setOptimisticLastViewed(!Number.isNaN(parsed.getTime()) ? parsed : null);
+      } else {
+        setOptimisticLastViewed(null);
+      }
+    } catch {
+      setOptimisticLastViewed(null);
     }
-    return list;
-  }, [profile?.enrolledCourseIds, profile?.courseId]);
+  }, [uid]);
 
   // Registration timestamp of user - baseline before which no notification should be displayed
   const userCreatedAt = useMemo(() => {
@@ -186,18 +203,12 @@ export function useNotifications() {
 
       // 1b. Student Todos / Assigned Practice from Teacher (for ALL students including Free)
       try {
-        const qTodos = query(
-          collection(db, 'todos'),
-          where('studentId', '==', uid),
-          where('completed', '==', false),
-          limit(100)
-        );
-        const unsubTodos = onSnapshot(
-          qTodos,
-          (snap) => {
-            const items = snap.docs
-              .map(doc => ({ id: doc.id, ...doc.data() }))
-              .filter((item: any) => item.addedBy && item.addedBy !== uid && !item.completed);
+        const unsubTodos = subscribeToStudentTodos(
+          uid,
+          (allTodos) => {
+            const items = allTodos.filter(
+              (item: any) => item.addedBy && item.addedBy !== uid && !item.completed
+            );
             setTodosList(items);
           },
           (err) => console.warn('Error listening to notifications (todos):', err)
@@ -221,7 +232,9 @@ export function useNotifications() {
           const unsubSheets = onSnapshot(
             qSheets,
             (snap) => {
-              const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              const items = snap.docs
+                .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
+                .filter((item: any) => !item.hiddenFromLibrary && (!item.status || item.status === 'ready'));
               setSheetsList(items);
             },
             (err) => console.warn('Error listening to notifications (learningSheets):', err)
@@ -251,22 +264,50 @@ export function useNotifications() {
           console.warn('Failed to subscribe to student inquiries notifications', err);
         }
 
-        // 5. Student Assigned Tests
+        // 5. Student Assigned Tests (safe API fetch for pending + realtime listener for submitted/graded)
         try {
+          let isCancelledTests = false;
+          let apiPendingTests: any[] = [];
+          let realtimeCompletedTests: any[] = [];
+          const mergeTests = () => {
+            if (isCancelledTests) return;
+            const byId = new Map<string, any>();
+            apiPendingTests.forEach((t) => { if (t?.id) byId.set(t.id, t); });
+            realtimeCompletedTests.forEach((t) => { if (t?.id) byId.set(t.id, t); });
+            setTestsList(Array.from(byId.values()));
+          };
+
+          if (user) {
+            user.getIdToken()
+              .then((token) => fetch('/api/assigned-tests', { headers: { Authorization: `Bearer ${token}` } }))
+              .then((res) => (res.ok ? res.json() : null))
+              .then((data) => {
+                if (Array.isArray(data?.tests)) {
+                  apiPendingTests = data.tests;
+                  mergeTests();
+                }
+              })
+              .catch(() => {});
+          }
+
           const qTests = query(
             collection(db, 'assignedTests'),
             where('studentId', '==', uid),
+            where('status', 'in', ['submitted', 'graded']),
             limit(20)
           );
           const unsubTests = onSnapshot(
             qTests,
             (snap) => {
-              const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-              setTestsList(items);
+              realtimeCompletedTests = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+              mergeTests();
             },
             (err) => console.warn('Error listening to notifications (assignedTests):', err)
           );
-          unsubs.push(unsubTests);
+          unsubs.push(() => {
+            isCancelledTests = true;
+            unsubTests();
+          });
         } catch (err) {
           console.warn('Failed to subscribe to tests notifications', err);
         }
@@ -278,7 +319,8 @@ export function useNotifications() {
             (lessons) => {
               setLessonsList(lessons.filter(l => l.status === 'live' || l.status === 'scheduled'));
             },
-            (err) => console.warn('Error listening to notifications (liveLessons):', err)
+            (err) => console.warn('Error listening to notifications (liveLessons):', err),
+            enrolledCourseIds
           );
           unsubs.push(unsubLessons);
         } catch (err) {
@@ -292,7 +334,7 @@ export function useNotifications() {
     return () => {
       unsubs.forEach(unsub => unsub());
     };
-  }, [uid, isTeacher, isFree, isCourseUser, userCreatedAt]);
+  }, [uid, isTeacher, isFree, isCourseUser, enrolledCourseIds, userCreatedAt]);
 
   // Aggregate into standardized notification objects
   const notifications = useMemo<AppNotification[]>(() => {
@@ -426,12 +468,12 @@ export function useNotifications() {
         // 4. Tests (Pending & Graded)
         testsList.forEach(test => {
           const isCourseTest = isCourseUser && Boolean(test.courseId && enrolledCourseIds.includes(test.courseId));
-          if (test.status === 'pending') {
-            const time = safeToDate(test.assignedAt) || new Date(0);
+          if (test.status === 'pending' || test.status === 'assigned' || test.status === 'in_progress') {
+            const time = safeToDate(test.assignedAt) || safeToDate(test.createdAt) || new Date(0);
             list.push({
               id: `test-pending-${test.id}`,
               type: 'test',
-              title: test.testTitle || (isCourseTest ? 'Test ke kurzu' : 'Přiřazený test'),
+              title: test.testTitle || test.title || (isCourseTest ? 'Test ke kurzu' : 'Přiřazený test'),
               description: isCourseTest ? 'Test z tvého kurzu čeká na tvé vypracování' : 'Nový test čeká na tvé vypracování',
               timestamp: time,
               isNew: time > lastViewed,
@@ -443,7 +485,7 @@ export function useNotifications() {
             list.push({
               id: `test-graded-${test.id}`,
               type: 'test_review',
-              title: test.testTitle || (isCourseTest ? 'Vyhodnocený test z kurzu' : 'Vyhodnocený test'),
+              title: test.testTitle || test.title || (isCourseTest ? 'Vyhodnocený test z kurzu' : 'Vyhodnocený test'),
               description: test.grade 
                 ? `Výsledek: známka ${test.grade}` 
                 : (test.feedback ? `Hodnocení: ${test.feedback.slice(0, 50)}...` : 'Test byl opraven učitelem'),
@@ -492,7 +534,7 @@ export function useNotifications() {
             timestamp: createdTime,
             isNew: createdTime > lastViewed,
             link: '/',
-            meetUrl: lesson.meetUrl,
+            meetUrl: getSafeExternalUrl(lesson.meetUrl),
             tagText: isLive ? 'Právě probíhá' : (isCourseLesson ? 'Lekce kurzu' : 'Online lekce'),
           });
         });
@@ -545,7 +587,7 @@ export function useNotifications() {
           timestamp: createdTime,
           isNew: createdTime > lastViewed,
           link: '/teacher?tab=lessons',
-          meetUrl: lesson.meetUrl,
+          meetUrl: getSafeExternalUrl(lesson.meetUrl),
           tagText: isLive ? 'Právě probíhá' : 'Plánovaná lekce',
         });
       });
@@ -571,9 +613,12 @@ export function useNotifications() {
 
     const now = new Date();
     setOptimisticLastViewed(now);
-    try {
-      localStorage.setItem('proedu_last_viewed_activity', now.toISOString());
-    } catch {}
+    const storageKey = getLastViewedStorageKey(uid);
+    if (storageKey) {
+      try {
+        localStorage.setItem(storageKey, now.toISOString());
+      } catch {}
+    }
 
     // Mark any unread inquiries as read for student
     if (!isTeacher && uid && !isFree) {

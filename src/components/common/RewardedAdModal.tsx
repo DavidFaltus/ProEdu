@@ -13,13 +13,14 @@ import {
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { useAuth } from '../../context/AuthContext';
-import { GUEST_MAX_VIDEOS } from '../../services/jokerService';
+import { GUEST_MAX_VIDEOS, startVideoSessionApi } from '../../services/jokerService';
 import { trackRewardedVideoStart, trackRewardedVideoComplete } from '../../services/analyticsService';
+import { toast } from 'sonner';
 
 interface RewardedAdModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onRewardEarned: () => void;
+  onRewardEarned: (videoToken?: string) => void | Promise<void>;
   isGuest?: boolean;
   guestVideosWatched?: number;
   rewardAmount?: number;
@@ -41,20 +42,43 @@ export default function RewardedAdModal({
   const [secondsLeft, setSecondsLeft] = useState(TOTAL_SECONDS);
   const [isCompleted, setIsCompleted] = useState(false);
   const [isClaimed, setIsClaimed] = useState(false);
+  const [videoToken, setVideoToken] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
 
-  // Spuštění a reset odpočítávání při otevření
+  // Spuštění, získání serverového videoTokenu a reset odpočítávání při otevření
   useEffect(() => {
     if (!open || isLimitReached) {
       setSecondsLeft(TOTAL_SECONDS);
       setIsCompleted(false);
       setIsClaimed(false);
+      setVideoToken(null);
+      setSessionError(null);
       return;
     }
 
+    let cancelled = false;
     setSecondsLeft(TOTAL_SECONDS);
     setIsCompleted(false);
     setIsClaimed(false);
+    setVideoToken(null);
+    setSessionError(null);
     trackRewardedVideoStart(isGuest ? 'guest_joker' : 'user_joker');
+
+    if (!isGuest) {
+      startVideoSessionApi()
+        .then((res) => {
+          if (!cancelled) {
+            setVideoToken(res.videoToken);
+          }
+        })
+        .catch((err: any) => {
+          if (!cancelled) {
+            const msg = err?.message || 'Nepodařilo se zahájit přehrávání videa.';
+            setSessionError(msg);
+            toast.error(msg);
+          }
+        });
+    }
 
     const interval = setInterval(() => {
       setSecondsLeft((prev) => {
@@ -67,14 +91,23 @@ export default function RewardedAdModal({
       });
     }, 1000);
 
-    return () => clearInterval(interval);
-  }, [open]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [open, isGuest, isLimitReached]);
 
-  const handleClaimReward = () => {
+  const handleClaimReward = async () => {
+    if (isClaimed) return;
     setIsClaimed(true);
-    trackRewardedVideoComplete(isGuest ? 'guest_joker' : 'user_joker');
-    onRewardEarned();
-    onOpenChange(false);
+    try {
+      trackRewardedVideoComplete(isGuest ? 'guest_joker' : 'user_joker');
+      await onRewardEarned(videoToken || undefined);
+      onOpenChange(false);
+    } catch (err: any) {
+      toast.error(err?.message || 'Nepodařilo se připsat žolíky.');
+      setIsClaimed(false);
+    }
   };
 
   const progressPercent = Math.min(100, Math.round(((TOTAL_SECONDS - secondsLeft) / TOTAL_SECONDS) * 100));
@@ -230,11 +263,22 @@ export default function RewardedAdModal({
                 <span> pro připsání žolíků</span>
               </p>
             </div>
+          ) : sessionError && !isGuest ? (
+            <div className="space-y-2 text-center">
+              <p className="text-xs text-rose-700 font-bold">{sessionError}</p>
+              <Button
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                className="w-full h-11 rounded-2xl font-bold text-xs cursor-pointer"
+              >
+                Zavřít
+              </Button>
+            </div>
           ) : (
             <div className="space-y-2">
               <Button
                 onClick={handleClaimReward}
-                disabled={isClaimed}
+                disabled={isClaimed || (!isGuest && !videoToken)}
                 className="w-full h-12 bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-base rounded-2xl border border-blue-200/80 shadow-sm transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
               >
                 <span>Vyzvednout +{rewardAmount} žolíků a pokračovat</span>
@@ -244,7 +288,7 @@ export default function RewardedAdModal({
               {isGuest && (
                 <div className="pt-2 text-center border-t border-gray-100">
                   <p className="text-xs text-gray-500 mb-2 font-medium">
-                    Chceš mít 20 žolíků denně a ukládat si postup?
+                    Chceš mít 10 žolíků denně a ukládat si postup?
                   </p>
                   <Button
                     variant="outline"

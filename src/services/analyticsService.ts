@@ -6,13 +6,9 @@ let isInitialized = false;
 
 // Rozpoznání vývojového prostředí (localhost / dev)
 export const isDevEnvironment = (): boolean => {
-  if (typeof window === 'undefined') return false;
-  return (
-    import.meta.env.DEV ||
-    window.location.hostname === 'localhost' ||
-    window.location.hostname === '127.0.0.1' ||
-    window.location.hostname.endsWith('.local')
-  );
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return false;
+  const hostname = window.location.hostname;
+  return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 };
 
 // Inicializace Firebase Analytics

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Video, BarChart3, CreditCard, Bug } from 'lucide-react';
+import { Video, BarChart3, CreditCard, Bug, ShieldAlert } from 'lucide-react';
 import {
   BrainPinkIcon,
   MaterialYellowIcon,
@@ -24,7 +24,7 @@ import { subscribeToTeacherLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
 
 export default function TeacherDashboard() {
-  const { profile: userProfile } = useAuth();
+  const { profile: userProfile, isTeacher, loading: authLoading } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const validTabs = ['practices', 'materials', 'students', 'inquiries', 'lessons', 'courses', 'surveys', 'orders', 'bugReports'];
   const tabParam = searchParams.get('tab');
@@ -41,6 +41,10 @@ export default function TeacherDashboard() {
   };
 
   const loadInquiries = useCallback(async () => {
+    if (!isTeacher) {
+      setLoadingInquiries(false);
+      return;
+    }
     try {
       const data = await getAllInquiries();
       setInquiries(data);
@@ -49,14 +53,18 @@ export default function TeacherDashboard() {
     } finally {
       setLoadingInquiries(false);
     }
-  }, []);
+  }, [isTeacher]);
 
   useEffect(() => {
+    if (!isTeacher) return;
     loadInquiries();
-  }, [loadInquiries]);
+  }, [isTeacher, loadInquiries]);
 
   useEffect(() => {
-    if (!userProfile?.uid) return;
+    if (!isTeacher || !userProfile?.uid) {
+      setLoadingLessons(false);
+      return;
+    }
     const unsub = subscribeToTeacherLiveLessons(
       userProfile.uid,
       (data) => {
@@ -69,7 +77,36 @@ export default function TeacherDashboard() {
       }
     );
     return () => unsub();
-  }, [userProfile?.uid]);
+  }, [isTeacher, userProfile?.uid]);
+
+  if (authLoading) {
+    return (
+      <div className="page-container w-full max-w-4xl mx-auto py-20 text-center text-sm font-bold text-gray-500">
+        Ověřování oprávnění...
+      </div>
+    );
+  }
+
+  if (!isTeacher) {
+    return (
+      <div className="page-container w-full max-w-2xl mx-auto py-16 text-center space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto border border-rose-200/70">
+          <ShieldAlert size={30} />
+        </div>
+        <h1 className="text-2xl sm:text-3xl font-playful font-black text-gray-800">
+          Přístup pouze pro lektory
+        </h1>
+        <p className="text-sm text-gray-500 font-medium">
+          Pro zobrazení učitelského panelu musíš být přihlášen pod účtem s oprávněním lektora.
+        </p>
+        <div>
+          <Link to="/" className="inline-flex px-5 py-2.5 rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm">
+            Zpět na přehled
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   const hasInquiries = !loadingInquiries && inquiries.length > 0;
   const activeLessons = lessons.filter(l => l.status === 'live' || l.status === 'scheduled');
