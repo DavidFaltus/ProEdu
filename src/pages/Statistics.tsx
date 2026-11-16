@@ -17,7 +17,6 @@ import {
   Clock,
   ChevronDown,
   ChevronUp,
-  Sparkles,
   Flame,
   BookOpen,
   ArrowRight,
@@ -26,8 +25,7 @@ import {
   Search,
   Lock,
   Layers,
-  Target,
-  Zap
+  Target
 } from 'lucide-react';
 import CustomIcon, {
   BrainPinkIcon,
@@ -304,12 +302,7 @@ export default function Statistics() {
       {/* 3.1 HLAVIČKA A FILTRY (ZAROVNÁNO NA STŘED)                */}
       {/* ========================================================= */}
       <section className="text-center space-y-3.5 max-w-3xl mx-auto">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-100/70 text-amber-900 text-xs font-black uppercase tracking-wider">
-          <Sparkles size={13} className="text-amber-600" />
-          <span>Analýza znalostí & příprava na CERMAT</span>
-        </div>
-
-        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-[#1E1B18] tracking-tight leading-tight">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight leading-tight">
           Moje statistiky
         </h1>
         <p className="text-sm sm:text-base md:text-lg text-gray-500 font-medium leading-relaxed max-w-2xl mx-auto">
@@ -383,8 +376,7 @@ export default function Statistics() {
       {/* ========================================================= */}
       <section aria-labelledby="next-step-heading" className="space-y-3">
         <div className="flex items-center justify-between">
-          <h2 id="next-step-heading" className="text-lg sm:text-xl font-black text-[#0F2942] tracking-tight flex items-center gap-2">
-            <Zap size={20} className="text-[#F5C400] fill-current" />
+          <h2 id="next-step-heading" className="text-lg sm:text-xl font-black text-[#0F2942] tracking-tight">
             <span>Tvůj další krok</span>
           </h2>
           <span className="text-xs font-bold text-gray-500 hidden sm:inline">

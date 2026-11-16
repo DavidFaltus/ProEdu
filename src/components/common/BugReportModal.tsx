@@ -16,8 +16,7 @@ import {
   Lightbulb, 
   MoreHorizontal, 
   Trash2, 
-  CheckCircle2,
-  Monitor
+  CheckCircle2
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
@@ -295,20 +294,6 @@ export default function BugReportModal({ isOpen, onClose }: BugReportModalProps)
                 />
               </div>
             )}
-          </div>
-
-          {/* Automatická diagnostická data */}
-          <div className="p-3 bg-gray-50 rounded-2xl border border-gray-100/80 flex items-start gap-2 text-[11px] text-gray-500">
-            <Monitor size={15} className="text-gray-400 shrink-0 mt-0.5" />
-            <div className="space-y-0.5">
-              <p className="font-bold text-gray-700">K hlášení automaticky přiložíme:</p>
-              <p className="break-all font-mono text-[10px] text-gray-500">
-                Stránka: {location.pathname}
-              </p>
-              <p className="text-[10px] text-gray-400">
-                Odesílatel: {profile?.name || user?.displayName || user?.email} ({user?.email})
-              </p>
-            </div>
           </div>
 
           {/* Footer tlačítka */}
