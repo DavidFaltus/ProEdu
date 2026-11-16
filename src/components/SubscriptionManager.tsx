@@ -27,7 +27,8 @@ import {
   reactivateSubscription,
   saveBillingAndPaymentSettings,
   getMyOrders,
-  downloadOrderInvoicePdf
+  downloadOrderInvoicePdf,
+  verifyComgatePayment
 } from '../services/orderService';
 import { Order } from '../types';
 import { toast } from 'sonner';
@@ -55,6 +56,7 @@ export default function SubscriptionManager() {
   // Stavy jednotlivých plateb a objednávek uživatele
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [checkingOrderId, setCheckingOrderId] = useState<string | null>(null);
 
   // Stavy rušení a obnovy
   const [selectedReason, setSelectedReason] = useState<string>(CANCEL_REASONS[0]);
@@ -115,6 +117,33 @@ export default function SubscriptionManager() {
     try {
       const data = await getMyOrders();
       setOrders(data);
+
+      // Synchronizace čekajících Comgate objednávek (např. po zrušení přímo na bráně / v portálu)
+      const pendingComgateOrders = data.filter(
+        o =>
+          o.status === 'pending' &&
+          o.comgateTransId &&
+          !String(o.comgateTransId).startsWith('SANDBOX_')
+      );
+      if (pendingComgateOrders.length > 0) {
+        const results = await Promise.allSettled(
+          pendingComgateOrders.map(o => {
+            const oid = (o as any).orderId || o.id;
+            return oid ? verifyComgatePayment(oid) : Promise.resolve({ success: false, status: 'pending' });
+          })
+        );
+        const anyChanged = results.some(
+          r => r.status === 'fulfilled' && (r.value.status === 'paid' || r.value.status === 'cancelled')
+        );
+        const anyPaid = results.some(r => r.status === 'fulfilled' && r.value.status === 'paid');
+        if (anyChanged) {
+          const refreshed = await getMyOrders();
+          setOrders(refreshed);
+          if (anyPaid) {
+            await refreshProfile();
+          }
+        }
+      }
     } catch (err) {
       console.warn('Chyba při načítání jednotlivých plateb:', err);
     } finally {
@@ -131,7 +160,29 @@ export default function SubscriptionManager() {
     setIsPaywallOpen(true);
   };
 
-  const handleOpenExistingOrderPayment = (order: Order) => {
+  const handleOpenExistingOrderPayment = async (order: Order) => {
+    const orderId = (order as any).orderId || order.id;
+    if (orderId && order.comgateTransId && !String(order.comgateTransId).startsWith('SANDBOX_')) {
+      setCheckingOrderId(orderId);
+      try {
+        const check = await verifyComgatePayment(orderId);
+        if (check.status === 'cancelled') {
+          toast.error('Objednávka byla zrušena.');
+          await loadMyOrders();
+          return;
+        }
+        if (check.status === 'paid') {
+          toast.success('Platba již byla potvrzena! Balíček Premium je aktivní.');
+          await Promise.all([refreshProfile(), loadMyOrders()]);
+          return;
+        }
+      } catch (err) {
+        console.warn('[Order Pre-open Verify]:', err);
+      } finally {
+        setCheckingOrderId(null);
+      }
+    }
+
     setSelectedOrderForPayment(order);
     setIsPaywallOpen(true);
   };
@@ -587,8 +638,8 @@ export default function SubscriptionManager() {
                           Refundováno / Dobropis
                         </span>
                       ) : isCancelled ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gray-200 text-gray-600">
-                          Zrušeno
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
+                          <XCircle size={12} /> Zrušeno
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-100 text-amber-900 border border-amber-200">
@@ -664,6 +715,7 @@ export default function SubscriptionManager() {
                     {isPending && (
                       <Button
                         type="button"
+                        disabled={checkingOrderId === orderKey}
                         onClick={e => {
                           e.stopPropagation();
                           handleOpenExistingOrderPayment(order);
@@ -671,7 +723,7 @@ export default function SubscriptionManager() {
                         className="rounded-xl h-9 px-4 bg-[#B80053] hover:bg-[#B80053]/90 text-white text-xs font-black shadow-sm cursor-pointer flex items-center gap-1.5"
                       >
                         <CreditCard size={14} />
-                        <span>Rozkliknout a zaplatit</span>
+                        <span>{checkingOrderId === orderKey ? 'Ověřuji...' : 'Rozkliknout a zaplatit'}</span>
                       </Button>
                     )}
                   </div>

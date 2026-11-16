@@ -8,6 +8,7 @@ Allow: /learning
 Allow: /contact
 Allow: /login
 Allow: /terms
+Allow: /doprava-a-platba
 Allow: /privacy
 
 # Disallow private & authenticated student / teacher routes

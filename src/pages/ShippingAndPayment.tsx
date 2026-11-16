@@ -1,0 +1,214 @@
+import React from 'react';
+import { Link } from 'react-router-dom';
+import {
+  ArrowLeft,
+  CreditCard,
+  Landmark,
+  ShieldCheck,
+  Zap,
+  ExternalLink,
+  Mail,
+  Phone,
+  MapPin,
+  Building2,
+} from 'lucide-react';
+import { Button } from '../components/ui/button';
+import { PaymentLogosBar } from '../components/common/PaymentLogos';
+
+export default function ShippingAndPayment() {
+  return (
+    <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6 space-y-8 text-[#1E1B18]">
+      {/* Top Bar with Back Button */}
+      <div className="flex items-center justify-between">
+        <Link to="/">
+          <Button
+            variant="ghost"
+            className="gap-2 font-bold text-gray-600 hover:text-gray-900 rounded-2xl cursor-pointer"
+          >
+            <ArrowLeft size={18} />
+            Zpět na hlavní stránku
+          </Button>
+        </Link>
+        <span className="text-xs font-semibold text-gray-400">ProEdu, s.r.o.</span>
+      </div>
+
+      {/* Header Banner */}
+      <div className="bg-white rounded-3xl p-6 sm:p-10 border border-blue-200/70 shadow-xs relative overflow-hidden">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-blue-100/50 rounded-full blur-3xl pointer-events-none -mr-20 -mt-20" />
+        <div className="flex items-center gap-3 mb-3">
+          <div className="w-10 h-10 rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
+            <CreditCard size={20} />
+          </div>
+          <span className="text-xs font-black uppercase tracking-wider text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-200">
+            Informace o platbě a dodání
+          </span>
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-black text-gray-700 tracking-tight">
+          Doprava a platba
+        </h1>
+        <p className="mt-2 text-sm text-gray-500 font-medium">
+          Přehled způsobů úhrady a doručení digitálních vzdělávacích služeb na portálu ProEducator.
+        </p>
+      </div>
+
+      {/* Content Cards */}
+      <div className="space-y-6 text-sm leading-relaxed text-gray-700">
+        {/* 1. Způsob dodání (Doprava) */}
+        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Zap size={20} className="text-emerald-600" />
+            <span>1. Doprava a způsob dodání služeb</span>
+          </h2>
+          <p>
+            Veškeré služby, kurzy a digitální předplatné <strong>ProEducator Premium</strong> jsou poskytovány výhradně elektronicky formou přístupu do online vzdělávací platformy a živých online lekcí.
+          </p>
+          <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-amber-200/70 space-y-1.5 text-gray-700">
+            <div className="font-bold text-gray-900">Elektronické dodání (online zpřístupnění) — Zdarma (0 Kč)</div>
+            <p className="text-xs sm:text-sm text-gray-600">
+              Po úspěšném potvrzení online platby je přístup k zakoupenému digitálnímu obsahu nebo předplatnému aktivován <strong>okamžitě a automaticky</strong> ve vašem uživatelském účtu bez jakýchkoliv nákladů na dopravu či balné.
+            </p>
+          </div>
+        </section>
+
+        {/* 2. Poskytovatel platební brány */}
+        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <ShieldCheck size={20} className="text-blue-600" />
+            <span>2. Poskytovatel platební brány</span>
+          </h2>
+          <p>
+            Online platby zajišťuje certifikovaná platební brána společnosti{' '}
+            <strong>Comgate, a.s.</strong>, která je licencovanou platební institucí působící pod dohledem České národní banky. Veškerá komunikace mezi vaším prohlížečem a platební bránou je šifrovaná a zabezpečená podle standardů 3D Secure.
+          </p>
+
+          <div className="flex flex-wrap items-center justify-between gap-4 bg-gray-50 p-4 rounded-2xl border border-gray-200">
+            <PaymentLogosBar />
+            <a
+              href="https://www.comgate.eu/cs/platebni-brana"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 underline"
+            >
+              <span>Více o platební bráně Comgate</span>
+              <ExternalLink size={13} />
+            </a>
+          </div>
+        </section>
+
+        {/* 3. Dostupné platební metody */}
+        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-5">
+          <h2 className="text-xl font-bold text-gray-900">3. Platební metody a průběh platby</h2>
+
+          {/* Platby kartou */}
+          <div className="p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <CreditCard size={18} className="text-blue-600" />
+                <span>Platba platební kartou online (Visa, Mastercard, Apple Pay, Google Pay)</span>
+              </h3>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
+                Okamžitá úhrada • Zdarma
+              </span>
+            </div>
+            <p className="text-gray-700">
+              Nejrychlejší způsob úhrady. Po potvrzení objednávky budete přesměrováni na zabezpečenou platební bránu Comgate, kde zadáte číslo své karty, datum platnosti a CVC/CVV kód (případně potvrdíte platbu pomocí Apple Pay či Google Pay) a platbu autorizujete v mobilní aplikaci své banky (3D Secure). Částka se připíše okamžitě a služba je ihned aktivována.
+            </p>
+            <p className="text-xs text-gray-600">
+              U měsíčního předplatného ProEducator Premium (99 Kč / 30 dní) slouží první úspěšná platba kartou jako iniciační autorizace pro následné automatické prodlužování předplatného. Podrobnosti najdete v{' '}
+              <Link to="/terms#predplatne" className="text-amber-700 font-bold underline">
+                pravidlech opakovaných plateb
+              </Link>.
+            </p>
+            <div>
+              <a
+                href="https://help.comgate.eu/v1/docs/cs/platby-kartou"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:underline"
+              >
+                <span>Podrobný průvodce platbou kartou (Comgate Help)</span>
+                <ExternalLink size={12} />
+              </a>
+            </div>
+          </div>
+
+          {/* Platební tlačítka bank */}
+          <div className="p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <Landmark size={18} className="text-indigo-600" />
+                <span>Online bankovní převody (platební tlačítka bank)</span>
+              </h3>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
+                Okamžitý převod • Zdarma
+              </span>
+            </div>
+            <p className="text-gray-700">
+              Okamžitá platba prostřednictvím internetového bankovnictví podporovaných českých a slovenských bank. Po výběru své banky na platební bráně Comgate budete přesměrováni do přihlášení svého internetového bankovnictví, kde se zobrazí již předvyplněný platební příkaz se správnou částkou a variabilním symbolem. Po potvrzení příkazu dojde k okamžitému zúčtování a přesměrování zpět na portál.
+            </p>
+            <div>
+              <a
+                href="https://help.comgate.eu/docs/bankovni-prevody"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:underline"
+              >
+                <span>Podrobný průvodce bankovními převody a tlačítky (Comgate Help)</span>
+                <ExternalLink size={12} />
+              </a>
+            </div>
+          </div>
+        </section>
+
+        {/* 4. Kontaktní údaje Comgate pro reklamace a dotazy k platbám */}
+        <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
+          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+            <Building2 size={20} className="text-amber-600" />
+            <span>4. Kontaktní údaje poskytovatele platební brány (reklamace a dotazy k platbám)</span>
+          </h2>
+          <p className="text-gray-600">
+            V případě technických dotazů k průběhu platby nebo při reklamaci nezaúčtované transakce na platební bráně se můžete obrátit přímo na podporu společnosti Comgate, a.s.:
+          </p>
+
+          <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 space-y-2.5 text-sm">
+            <div className="font-bold text-gray-900 text-base">Comgate, a.s.</div>
+            <div className="flex items-start gap-2 text-gray-700">
+              <MapPin size={16} className="text-gray-400 shrink-0 mt-0.5" />
+              <span>Gočárova třída 1754 / 48b, Hradec Králové</span>
+            </div>
+            <div className="flex items-center gap-2 text-gray-700">
+              <Mail size={16} className="text-gray-400 shrink-0" />
+              <span>
+                E-mail:{' '}
+                <a href="mailto:podpora@comgate.cz" className="text-blue-700 font-bold hover:underline">
+                  podpora@comgate.cz
+                </a>
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-gray-700">
+              <Phone size={16} className="text-gray-400 shrink-0" />
+              <span>
+                Tel:{' '}
+                <a href="tel:+420228224267" className="text-blue-700 font-bold hover:underline">
+                  +420 228 224 267
+                </a>
+              </span>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-gray-100 flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-gray-500 gap-2">
+            <span>Dotazy ke službám ProEducator směřujte na info@pro-edu.eu</span>
+            <div className="flex items-center gap-4">
+              <Link to="/terms" className="font-bold text-amber-700 hover:underline">
+                Obchodní podmínky &rarr;
+              </Link>
+              <Link to="/contact" className="font-bold text-amber-700 hover:underline">
+                Kontakt &rarr;
+              </Link>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}

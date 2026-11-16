@@ -1764,6 +1764,7 @@ const BANK_RECIPIENT = process.env.BANK_RECIPIENT || 'ProEdu vzdělávání';
 const COMGATE_MERCHANT_ID = process.env.COMGATE_MERCHANT_ID || '';
 const COMGATE_SECRET = process.env.COMGATE_SECRET || '';
 const COMGATE_TEST_MODE = process.env.COMGATE_TEST_MODE !== 'false';
+const COMGATE_RECURRING_ENABLED = process.env.COMGATE_RECURRING_ENABLED !== 'false';
 const ALLOW_SANDBOX_PAYMENTS = process.env.ALLOW_SANDBOX_PAYMENTS === 'true';
 
 const PREMIUM_PLANS = {
@@ -1787,6 +1788,36 @@ function isSandboxSimulationAllowed() {
     ALLOW_SANDBOX_PAYMENTS &&
     process.env.NODE_ENV !== 'production'
   );
+}
+
+function hasComgateCredentials() {
+  return Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET);
+}
+
+function getComgateAuthHeader() {
+  return 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+}
+
+function isRealComgateTransId(transId) {
+  return Boolean(transId && typeof transId === 'string' && !transId.startsWith('SANDBOX_'));
+}
+
+function resolveAppBaseUrl(req) {
+  const configured = sanitizeHttpUrl(process.env.APP_URL);
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV !== 'production' && req) {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+    const host = forwardedHost || req.get('host');
+    const proto = forwardedProto || req.protocol || 'http';
+    if (host && (proto === 'http' || proto === 'https')) {
+      const derived = sanitizeHttpUrl(`${proto}://${host}`);
+      if (derived) return derived.replace(/\/+$/, '');
+    }
+  }
+  return 'https://www.proeducator.eu';
 }
 
 function constantTimeSecretEqual(a, b) {
@@ -2116,7 +2147,7 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
     );
 
     const isTest = COMGATE_TEST_MODE === true || COMGATE_TEST_MODE === 'true';
-    const hasComgateCreds = Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET);
+    const hasComgateCreds = hasComgateCredentials();
 
     if (!isTest && !hasComgateCreds) {
       return res.status(503).json({ error: 'Platební brána není v produkci nakonfigurována.' });
@@ -2150,18 +2181,17 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       createdAt: new Date().toISOString()
     };
 
-    const appBaseUrl = sanitizeHttpUrl(process.env.APP_URL) || 'https://www.proeducator.eu';
+    const appBaseUrl = resolveAppBaseUrl(req);
     let comgateData = null;
 
     if (hasComgateCreds) {
       let comgateJson = null;
       let comgateOk = false;
       try {
-        const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
         const comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
           method: 'POST',
           headers: {
-            Authorization: authHeader,
+            Authorization: getComgateAuthHeader(),
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
@@ -2175,12 +2205,12 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
             fullName: orderData.clientName || undefined,
             method: 'ALL',
             prepareOnly: true,
-            initRecurring: true,
+            initRecurring: COMGATE_RECURRING_ENABLED,
             country: 'CZ',
             lang: 'cs',
-            url_paid: `${appBaseUrl}/student/dashboard?payment=success&orderId=${encodeURIComponent(orderId)}`,
-            url_cancelled: `${appBaseUrl}/student/dashboard?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
-            url_pending: `${appBaseUrl}/student/dashboard?payment=pending&orderId=${encodeURIComponent(orderId)}`
+            url_paid: `${appBaseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`,
+            url_cancelled: `${appBaseUrl}/?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
+            url_pending: `${appBaseUrl}/?payment=pending&orderId=${encodeURIComponent(orderId)}`
           })
         });
         comgateOk = comgateRes.ok;
@@ -2246,10 +2276,93 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
   }
 });
 
+/**
+ * Atomicky převede objednávku do stavu PAID nebo CANCELLED na základě potvrzení z Comgate
+ * (sdíleno mezi Push URL webhookem a přímým ověřením stavu přes Comgate REST API).
+ */
+async function applyComgatePaymentTransition({
+  orderId,
+  transId = null,
+  status,
+  price = null,
+  curr = null,
+  isSandbox = false
+}) {
+  const orderRef = db.collection('orders').doc(orderId);
+  const txOutcome = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists) {
+      return { errorStatus: 404, body: 'code=1&message=Order not found', errorMessage: 'Objednávka nebyla nalezena.' };
+    }
+
+    const order = { id: snap.id, ...snap.data() };
+    const expectedPriceHaler = Math.round(Number(order.amount) * 100);
+    if (price !== null && price !== undefined && Number(price) !== expectedPriceHaler) {
+      return { errorStatus: 400, body: 'code=1&message=Price mismatch', errorMessage: 'Částka platby nesouhlasí.' };
+    }
+
+    if (curr && String(curr).toUpperCase() !== String(order.currency || 'CZK').toUpperCase()) {
+      return { errorStatus: 400, body: 'code=1&message=Currency mismatch', errorMessage: 'Měna platby nesouhlasí.' };
+    }
+
+    if (order.status === 'refunded') {
+      return { errorStatus: 409, body: 'code=1&message=Order already refunded', errorMessage: 'Objednávka již byla refundována.' };
+    }
+
+    if (status === 'PAID') {
+      const invoiceSettled =
+        Boolean(order.iuctoInvoiceId) ||
+        order.iuctoSyncStatus === 'synced' ||
+        order.iuctoSyncStatus === 'skipped_sandbox';
+      if (order.status === 'paid' && invoiceSettled) {
+        return { alreadyProcessed: true, order };
+      }
+      const paidAtIso = order.paidAt || new Date().toISOString();
+      const lockUpdates = {
+        status: 'paid',
+        paidAt: paidAtIso,
+        comgateTransId: transId || order.comgateTransId || null,
+        isSandbox: Boolean(isSandbox) || Boolean(order.isSandbox)
+      };
+      tx.set(orderRef, lockUpdates, { merge: true });
+      return { action: 'PAID', order: { ...order, ...lockUpdates } };
+    }
+
+    if (status === 'CANCELLED') {
+      if (order.status === 'pending') {
+        tx.set(orderRef, {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString()
+        }, { merge: true });
+      }
+      return { action: 'CANCELLED', order };
+    }
+
+    return { action: 'IGNORED', order };
+  });
+
+  if (txOutcome.errorStatus || txOutcome.alreadyProcessed) {
+    return txOutcome;
+  }
+
+  if (txOutcome.action === 'PAID') {
+    await finalizePaidOrderAndInvoice({
+      orderId,
+      order: txOutcome.order,
+      comgateTransId: transId || txOutcome.order.comgateTransId || null,
+      initRecurringTransId: COMGATE_RECURRING_ENABLED ? (transId || txOutcome.order.comgateTransId || null) : null,
+      isSandbox: Boolean(isSandbox) || Boolean(txOutcome.order.isSandbox),
+      isRecurringRenewal: Boolean(txOutcome.order.isRecurringRenewal)
+    });
+  }
+
+  return txOutcome;
+}
+
 // 2. Comgate Push URL Notifikace (Webhook)
 app.post('/api/payments/comgate/notify', async (req, res) => {
   try {
-    if (!COMGATE_SECRET || !COMGATE_MERCHANT_ID) {
+    if (!hasComgateCredentials()) {
       console.error('[Comgate Webhook] COMGATE_SECRET nebo COMGATE_MERCHANT_ID není nastaveno.');
       return res.status(503).send('code=1&message=Payment webhook not configured');
     }
@@ -2277,72 +2390,20 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
       return res.status(403).send('code=1&message=Test mode not allowed in live environment');
     }
 
-    const orderRef = db.collection('orders').doc(refId);
-    const txOutcome = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(orderRef);
-      if (!snap.exists) {
-        return { errorStatus: 404, body: 'code=1&message=Order not found' };
-      }
-
-      const order = { id: snap.id, ...snap.data() };
-      const expectedPriceHaler = Math.round(Number(order.amount) * 100);
-      if (Number(price) !== expectedPriceHaler) {
-        return { errorStatus: 400, body: 'code=1&message=Price mismatch' };
-      }
-
-      if (String(curr || '').toUpperCase() !== String(order.currency || 'CZK').toUpperCase()) {
-        return { errorStatus: 400, body: 'code=1&message=Currency mismatch' };
-      }
-
-      if (order.status === 'refunded') {
-        return { errorStatus: 409, body: 'code=1&message=Order already refunded' };
-      }
-
-      if (status === 'PAID') {
-        if (order.status === 'paid' && order.iuctoInvoiceId) {
-          return { alreadyProcessed: true, order };
-        }
-        const paidAtIso = order.paidAt || new Date().toISOString();
-        const lockUpdates = {
-          status: 'paid',
-          paidAt: paidAtIso,
-          comgateTransId: transId || order.comgateTransId || null,
-          isSandbox: webhookIsSandbox || Boolean(order.isSandbox)
-        };
-        tx.set(orderRef, lockUpdates, { merge: true });
-        return { action: 'PAID', order: { ...order, ...lockUpdates } };
-      }
-
-      if (status === 'CANCELLED') {
-        if (order.status === 'pending') {
-          tx.set(orderRef, {
-            status: 'cancelled',
-            cancelledAt: new Date().toISOString()
-          }, { merge: true });
-        }
-        return { action: 'CANCELLED', order };
-      }
-
-      return { action: 'IGNORED', order };
+    const outcome = await applyComgatePaymentTransition({
+      orderId: refId,
+      transId: transId || null,
+      status,
+      price,
+      curr,
+      isSandbox: webhookIsSandbox
     });
 
-    if (txOutcome.errorStatus) {
-      return res.status(txOutcome.errorStatus).send(txOutcome.body);
+    if (outcome.errorStatus) {
+      return res.status(outcome.errorStatus).send(outcome.body);
     }
 
-    if (txOutcome.alreadyProcessed) {
-      return res.send('code=0&message=OK');
-    }
-
-    if (txOutcome.action === 'PAID') {
-      await finalizePaidOrderAndInvoice({
-        orderId: refId,
-        order: txOutcome.order,
-        comgateTransId: transId || txOutcome.order.comgateTransId || null,
-        initRecurringTransId: transId || null,
-        isSandbox: webhookIsSandbox || Boolean(txOutcome.order.isSandbox),
-        isRecurringRenewal: Boolean(txOutcome.order.isRecurringRenewal)
-      });
+    if (outcome.action === 'PAID') {
       console.log(`[Comgate Webhook] Objednávka ${refId} označena jako ZAPLACENÁ.`);
     }
 
@@ -2350,6 +2411,211 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
   } catch (err) {
     console.error('[Comgate Webhook Error]:', err);
     return res.status(500).send('code=1&message=Internal error');
+  }
+});
+
+async function fetchComgatePaymentStatus(transId) {
+  const statusRes = await fetch(
+    `https://payments.comgate.cz/v2.0/payment/transId/${encodeURIComponent(transId)}.json`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: getComgateAuthHeader()
+      }
+    }
+  );
+  const statusJson = await statusRes.json().catch(() => null);
+  return { ok: statusRes.ok, statusJson };
+}
+
+async function cancelComgateRemotePayment(transId) {
+  try {
+    const res = await fetch(
+      `https://payments.comgate.cz/v2.0/payment/transId/${encodeURIComponent(transId)}.json`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: getComgateAuthHeader()
+        }
+      }
+    );
+    const json = await res.json().catch(() => null);
+    return { ok: res.ok || res.status === 204, json };
+  } catch (err) {
+    console.warn('[Comgate Cancel Remote Warning]:', err?.message || err);
+    return { ok: false, json: null };
+  }
+}
+
+// 2b. Ověření stavu platby přímo přes Comgate REST API v2.0 (fallback po návratu z brány)
+app.post('/api/orders/:orderId/verify-payment', requireAuth, async (req, res) => {
+  try {
+    const cleanOrderId = String(req.params.orderId || '').trim();
+    const markCancelledIfPending = req.body?.markCancelledIfPending === true;
+    if (!cleanOrderId) {
+      return res.status(400).json({ error: 'Chybí ID objednávky.' });
+    }
+
+    const order = await getOrderDoc(cleanOrderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nebyla nalezena.' });
+    }
+
+    if (order.userId !== req.user.uid && req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Nemáte oprávnění ověřit cizí objednávku.' });
+    }
+
+    if (order.status === 'paid') {
+      return res.json({ success: true, status: 'paid', alreadyPaid: true });
+    }
+    if (order.status === 'refunded') {
+      return res.json({ success: false, status: 'refunded' });
+    }
+    if (order.status === 'cancelled') {
+      return res.json({ success: false, status: 'cancelled' });
+    }
+
+    if (!hasComgateCredentials() || !isRealComgateTransId(order.comgateTransId)) {
+      if (markCancelledIfPending && order.status === 'pending') {
+        await applyComgatePaymentTransition({
+          orderId: cleanOrderId,
+          status: 'CANCELLED',
+          isSandbox: Boolean(order.isSandbox)
+        });
+        return res.json({ success: false, status: 'cancelled' });
+      }
+      return res.json({ success: false, status: order.status || 'pending' });
+    }
+
+    let statusJson = null;
+    try {
+      const statusCheck = await fetchComgatePaymentStatus(order.comgateTransId);
+      statusJson = statusCheck.statusJson;
+      if (!statusCheck.ok || !statusJson || statusJson.code !== 0) {
+        console.warn('[Comgate Status Check Warning]:', statusJson);
+        return res.status(502).json({ error: 'Nepodařilo se ověřit stav platby na platební bráně.' });
+      }
+    } catch (netErr) {
+      console.error('[Comgate Status Network Error]:', netErr);
+      return res.status(502).json({ error: 'Nepodařilo se spojit s platební bránou Comgate.' });
+    }
+
+    if (statusJson.refId && String(statusJson.refId) !== cleanOrderId) {
+      return res.status(409).json({ error: 'Neshoda identifikátoru objednávky na platební bráně.' });
+    }
+
+    const remoteTest = statusJson.test === true || statusJson.test === 'true' || statusJson.test === '1' || statusJson.test === 1;
+    if (!COMGATE_TEST_MODE && remoteTest) {
+      return res.status(403).json({ error: 'Testovací transakce není v produkčním režimu povolena.' });
+    }
+
+    const remoteStatus = String(statusJson.status || '').toUpperCase();
+    const shouldCancelLocally =
+      remoteStatus === 'CANCELLED' ||
+      (markCancelledIfPending && remoteStatus === 'PENDING');
+
+    if (remoteStatus === 'PAID' || shouldCancelLocally) {
+      if (markCancelledIfPending && remoteStatus === 'PENDING') {
+        await cancelComgateRemotePayment(order.comgateTransId);
+      }
+
+      const outcome = await applyComgatePaymentTransition({
+        orderId: cleanOrderId,
+        transId: statusJson.transId || order.comgateTransId,
+        status: remoteStatus === 'PAID' ? 'PAID' : 'CANCELLED',
+        price: statusJson.price,
+        curr: statusJson.curr,
+        isSandbox: remoteTest || Boolean(COMGATE_TEST_MODE)
+      });
+
+      if (outcome.errorStatus) {
+        return res.status(outcome.errorStatus).json({ error: outcome.errorMessage || 'Ověření platby selhalo.' });
+      }
+
+      if (remoteStatus === 'PAID') {
+        console.log(`[Comgate Verify] Objednávka ${cleanOrderId} ověřena přes API jako ZAPLACENÁ.`);
+        return res.json({ success: true, status: 'paid', verifiedViaComgate: true });
+      }
+
+      console.log(`[Comgate Verify] Objednávka ${cleanOrderId} označena jako ZRUŠENÁ.`);
+      return res.json({ success: false, status: 'cancelled' });
+    }
+
+    return res.json({
+      success: false,
+      status: remoteStatus ? remoteStatus.toLowerCase() : 'pending'
+    });
+  } catch (err) {
+    console.error('[Comgate Verify Payment Error]:', err);
+    return res.status(500).json({ error: 'Nepodařilo se ověřit stav platby.' });
+  }
+});
+
+// 2c. Zrušení čekající objednávky uživatelem nebo učitelem (vč. pokusu o zrušení na Comgate)
+app.post('/api/orders/:orderId/cancel', requireAuth, async (req, res) => {
+  try {
+    const cleanOrderId = String(req.params.orderId || '').trim();
+    if (!cleanOrderId) {
+      return res.status(400).json({ error: 'Chybí ID objednávky.' });
+    }
+
+    const order = await getOrderDoc(cleanOrderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nebyla nalezena.' });
+    }
+
+    if (order.userId !== req.user.uid && req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Nemáte oprávnění zrušit cizí objednávku.' });
+    }
+
+    if (order.status === 'paid') {
+      return res.status(409).json({ error: 'Uhrazenou objednávku nelze zrušit.' });
+    }
+    if (order.status === 'refunded') {
+      return res.status(409).json({ error: 'Refundovanou objednávku nelze zrušit.' });
+    }
+    if (order.status === 'cancelled') {
+      return res.json({ success: true, status: 'cancelled', alreadyCancelled: true });
+    }
+
+    if (hasComgateCredentials() && isRealComgateTransId(order.comgateTransId)) {
+      try {
+        const statusCheck = await fetchComgatePaymentStatus(order.comgateTransId);
+        const remoteStatus = String(statusCheck.statusJson?.status || '').toUpperCase();
+        if (statusCheck.ok && statusCheck.statusJson?.code === 0 && remoteStatus === 'PAID') {
+          await applyComgatePaymentTransition({
+            orderId: cleanOrderId,
+            transId: statusCheck.statusJson.transId || order.comgateTransId,
+            status: 'PAID',
+            price: statusCheck.statusJson.price,
+            curr: statusCheck.statusJson.curr,
+            isSandbox: Boolean(order.isSandbox || COMGATE_TEST_MODE)
+          });
+          return res.status(409).json({ error: 'Tato platba již byla na bráně zaplacena.' });
+        }
+        if (remoteStatus !== 'CANCELLED') {
+          await cancelComgateRemotePayment(order.comgateTransId);
+        }
+      } catch (err) {
+        console.warn('[Order Cancel Comgate Sync Warning]:', err?.message || err);
+      }
+    }
+
+    await applyComgatePaymentTransition({
+      orderId: cleanOrderId,
+      transId: order.comgateTransId || null,
+      status: 'CANCELLED',
+      isSandbox: Boolean(order.isSandbox)
+    });
+
+    return res.json({
+      success: true,
+      status: 'cancelled',
+      message: 'Objednávka byla zrušena.'
+    });
+  } catch (err) {
+    console.error('[Order Cancel Error]:', err);
+    return res.status(500).json({ error: 'Nepodařilo se zrušit objednávku.' });
   }
 });
 
@@ -2623,15 +2889,16 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
   const variableSymbol = String(Date.now()).slice(-9);
   const plan = PREMIUM_PLANS['premium-monthly'];
   const amount = plan.amount;
-  const isLiveComgate = Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE);
+  const hasCreds = hasComgateCredentials();
+  const isTest = Boolean(COMGATE_TEST_MODE);
+  const useComgateRecurringApi = hasCreds && isRealComgateTransId(userDoc.initRecurringTransId);
   let comgateTransId = null;
 
-  if (isLiveComgate) {
-    const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
-    const response = await fetch('https://payments.comgate.cz/v2.0/recurring', {
+  if (useComgateRecurringApi) {
+    const response = await fetch('https://payments.comgate.cz/v2.0/recurring.json', {
       method: 'POST',
       headers: {
-        Authorization: authHeader,
+        Authorization: getComgateAuthHeader(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -2641,7 +2908,7 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
         curr: 'CZK',
         label: 'ProEdu Premium (obnovení předplatného)',
         refId: newOrderId,
-        test: false
+        test: isTest
       })
     });
 
@@ -2663,11 +2930,16 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
       err.statusCode = 400;
       throw err;
     }
-  } else {
+  } else if (isSandboxSimulationAllowed()) {
     comgateTransId = `SANDBOX_REC_${Date.now()}`;
     console.log(`[Comgate Recurring Simulation] Testovací opakované stržení ${amount} Kč pro ${targetUserId}`);
+  } else {
+    const err = new Error('Opakované stržení nelze provést bez platné iniciační transakce Comgate.');
+    err.statusCode = 400;
+    throw err;
   }
 
+  const orderIsSandbox = isTest || !useComgateRecurringApi;
   const billing = userDoc.billingDetails || {};
   const recOrderData = {
     id: newOrderId,
@@ -2690,7 +2962,7 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
     planTitle: 'ProEducator Premium (opakované předplatné)',
     paymentMethod: 'comgate',
     status: 'pending',
-    isSandbox: !isLiveComgate,
+    isSandbox: orderIsSandbox,
     termsAccepted: true,
     newsletterConsent: false,
     variableSymbol,
@@ -2706,7 +2978,7 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
     order: recOrderData,
     comgateTransId,
     initRecurringTransId: userDoc.initRecurringTransId,
-    isSandbox: !isLiveComgate,
+    isSandbox: orderIsSandbox,
     isRecurringRenewal: true,
     extendFromExisting: true
   });
@@ -2908,6 +3180,9 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
     if (order.status === 'refunded') {
       return res.status(409).json({ error: 'Refundovanou objednávku nelze potvrdit.' });
     }
+    if (order.status === 'cancelled') {
+      return res.status(409).json({ error: 'Zrušenou objednávku nelze potvrdit.' });
+    }
 
     const { iuctoRes } = await finalizePaidOrderAndInvoice({
       orderId,
@@ -3027,18 +3302,17 @@ app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req,
 
     const safeReason = String(reason || `Storno a vrácení platby objednávky #${orderId}`).trim().slice(0, 500);
 
-    // 1. Pokud jde o živou Comgate transakci, provedeme nejdříve refundaci u brány Comgate
-    if (!order.isSandbox && order.comgateTransId && COMGATE_MERCHANT_ID && COMGATE_SECRET) {
-      const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+    // 1. Pokud jde o reálnou Comgate transakci (živou nebo Comgate test=true), provedeme nejdříve refundaci u brány Comgate
+    if (isRealComgateTransId(order.comgateTransId) && hasComgateCredentials()) {
       const refundRes = await fetch('https://payments.comgate.cz/v2.0/refund.json', {
         method: 'POST',
         headers: {
-          Authorization: authHeader,
+          Authorization: getComgateAuthHeader(),
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           merchant: COMGATE_MERCHANT_ID,
-          test: Boolean(COMGATE_TEST_MODE),
+          test: Boolean(order.isSandbox || COMGATE_TEST_MODE),
           transId: order.comgateTransId,
           price: Math.round(Number(order.amount) * 100),
           curr: String(order.currency || 'CZK').toUpperCase(),

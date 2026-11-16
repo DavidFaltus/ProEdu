@@ -47,22 +47,22 @@ export default function Footer() {
             <ul className="space-y-1 text-xs">
               <li>
                 <Link to="/terms" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
-                  <span>Obchodní podmínky & Reklamační řád</span>
+                  <span>Obchodní podmínky</span>
                 </Link>
               </li>
               <li>
-                <Link to="/terms#predplatne" className="hover:text-black hover:underline transition-colors flex items-center gap-1 font-semibold text-gray-700">
-                  <span>Pravidla opakovaných plateb (Předplatné)</span>
+                <Link to="/doprava-a-platba" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
+                  <span>Doprava a platba</span>
                 </Link>
               </li>
               <li>
                 <Link to="/privacy" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
-                  <span>Zásady ochrany osobních údajů (GDPR)</span>
+                  <span>Zásady osobních údajů</span>
                 </Link>
               </li>
               <li>
                 <Link to="/contact" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
-                  <span>Kontakt a zákaznická podpora</span>
+                  <span>Kontakt</span>
                 </Link>
               </li>
             </ul>
@@ -82,15 +82,15 @@ export default function Footer() {
               <span>Bezpečné online platby</span>
             </div>
 
-            <PaymentLogosBar />
+            <PaymentLogosBar includeWallets={false} />
 
             <p className="text-[11px] leading-relaxed text-gray-600">
-              Online platby pro vás zajišťuje platební brána <strong>Comgate</strong>. Poskytovatel služby, společnost Comgate a.s., je licencovaná platební instituce působící pod dohledem České národní banky. Platby probíhající skrze platební bránu jsou plně zabezpečeny a veškeré informace jsou šifrovány.
+              Online platby pro vás zajišťuje platební brána <strong>Comgate</strong>. Poskytovatel služby, společnost Comgate, a.s., je licencovaná platební instituce působící pod dohledem České národní banky. Platby probíhající skrze platební bránu jsou plně zabezpečeny a veškeré informace jsou šifrovány.
             </p>
 
             <div>
               <a 
-                href="https://www.comgate.cz/cz/platebni-brana" 
+                href="https://www.comgate.eu/cs/platebni-brana" 
                 target="_blank" 
                 rel="noopener noreferrer" 
                 className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 hover:text-emerald-950 underline"

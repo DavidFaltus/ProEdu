@@ -273,10 +273,10 @@ export default function UnifiedPaywallModal({
           console.warn('[Billing Profile Sync]:', profileErr);
         });
 
-      // Pokud Comgate vrátila bezpečnou přímou URL v živém režimu, okamžitě přesměrovat
+      // Pokud Comgate vrátila bezpečnou přímou URL (produkční i test=true brána), okamžitě přesměrovat
       const safeRedirectUrl = sanitizeSafeUrl(result.comgate?.redirectUrl);
-      if (paymentMethod === 'comgate' && safeRedirectUrl && result.comgate?.isLive) {
-        toast.loading('Přesměrovávám na zabezpečenou platební bránu Comgate...');
+      if (paymentMethod === 'comgate' && safeRedirectUrl) {
+        toast.loading('Přesměrovávám na platební bránu Comgate...');
         window.location.href = safeRedirectUrl;
         return;
       }
@@ -780,7 +780,11 @@ export default function UnifiedPaywallModal({
                     <span className="text-xs text-gray-700 font-bold uppercase tracking-wider">Platební brána Comgate</span>
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-blue-100 text-blue-900">
-                    {orderResult.comgate?.isLive ? 'Zabezpečená platba' : 'Testovací režim'}
+                    {orderResult.comgate?.isLive
+                      ? 'Zabezpečená platba'
+                      : sanitizeSafeUrl(orderResult.comgate?.redirectUrl)
+                        ? 'Testovací brána Comgate'
+                        : 'Testovací režim'}
                   </span>
                 </div>
 
@@ -803,8 +807,8 @@ export default function UnifiedPaywallModal({
                   </div>
                 </div>
 
-                {/* Předvyplněná testovací karta v dummy bráně (pouze v lokálním vývojovém režimu) */}
-                {import.meta.env.DEV && !orderResult.comgate?.isLive && (
+                {/* Předvyplněná testovací karta v dummy bráně (pouze pokud server nevrátil reálnou Comgate redirectUrl) */}
+                {import.meta.env.DEV && !sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && (
                   <div className="bg-white p-4 rounded-2xl border-2 border-blue-200 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Testovací platební karta</span>
@@ -833,8 +837,10 @@ export default function UnifiedPaywallModal({
                 </div>
 
                 <div className="text-xs text-gray-600 leading-relaxed">
-                  {sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && orderResult.comgate?.isLive
-                    ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                  {sanitizeSafeUrl(orderResult.comgate?.redirectUrl)
+                    ? orderResult.comgate?.isLive
+                      ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                      : 'Testovací režim Comgate: Kliknutím na tlačítko níže přejdete na testovací platební bránu Comgate k autorizaci platby.'
                     : import.meta.env.DEV
                       ? 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na platební bráně a přepnutí účtu na ProEducator Premium.'
                       : 'Online platební brána se připravuje nebo vyžaduje dokončení konfigurace na serveru.'}
@@ -845,12 +851,10 @@ export default function UnifiedPaywallModal({
               <div className="flex flex-col sm:flex-row gap-3">
                 {(() => {
                   const safeComgateUrl = sanitizeSafeUrl(orderResult.comgate?.redirectUrl);
-                  if (safeComgateUrl && orderResult.comgate?.isLive) {
+                  if (safeComgateUrl) {
                     return (
                       <a
                         href={safeComgateUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
                       >
                         <CreditCard size={18} />

@@ -39,6 +39,7 @@ const StudyView = React.lazy(() => import('./pages/StudyView'));
 const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
 const Terms = React.lazy(() => import('./pages/Terms'));
 const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
+const ShippingAndPayment = React.lazy(() => import('./pages/ShippingAndPayment'));
 
 import Footer from './components/common/Footer';
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
@@ -292,6 +293,7 @@ function AppContent() {
               {/* Hlavní stránka = Nástěnka studenta */}
               <Route path="/" element={<StudentDashboard />} />
               <Route path="/student" element={<Navigate to="/" replace />} />
+              <Route path="/student/dashboard" element={<StudentDashboard />} />
               <Route path="/dashboard" element={<DashboardRedirect />} />
 
               {/* Procvičování & Materiály & Výuka */}
@@ -348,6 +350,7 @@ function AppContent() {
               {/* Právní dokumenty */}
               <Route path="/terms" element={<Terms />} />
               <Route path="/podminky" element={<Terms />} />
+              <Route path="/doprava-a-platba" element={<ShippingAndPayment />} />
               <Route path="/gdpr" element={<PrivacyPolicy />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
 

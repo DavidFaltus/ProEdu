@@ -130,7 +130,7 @@ export default function Terms() {
             <strong>5.2. Způsoby platby:</strong> Zákazník může platbu provést:
           </p>
           <ul className="list-disc list-inside space-y-1 pl-2 text-gray-600">
-            <li><strong>Online platební kartou, Apple Pay nebo Google Pay</strong> prostřednictvím zabezpečené platební brány Comgate poskytované společností Comgate a.s. (licencovaná platební instituce pod dohledem ČNB, <a href="https://www.comgate.cz/cz/platebni-brana" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">www.comgate.eu</a>).</li>
+            <li><strong>Online platební kartou, Apple Pay nebo Google Pay</strong> prostřednictvím zabezpečené platební brány Comgate poskytované společností Comgate, a.s. (licencovaná platební instituce pod dohledem ČNB, <a href="https://www.comgate.eu/cs/platebni-brana" target="_blank" rel="noopener noreferrer" className="text-amber-700 underline font-semibold">www.comgate.eu</a>).</li>
           </ul>
           <p>
             <strong>5.3. Okamžik zaplacení:</strong> Závazek zákazníka uhradit cenu je splněn okamžikem připsání částky na účet poskytovatele nebo potvrzením úspěšné autorizace platební bránou.

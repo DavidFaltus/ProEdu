@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { cs } from 'date-fns/locale';
 import { cn, safeToDate } from '../lib/utils';
@@ -43,6 +43,7 @@ import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../serv
 import { fetchPracticeCatalog } from '../services/practiceService';
 import { trackSectionClick } from '../services/analyticsService';
 import { toCzechVocative } from '../utils/czechVocative';
+import { verifyComgatePayment } from '../services/orderService';
 
 const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -98,12 +99,13 @@ const TEACHER_HEADLINE_TEMPLATES = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile, isPremium, isCourseUser, isTeacher, enrolledCourseIds, jokers, openAuthModal } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile, isPremium, isCourseUser, isTeacher, enrolledCourseIds, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isPaymentSuccessModalOpen, setIsPaymentSuccessModalOpen] = useState(false);
   const [isDailyLimitModalOpen, setIsDailyLimitModalOpen] = useState(false);
+  const handledPaymentReturnRef = useRef<string | null>(null);
 
   // Kontrola vyčerpání limitu žolíků i videí pro dnešní den
   const isGuest = !user;
@@ -120,24 +122,75 @@ export default function StudentDashboard() {
     }
   }, [location.state, navigate, location.pathname]);
 
-  // Zpracování návratu z platební brány Comgate
+  // Zpracování návratu z platební brány Comgate (včetně serverového ověření stavu platby)
   useEffect(() => {
     const paymentStatus = searchParams.get('payment');
-    if (paymentStatus === 'success') {
-      setIsPaymentSuccessModalOpen(true);
-      toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('payment');
-      nextParams.delete('orderId');
-      setSearchParams(nextParams, { replace: true });
-    } else if (paymentStatus === 'cancelled') {
-      toast.info('Platba na bráně byla zrušena. Můžete ji zopakovat kdykoliv.');
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('payment');
-      nextParams.delete('orderId');
-      setSearchParams(nextParams, { replace: true });
+    const orderId = searchParams.get('orderId') || '';
+    if (!paymentStatus) return;
+    if (authLoading) return;
+
+    const returnKey = `${paymentStatus}:${orderId}`;
+    if (handledPaymentReturnRef.current === returnKey) return;
+    handledPaymentReturnRef.current = returnKey;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('payment');
+    nextParams.delete('orderId');
+    setSearchParams(nextParams, { replace: true });
+
+    if (paymentStatus === 'cancelled') {
+      if (orderId && user) {
+        verifyComgatePayment(orderId, { markCancelledIfPending: true })
+          .then(async (res) => {
+            if (res.status === 'paid') {
+              await user.getIdToken(true).catch(() => {});
+              await refreshProfile();
+              setIsPaymentSuccessModalOpen(true);
+              toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+            } else {
+              toast.error('Objednávka byla zrušena.');
+            }
+          })
+          .catch(() => {
+            toast.error('Objednávka byla zrušena.');
+          });
+      } else {
+        toast.error('Objednávka byla zrušena.');
+      }
+      return;
     }
-  }, [searchParams, setSearchParams]);
+
+    if (paymentStatus === 'success' || paymentStatus === 'pending') {
+      if (orderId && user) {
+        verifyComgatePayment(orderId)
+          .then(async (res) => {
+            if (res.status === 'paid') {
+              await user.getIdToken(true).catch(() => {});
+              await refreshProfile();
+              setIsPaymentSuccessModalOpen(true);
+              toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+            } else if (res.status === 'cancelled') {
+              toast.error('Objednávka byla zrušena.');
+            } else {
+              toast.info('Platba se zpracovává. Jakmile brána potvrdí úhradu, předplatné se automaticky aktivuje.');
+            }
+          })
+          .catch((err) => {
+            console.warn('[Comgate Return Verify]:', err);
+            if (paymentStatus === 'success') {
+              refreshProfile().catch(() => {});
+              toast.info('Čekáme na potvrzení platby z brány Comgate. Zkuste stránku za chvíli obnovit.');
+            }
+          });
+      } else if (paymentStatus === 'success') {
+        refreshProfile().catch(() => {});
+        setIsPaymentSuccessModalOpen(true);
+        toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+      } else {
+        toast.info('Platba se zpracovává. Jakmile brána potvrdí úhradu, předplatné se automaticky aktivuje.');
+      }
+    }
+  }, [searchParams, setSearchParams, authLoading, user, refreshProfile]);
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
