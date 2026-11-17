@@ -432,8 +432,12 @@ export default function Settings() {
                     const emailToReset = profile?.email || user?.email;
                     if (!emailToReset) return;
                     try {
-                      await resetPassword(emailToReset);
-                      toast.success(`Odkaz pro obnovení hesla byl odeslán na ${emailToReset}!`);
+                      const res = await resetPassword(emailToReset);
+                      if (res?.simulated) {
+                        toast.info('Režim lokálního náhledu: Odkaz pro obnovení hesla byl vypsán do konzole serveru.');
+                      } else {
+                        toast.success(`Odkaz pro obnovení hesla byl odeslán na ${emailToReset}!`);
+                      }
                     } catch (e: any) {
                       toast.error(e.message || 'Nepodařilo se odeslat odkaz pro obnovení.');
                     }

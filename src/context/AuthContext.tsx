@@ -70,7 +70,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
-  resetPassword: (email: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   initRegistration: (email: string, pass: string, name: string, confirmPassword?: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   resendRegistrationOtp: (email: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   confirmRegistration: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
@@ -108,7 +108,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
-  resetPassword: async () => {},
+  resetPassword: async () => ({ success: false }),
   initRegistration: async () => ({ success: false }),
   resendRegistrationOtp: async () => ({ success: false }),
   confirmRegistration: async () => ({ success: false }),
@@ -654,17 +654,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await initRegistration(email, pass, name);
   };
 
-  const resetPassword = async (email: string) => {
+  const resetPassword = async (email: string): Promise<{ success: boolean; simulated?: boolean; message?: string }> => {
     const trimmed = (email || '').trim();
     if (!trimmed) {
       throw new Error('Zadej prosím platnou e-mailovou adresu.');
     }
-    const actionCodeSettings = typeof window !== 'undefined' && window.location?.origin ? {
-      url: `${window.location.origin}/login`,
-      handleCodeInApp: false,
-    } : undefined;
 
-    await sendPasswordResetEmail(auth, trimmed, actionCodeSettings);
+    try {
+      const res = await fetch('/api/auth/password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: trimmed })
+      });
+      return await parseSafeJsonResponse(res, 'Nepodařilo se odeslat odkaz pro obnovení hesla.');
+    } catch (apiErr: any) {
+      // Pokud backend endpoint selže nebo je nedostupný, zkusíme klientský fallback
+      if (apiErr.message && !apiErr.message.includes('nedostupná')) {
+        throw apiErr;
+      }
+      try {
+        const actionCodeSettings = typeof window !== 'undefined' && window.location?.origin ? {
+          url: `${window.location.origin}/login`,
+          handleCodeInApp: false,
+        } : undefined;
+        await sendPasswordResetEmail(auth, trimmed, actionCodeSettings);
+        return { success: true, message: 'Odkaz pro obnovení hesla byl odeslán na váš e-mail.' };
+      } catch {
+        throw apiErr;
+      }
+    }
   };
 
   const signOut = async () => {

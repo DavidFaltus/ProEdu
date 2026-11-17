@@ -132,9 +132,13 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await resetPassword(trimmedEmail);
+      const res = await resetPassword(trimmedEmail);
       setResetSent(true);
-      toast.success(`Odkaz pro obnovení hesla byl odeslán na ${trimmedEmail}!`);
+      if (res?.simulated) {
+        toast.info('Režim lokálního náhledu: Odkaz pro obnovení hesla byl vypsán do konzole serveru.');
+      } else {
+        toast.success(`Odkaz pro obnovení hesla byl odeslán na ${trimmedEmail}!`);
+      }
     } catch (err: any) {
       console.error('Password reset error:', err);
       let message = 'Nepodařilo se odeslat odkaz pro obnovení hesla.';

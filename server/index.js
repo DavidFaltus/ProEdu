@@ -18,7 +18,8 @@ import {
   sendPaymentConfirmedEmail,
   sendRecurringChargeSuccessEmail,
   sendRecurringChargeFailedEmail,
-  sendBugReportEmail
+  sendBugReportEmail,
+  sendPasswordResetEmailTemplate
 } from './services/emailService.js';
 import { iuctoService, formatPragueDate } from './services/iuctoService.js';
 import { evaluateStudentAnswer } from './utils/mathEvaluator.js';
@@ -779,6 +780,13 @@ const registerConfirmLimiter = createRateLimiter({
   message: 'Příliš mnoho pokusů o ověření kódu.'
 });
 
+const passwordResetLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => `pwd-reset:${getClientIp(req)}`,
+  message: 'Příliš mnoho žádostí o obnovení hesla. Zkuste to prosím za několik minut.'
+});
+
 function hashEmailKey(email) {
   return crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex');
 }
@@ -1123,6 +1131,71 @@ app.post('/api/auth/register-confirm', registerConfirmLimiter, async (req, res) 
   } catch (err) {
     console.error('Chyba při ověření registrace kódem:', err);
     return res.status(500).json({ error: 'Nepodařilo se dokončit registraci.' });
+  }
+});
+
+app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const safeEmail = String(email || '').toLowerCase().trim();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!safeEmail || !emailRegex.test(safeEmail) || safeEmail.length > 256) {
+      return res.status(400).json({ error: 'Zadejte prosím platnou e-mailovou adresu.' });
+    }
+
+    // 1. Ověření existence uživatele ve Firebase Auth
+    let userRecord = null;
+    try {
+      userRecord = await auth.getUserByEmail(safeEmail);
+    } catch (err) {
+      if (err.code === 'auth/user-not-found' || err.message?.includes('no user record')) {
+        return res.status(404).json({ error: 'Účet s tímto e-mailem nebyl nalezen. Zkontrolujte prosím zadanou adresu.' });
+      }
+      console.warn('[password-reset getUserByEmail notice]:', err?.code || err?.message || err);
+      return res.status(500).json({ error: 'Nastala chyba při ověřování účtu. Zkuste to prosím za chvíli.' });
+    }
+
+    // 2. Sestavení návratové URL aplikace (lokální port vs produkce)
+    const clientOrigin = req.headers.origin || (req.headers.host ? `${req.protocol || 'http'}://${req.headers.host}` : null) || process.env.APP_URL || 'http://localhost:3005';
+    const actionCodeSettings = {
+      url: `${clientOrigin}/login`,
+      handleCodeInApp: false
+    };
+
+    // 3. Vygenerování bezpečného autorizovaného reset linku přes Firebase Admin SDK
+    let resetLink;
+    try {
+      resetLink = await auth.generatePasswordResetLink(safeEmail, actionCodeSettings);
+    } catch (genErr) {
+      console.error('[password-reset generatePasswordResetLink error]:', genErr);
+      return res.status(500).json({ error: 'Nepodařilo se vygenerovat odkaz pro obnovení hesla.' });
+    }
+
+    // 4. Odeslání e-mailu (reálné SMTP nebo dev simulátor)
+    const emailRes = await sendPasswordResetEmailTemplate({
+      to: safeEmail,
+      name: userRecord.displayName || userRecord.email || '',
+      resetLink
+    });
+
+    console.log(`\n🔑 [OBNOVENÍ HESLA] Požadavek pro: ${safeEmail}`);
+    console.log(`🔗 Odkaz pro nastavení hesla:\n${resetLink}\n`);
+
+    if (!emailRes.success) {
+      return res.status(502).json({ error: 'Nepodařilo se odeslat e-mail s odkazem. Zkuste to prosím znovu.' });
+    }
+
+    return res.json({
+      success: true,
+      email: safeEmail,
+      simulated: Boolean(emailRes.simulated),
+      message: emailRes.simulated
+        ? 'Režim náhledu: Odkaz pro obnovení hesla byl vypsán do konzole serveru.'
+        : 'Odkaz pro obnovení hesla byl odeslán na váš e-mail.'
+    });
+  } catch (err) {
+    console.error('Chyba při zpracování požadavku na obnovení hesla:', err);
+    return res.status(500).json({ error: 'Nastala neočekávaná chyba při obnovení hesla.' });
   }
 });
 

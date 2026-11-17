@@ -90,3 +90,26 @@ test('Login.tsx includes Google Password Manager autocomplete attributes and pas
   assert.ok(content.includes('handlePasswordReset'), 'Login.tsx must have handlePasswordReset handler');
   assert.ok(content.includes('resetPassword('), 'Login.tsx must call resetPassword');
 });
+
+test('server emailService exports sendPasswordResetEmailTemplate and formats reset link properly', async () => {
+  const { sendPasswordResetEmailTemplate } = await import('../server/services/emailService.js');
+  assert.equal(typeof sendPasswordResetEmailTemplate, 'function');
+
+  const res = await sendPasswordResetEmailTemplate({
+    to: 'test-user@proedu.cz',
+    name: 'Jan Novák',
+    resetLink: 'https://proedu.cz/reset?code=123456'
+  });
+
+  assert.ok(res.success, 'sendPasswordResetEmailTemplate should succeed in dev / simulation mode');
+});
+
+test('server/index.js defines POST /api/auth/password-reset endpoint and rate limiter', () => {
+  const serverPath = path.resolve(process.cwd(), 'server/index.js');
+  const serverCode = fs.readFileSync(serverPath, 'utf8');
+
+  assert.ok(serverCode.includes("'/api/auth/password-reset'"), 'server/index.js must have /api/auth/password-reset endpoint');
+  assert.ok(serverCode.includes('passwordResetLimiter'), 'server/index.js must protect password reset with rate limiter');
+  assert.ok(serverCode.includes('generatePasswordResetLink'), 'server/index.js must generate reset link using Firebase Admin');
+  assert.ok(serverCode.includes('sendPasswordResetEmailTemplate'), 'server/index.js must send reset email via template');
+});

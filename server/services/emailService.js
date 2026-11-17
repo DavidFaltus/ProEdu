@@ -86,6 +86,9 @@ export async function sendEmail({ to, subject, html, text, replyTo, attachments 
     if (logDetails.orderId) {
       console.log(`│ 👉 OBJ.:  ${logDetails.orderId} | Částka: ${logDetails.amount} Kč | VS: ${logDetails.vs || '-'}`);
     }
+    if (logDetails.resetLink) {
+      console.log(`│ 🔑 ODKAZ NA RESET: ${logDetails.resetLink}`);
+    }
     console.log('│ ℹ️ Pozn.:  SMTP přihlašovací údaje nejsou nastaveny v .env (používá se dev náhled).');
     console.log('└────────────────────────────────────────────────────────────────────────┘\n');
 
@@ -528,4 +531,38 @@ export async function sendBugReportEmail({
     html,
     logDetails: { reportId, category }
   });
+}
+
+/**
+ * 7. Šablona: Obnovení zapomenutého hesla
+ */
+export async function sendPasswordResetEmailTemplate({ to, name, resetLink }) {
+  const safeName = escapeHtml(name || 'uživateli');
+  const safeLink = sanitizeHttpUrl(resetLink) || resetLink;
+  const subject = 'Obnovení hesla k vašemu účtu ProEdu';
+  const headline = 'Obnovení zapomenutého hesla';
+  const subheadline = 'Nastavení nového přístupového hesla';
+  const previewText = 'Požadavek na obnovení hesla k vašemu účtu ProEdu. Platnost odkazu je 1 hodina.';
+
+  const bodyHtml = `
+    <p style="margin-top:0;">Ahoj <strong>${safeName}</strong>,</p>
+    <p>obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci <strong>ProEdu</strong>.</p>
+    <p>Kliknutím na tlačítko níže si můžete jednoduše nastavit nové heslo:</p>
+    
+    <div style="text-align: center; margin: 28px 0;">
+      <a href="${safeLink}" class="btn" target="_blank" rel="noopener noreferrer" style="color:#ffffff !important;">Nastavit nové heslo</a>
+    </div>
+
+    <p style="font-size:13px; color:#64748B; word-break:break-all;">
+      Pokud tlačítko nefunguje, zkopírujte a otevřete následující odkaz ve svém prohlížeči:<br/>
+      <a href="${safeLink}" style="color:#2B44B8;">${escapeHtml(safeLink)}</a>
+    </p>
+
+    <div style="background-color:#F1F5F9; border-radius:12px; padding:14px; margin-top:24px; font-size:13px; color:#475569;">
+      ⏱️ <strong>Bezpečnostní upozornění:</strong> Tento odkaz je platný <strong>1 hodinu</strong>. Pokud jste o obnovení hesla nežádali, váš účet je v bezpečí a tento e-mail můžete ignorovat.
+    </div>
+  `;
+
+  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  return sendEmail({ to, subject, html, logDetails: { resetLink } });
 }
