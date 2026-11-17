@@ -104,7 +104,7 @@ test('server emailService exports sendPasswordResetEmailTemplate and formats res
   assert.ok(res.success, 'sendPasswordResetEmailTemplate should succeed in dev / simulation mode');
 });
 
-test('server/index.js defines POST /api/auth/password-reset endpoint and rate limiter', () => {
+test('server/index.js defines POST /api/auth/password-reset endpoint, rate limiter and canonical public URL', () => {
   const serverPath = path.resolve(process.cwd(), 'server/index.js');
   const serverCode = fs.readFileSync(serverPath, 'utf8');
 
@@ -112,10 +112,14 @@ test('server/index.js defines POST /api/auth/password-reset endpoint and rate li
   assert.ok(serverCode.includes('passwordResetLimiter'), 'server/index.js must protect password reset with rate limiter');
   assert.ok(serverCode.includes('generatePasswordResetLink'), 'server/index.js must generate reset link using Firebase Admin');
   assert.ok(serverCode.includes('sendPasswordResetEmailTemplate'), 'server/index.js must send reset email via template');
-  assert.ok(serverCode.includes('/reset-password?oobCode='), 'server/index.js must build custom /reset-password URL');
+  assert.ok(serverCode.includes('CANONICAL_PUBLIC_APP_URL'), 'server/index.js must define CANONICAL_PUBLIC_APP_URL for production domains');
+  assert.ok(serverCode.includes('https://proeducator.eu'), 'server/index.js must default canonical URL to https://proeducator.eu');
+  assert.ok(serverCode.includes('publicResetLink = `${CANONICAL_PUBLIC_APP_URL}/reset-password?oobCode='), 'server/index.js must build publicResetLink with canonical URL');
+  assert.ok(serverCode.includes('resetLink: publicResetLink'), 'server/index.js must pass publicResetLink into email template');
+  assert.ok(serverCode.includes('localResetLink'), 'server/index.js must retain localResetLink for dev server debugging');
 });
 
-test('App.tsx and ResetPassword.tsx configure custom ProEdu password reset page', () => {
+test('App.tsx and ResetPassword.tsx configure custom ProEdu password reset page with eye toggles and confirmation match', () => {
   const appPath = path.resolve(process.cwd(), 'src/App.tsx');
   const appCode = fs.readFileSync(appPath, 'utf8');
   assert.ok(appCode.includes('path="/reset-password"'), 'App.tsx must register /reset-password route');
@@ -126,4 +130,20 @@ test('App.tsx and ResetPassword.tsx configure custom ProEdu password reset page'
   assert.ok(resetPageCode.includes('confirmPasswordReset'), 'ResetPassword.tsx must confirm password reset');
   assert.ok(resetPageCode.includes('saveCredentialToBrowser'), 'ResetPassword.tsx must offer Google password save');
   assert.ok(resetPageCode.includes('autoComplete="new-password"'), 'ResetPassword.tsx must use new-password autocomplete');
+
+  // Eye toggle checks
+  assert.ok(resetPageCode.includes('setShowPassword'), 'ResetPassword.tsx must support toggling password visibility');
+  assert.ok(resetPageCode.includes('setShowConfirmPassword'), 'ResetPassword.tsx must support toggling confirmation visibility');
+  assert.ok(resetPageCode.includes('title={showPassword ? \'Skrýt heslo\' : \'Zobrazit heslo\'}'), 'ResetPassword.tsx must provide clear eye toggle titles');
+
+  // Confirmation field and match indicator
+  assert.ok(resetPageCode.includes('Potvrzení hesla'), 'ResetPassword.tsx must have "Potvrzení hesla" label identical to registration');
+  assert.ok(resetPageCode.includes('name="confirm-password"'), 'ResetPassword.tsx must have confirm-password input');
+  assert.ok(resetPageCode.includes('Hesla se neshodují'), 'ResetPassword.tsx must show mismatch warning');
+  assert.ok(resetPageCode.includes('Hesla se shodují'), 'ResetPassword.tsx must show match indicator');
+
+  // CSS suppression for Windows Edge/WebKit native reveal button
+  const cssPath = path.resolve(process.cwd(), 'src/index.css');
+  const cssCode = fs.readFileSync(cssPath, 'utf8');
+  assert.ok(cssCode.includes('::-ms-reveal'), 'src/index.css must hide ::-ms-reveal to prevent duplicate eye buttons');
 });

@@ -21,10 +21,13 @@ export default function ResetPassword() {
 
   const oobCode = searchParams.get('oobCode') || searchParams.get('code') || '';
   const emailParam = searchParams.get('email') || '';
+  const isDemo = searchParams.get('demo') === 'true' || searchParams.get('test') === 'true';
 
-  const [verifying, setVerifying] = useState(Boolean(oobCode));
-  const [verifiedEmail, setVerifiedEmail] = useState(emailParam);
-  const [error, setError] = useState<string | null>(oobCode ? null : 'V odkazu chybí platný bezpečnostní kód pro obnovení hesla.');
+  const [verifying, setVerifying] = useState(Boolean(oobCode && !isDemo));
+  const [verifiedEmail, setVerifiedEmail] = useState(emailParam || (isDemo ? 'student@proeducator.eu' : ''));
+  const [error, setError] = useState<string | null>(
+    oobCode || isDemo ? null : 'V odkazu chybí platný bezpečnostní kód pro obnovení hesla.'
+  );
   const [isSuccess, setIsSuccess] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -39,7 +42,7 @@ export default function ResetPassword() {
   const [newLinkSent, setNewLinkSent] = useState(false);
 
   useEffect(() => {
-    if (!oobCode) return;
+    if (!oobCode || isDemo) return;
 
     let active = true;
     verifyPasswordResetCode(auth, oobCode)
@@ -65,7 +68,7 @@ export default function ResetPassword() {
     return () => {
       active = false;
     };
-  }, [oobCode]);
+  }, [oobCode, isDemo]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -80,6 +83,12 @@ export default function ResetPassword() {
 
     setSubmitting(true);
     try {
+      if (isDemo) {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+        setIsSuccess(true);
+        toast.success('Heslo bylo úspěšně změněno! (Režim náhledu)');
+        return;
+      }
       await confirmPasswordReset(auth, oobCode, password);
       if (verifiedEmail) {
         await saveCredentialToBrowser({ id: verifiedEmail, password });
@@ -256,25 +265,29 @@ export default function ResetPassword() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="Alespoň 6 znaků"
-                      className="pl-12 pr-12 h-12 rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all"
+                      className="pl-12 pr-12 h-12 rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all font-semibold"
                       required
                       autoFocus
                     />
                     <button
                       type="button"
-                      onClick={() => setShowPassword(!showPassword)}
+                      onClick={() => setShowPassword((prev) => !prev)}
                       tabIndex={-1}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 focus:outline-none cursor-pointer"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100/70 transition-colors z-20 cursor-pointer"
                       title={showPassword ? 'Skrýt heslo' : 'Zobrazit heslo'}
+                      aria-label={showPassword ? 'Skrýt heslo' : 'Zobrazit heslo'}
                     >
                       {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
+                  {password && password.length > 0 && password.length < 6 && (
+                    <p className="text-xs text-amber-600 font-medium ml-2">Heslo musí mít alespoň 6 znaků</p>
+                  )}
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="reset-confirm-password-input" className="text-blue-900 font-semibold ml-1">
-                    Potvrzení nového hesla
+                    Potvrzení hesla
                   </Label>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
@@ -286,30 +299,38 @@ export default function ResetPassword() {
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
                       placeholder="Zadejte heslo znovu"
-                      className={`pl-12 pr-12 h-12 rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all ${
+                      className={`pl-12 pr-12 h-12 rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all font-semibold ${
                         confirmPassword && password !== confirmPassword ? 'border-red-300 focus:border-red-500' : ''
                       }`}
                       required
                     />
                     <button
                       type="button"
-                      onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
                       tabIndex={-1}
-                      className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 focus:outline-none cursor-pointer"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center rounded-xl text-gray-400 hover:text-gray-700 hover:bg-gray-100/70 transition-colors z-20 cursor-pointer"
                       title={showConfirmPassword ? 'Skrýt heslo' : 'Zobrazit heslo'}
+                      aria-label={showConfirmPassword ? 'Skrýt heslo' : 'Zobrazit heslo'}
                     >
                       {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                     </button>
                   </div>
                   {confirmPassword && password !== confirmPassword && (
-                    <p className="text-xs text-red-500 font-semibold ml-2">Hesla se neshodují</p>
+                    <p className="text-xs text-red-500 font-semibold ml-2 flex items-center gap-1">
+                      <span>✕</span> Hesla se neshodují
+                    </p>
+                  )}
+                  {confirmPassword && password === confirmPassword && password.length >= 6 && (
+                    <p className="text-xs text-emerald-600 font-semibold ml-2 flex items-center gap-1">
+                      <span>✓</span> Hesla se shodují
+                    </p>
                   )}
                 </div>
 
                 <Button
                   type="submit"
-                  disabled={submitting}
-                  className="w-full h-14 bg-[#F5C400] text-[#1E1B18] border-b-4 border-[#C29B00] hover:bg-[#EAB308] rounded-2xl text-lg font-bold shadow-md transition-all active:translate-y-[2px] active:border-b-0 cursor-pointer"
+                  disabled={submitting || !password || !confirmPassword || password !== confirmPassword || password.length < 6}
+                  className="w-full h-14 bg-[#F5C400] text-[#1E1B18] border-b-4 border-[#C29B00] hover:bg-[#EAB308] rounded-2xl text-lg font-bold shadow-md transition-all active:translate-y-[2px] active:border-b-0 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {submitting ? 'Ukládám heslo...' : 'Uložit nové heslo'}
                 </Button>

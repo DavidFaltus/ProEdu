@@ -1155,10 +1155,19 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
       return res.status(500).json({ error: 'Nastala chyba při ověřování účtu. Zkuste to prosím za chvíli.' });
     }
 
-    // 2. Sestavení návratové URL aplikace (lokální port vs produkce)
-    const clientOrigin = req.headers.origin || (req.headers.host ? `${req.protocol || 'http'}://${req.headers.host}` : null) || process.env.APP_URL || 'http://localhost:3005';
+    // 2. Sestavení kanonické URL aplikace (reálná veřejná produkční doména pro e-maily uživatelů)
+    const CANONICAL_PUBLIC_APP_URL = (
+      process.env.PUBLIC_APP_URL ||
+      (process.env.APP_URL && !process.env.APP_URL.includes('localhost') && !process.env.APP_URL.includes('127.0.0.1')
+        ? process.env.APP_URL
+        : 'https://proeducator.eu')
+    ).replace(/\/+$/, '');
+
+    const clientOrigin = req.headers.origin || (req.headers.host ? `${req.protocol || 'http'}://${req.headers.host}` : null) || 'http://localhost:3005';
+
+    // Pro Firebase actionCodeSettings použijeme autorizovanou doménu projektu
     const actionCodeSettings = {
-      url: `${clientOrigin}/login`,
+      url: `${CANONICAL_PUBLIC_APP_URL}/login`,
       handleCodeInApp: false
     };
 
@@ -1172,26 +1181,32 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
     }
 
     // 4. Transformace na vlastní ProEdu stránku /reset-password?oobCode=...
-    let finalResetLink = rawResetLink;
+    let publicResetLink = rawResetLink;
+    let localResetLink = rawResetLink;
     try {
       const parsedUrl = new URL(rawResetLink);
       const oobCode = parsedUrl.searchParams.get('oobCode');
       if (oobCode) {
-        finalResetLink = `${clientOrigin}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
+        publicResetLink = `${CANONICAL_PUBLIC_APP_URL}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
+        localResetLink = `${clientOrigin}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
       }
     } catch (urlErr) {
       console.warn('[password-reset link parse notice]:', urlErr);
     }
 
-    // 5. Odeslání e-mailu (reálné SMTP nebo dev simulátor)
+    // 5. Odeslání e-mailu (do e-mailu jde výhradně reálná veřejná URL aplikace)
     const emailRes = await sendPasswordResetEmailTemplate({
       to: safeEmail,
       name: userRecord.displayName || userRecord.email || '',
-      resetLink: finalResetLink
+      resetLink: publicResetLink
     });
 
     console.log(`\n🔑 [OBNOVENÍ HESLA] Požadavek pro: ${safeEmail}`);
-    console.log(`🔗 Vlastní ProEdu odkaz pro nastavení hesla:\n${finalResetLink}\n`);
+    console.log(`🌐 Odkaz v e-mailu (Produkce):\n${publicResetLink}`);
+    if (localResetLink !== publicResetLink) {
+      console.log(`💻 Lokální odkaz (pro testování na vývojovém serveru):\n${localResetLink}`);
+    }
+    console.log('');
 
     if (!emailRes.success) {
       return res.status(502).json({ error: 'Nepodařilo se odeslat e-mail s odkazem. Zkuste to prosím znovu.' });

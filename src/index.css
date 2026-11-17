@@ -449,3 +449,11 @@
   opacity: 0;
   transform: scale(0.97);
 }
+
+/* Skrytí nativního tlačítka pro odhalení hesla v Edge/IE/WebKit, aby nekolidovalo s naší vlastní ikonou oka */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+  width: 0;
+  height: 0;
+}
