@@ -63,6 +63,7 @@ export default function Statistics() {
   const hasStatsAccess = isPremium || isCourseUser || isTeacher;
 
   const [loading, setLoading] = useState(true);
+  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
   const [rawData, setRawData] = useState<Awaited<ReturnType<typeof fetchStudentRawStatisticsData>> | null>(null);
 
   // 3.1 Filtry: Výchozí hodnoty Vše a 7 dní. Ukládají se do localStorage per uživatel.
@@ -254,41 +255,51 @@ export default function Statistics() {
   if (!hasStatsAccess) {
     return (
       <div className="page-container max-w-3xl mx-auto py-12 px-4">
-        <Card className="p-8 sm:p-10 rounded-[2.5rem] border border-amber-200/80 bg-white text-center space-y-5 shadow-sm">
-          <div className="w-16 h-16 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200/70">
-            <Lock size={30} />
+        <Card className="p-8 sm:p-12 rounded-[2.5rem] border border-gray-200/80 bg-white text-center space-y-5 shadow-sm max-w-2xl mx-auto">
+          <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-xs">
+            <Lock size={28} />
           </div>
-          <div className="space-y-2 max-w-lg mx-auto">
-            <h1 className="text-2xl sm:text-3xl font-playful font-black text-[#0F2942]">
+          <div className="space-y-2 max-w-md mx-auto">
+            <h1 className="text-2xl sm:text-3xl font-display font-black text-[#1E1B18]">
               Statistiky a analýza pokroku vyžadují Premium
             </h1>
-            <p className="text-sm text-gray-600 font-medium leading-relaxed">
-              Detailní přehled úspěšnosti, mapa témat CERMAT a chytrá doporučení na míru jsou dostupné pro držitele předplatného ProEdu Premium nebo zapsané studenty kurzů.
+            <p className="text-gray-600 text-sm sm:text-base font-medium leading-relaxed">
+              Detailní přehled úspěšnosti, mapa témat CERMAT k přijímačkám a chytrá doporučení na míru jsou dostupné pro držitele předplatného ProEdu Premium nebo zapsané studenty kurzů.
             </p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            {!user && (
+            {!user ? (
               <Button
-                variant="outline"
-                onClick={() => openAuthModal()}
-                className="rounded-xl font-bold h-11 px-5 cursor-pointer"
+                onClick={openAuthModal}
+                className="rounded-xl bg-[#1E1B18] text-white font-black px-6 h-11 cursor-pointer"
               >
-                Přihlásit se
+                Přihlásit se / Registrovat
+              </Button>
+            ) : (
+              <Button
+                onClick={() => setIsPaywallDismissed(false)}
+                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-6 h-11 cursor-pointer"
+              >
+                Odemknout Premium
               </Button>
             )}
             <Button
-              onClick={() => navigate('/')}
               variant="outline"
+              onClick={() => navigate('/practice')}
               className="rounded-xl font-bold h-11 px-5 cursor-pointer"
             >
-              Zpět na přehled
+              Zpět na procvičování
             </Button>
           </div>
         </Card>
 
+        {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
         <UnifiedPaywallModal
-          isOpen={!hasStatsAccess}
-          onClose={() => navigate('/')}
+          isOpen={!hasStatsAccess && !isPaywallDismissed}
+          onClose={() => {
+            setIsPaywallDismissed(true);
+            navigate('/practice');
+          }}
           type="premium"
           description="Kompletní rozbor úspěšnosti, mapa témat CERMAT k přijímačkám, spojnicový graf vývoje a chytrá doporučení na míru jsou k dispozici v rámci předplatného ProEdu Premium."
         />
