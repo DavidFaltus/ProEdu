@@ -1163,23 +1163,35 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
     };
 
     // 3. Vygenerování bezpečného autorizovaného reset linku přes Firebase Admin SDK
-    let resetLink;
+    let rawResetLink;
     try {
-      resetLink = await auth.generatePasswordResetLink(safeEmail, actionCodeSettings);
+      rawResetLink = await auth.generatePasswordResetLink(safeEmail, actionCodeSettings);
     } catch (genErr) {
       console.error('[password-reset generatePasswordResetLink error]:', genErr);
       return res.status(500).json({ error: 'Nepodařilo se vygenerovat odkaz pro obnovení hesla.' });
     }
 
-    // 4. Odeslání e-mailu (reálné SMTP nebo dev simulátor)
+    // 4. Transformace na vlastní ProEdu stránku /reset-password?oobCode=...
+    let finalResetLink = rawResetLink;
+    try {
+      const parsedUrl = new URL(rawResetLink);
+      const oobCode = parsedUrl.searchParams.get('oobCode');
+      if (oobCode) {
+        finalResetLink = `${clientOrigin}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
+      }
+    } catch (urlErr) {
+      console.warn('[password-reset link parse notice]:', urlErr);
+    }
+
+    // 5. Odeslání e-mailu (reálné SMTP nebo dev simulátor)
     const emailRes = await sendPasswordResetEmailTemplate({
       to: safeEmail,
       name: userRecord.displayName || userRecord.email || '',
-      resetLink
+      resetLink: finalResetLink
     });
 
     console.log(`\n🔑 [OBNOVENÍ HESLA] Požadavek pro: ${safeEmail}`);
-    console.log(`🔗 Odkaz pro nastavení hesla:\n${resetLink}\n`);
+    console.log(`🔗 Vlastní ProEdu odkaz pro nastavení hesla:\n${finalResetLink}\n`);
 
     if (!emailRes.success) {
       return res.status(502).json({ error: 'Nepodařilo se odeslat e-mail s odkazem. Zkuste to prosím znovu.' });

@@ -112,4 +112,18 @@ test('server/index.js defines POST /api/auth/password-reset endpoint and rate li
   assert.ok(serverCode.includes('passwordResetLimiter'), 'server/index.js must protect password reset with rate limiter');
   assert.ok(serverCode.includes('generatePasswordResetLink'), 'server/index.js must generate reset link using Firebase Admin');
   assert.ok(serverCode.includes('sendPasswordResetEmailTemplate'), 'server/index.js must send reset email via template');
+  assert.ok(serverCode.includes('/reset-password?oobCode='), 'server/index.js must build custom /reset-password URL');
+});
+
+test('App.tsx and ResetPassword.tsx configure custom ProEdu password reset page', () => {
+  const appPath = path.resolve(process.cwd(), 'src/App.tsx');
+  const appCode = fs.readFileSync(appPath, 'utf8');
+  assert.ok(appCode.includes('path="/reset-password"'), 'App.tsx must register /reset-password route');
+
+  const resetPagePath = path.resolve(process.cwd(), 'src/pages/ResetPassword.tsx');
+  const resetPageCode = fs.readFileSync(resetPagePath, 'utf8');
+  assert.ok(resetPageCode.includes('verifyPasswordResetCode'), 'ResetPassword.tsx must verify reset code');
+  assert.ok(resetPageCode.includes('confirmPasswordReset'), 'ResetPassword.tsx must confirm password reset');
+  assert.ok(resetPageCode.includes('saveCredentialToBrowser'), 'ResetPassword.tsx must offer Google password save');
+  assert.ok(resetPageCode.includes('autoComplete="new-password"'), 'ResetPassword.tsx must use new-password autocomplete');
 });

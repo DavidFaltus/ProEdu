@@ -21,6 +21,7 @@ import RouteSkeleton from './components/common/RouteSkeleton';
 
 // Lazy-loaded Pages (Code-splitting for near-instant initial page loads)
 const Login = React.lazy(() => import('./pages/Login'));
+const ResetPassword = React.lazy(() => import('./pages/ResetPassword'));
 const StudentDashboard = React.lazy(() => import('./pages/StudentDashboard'));
 const TeacherDashboard = React.lazy(() => import('./pages/TeacherDashboard'));
 const TestTaker = React.lazy(() => import('./pages/TestTaker'));
@@ -342,6 +343,7 @@ function AppContent() {
               />
               <Route path="/contact" element={<Contact />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
 
               {/* Právní dokumenty */}
               <Route path="/terms" element={<Terms />} />
