@@ -660,17 +660,8 @@ export default function SubscriptionManager() {
                         <span>VS: <strong className="font-mono text-gray-800">{order.variableSymbol}</strong></span>
                       )}
                       <span className="inline-flex items-center gap-1">
-                        {order.paymentMethod === 'comgate' ? (
-                          <>
-                            <CreditCard size={13} className="text-blue-600" />
-                            <span>Kartou online</span>
-                          </>
-                        ) : (
-                          <>
-                            <QrCode size={13} className="text-purple-600" />
-                            <span>QR platba</span>
-                          </>
-                        )}
+                        <CreditCard size={13} className="text-blue-600" />
+                        <span>Kartou online (Comgate)</span>
                       </span>
                     </div>
                   </div>

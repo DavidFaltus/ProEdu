@@ -294,7 +294,6 @@ export default function OrdersManager() {
             const isPaid = order.status === 'paid';
             const isCancelled = order.status === 'cancelled';
             const isRefunded = order.status === 'refunded';
-            const isQr = order.paymentMethod === 'qr_bank_transfer';
 
             return (
               <Card
@@ -331,8 +330,8 @@ export default function OrdersManager() {
                     )}
 
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-600 bg-[#FAF7F0] border border-gray-200 px-2 py-0.5 rounded-md">
-                      {isQr ? <QrCode size={12} /> : <CreditCard size={12} />}
-                      <span>{isQr ? 'QR Převod' : 'Comgate'}</span>
+                      <CreditCard size={12} />
+                      <span>Comgate (Karta)</span>
                     </span>
 
                     {order.iuctoInvoiceNumber && (

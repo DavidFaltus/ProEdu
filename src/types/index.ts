@@ -40,10 +40,12 @@ export interface UserProfile {
   subscriptionPeriodEnd?: string; // ISO datum konce aktuálního fakturačního období
   subscriptionCancelledAt?: string | null; // ISO datum žádosti o zrušení
   subscriptionCancelReason?: string | null; // Důvod zrušení předplatného
-  preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate' | 'qr_bank_transfer')
+  preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate')
   billingDetails?: BillingDetails; // Uložené fakturační údaje pro iÚčto
   emailVerified?: boolean; // Zda byl e-mail ověřen 6místným kódem
   initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
+  recurringCancelled?: boolean; // Zda byla zrušena opakovaná platba
+  recurringCancelledAt?: string | null; // ISO datum zrušení opakované platby
   premiumSince?: string;
   subscriptionExpiredAt?: string | null;
   iuctoCustomerId?: number | null; // ID odběratele v iÚčtu (spravuje pouze server)
@@ -264,7 +266,7 @@ export interface Course {
   updatedAt?: any;
 }
 
-export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
+export type PaymentMethod = 'comgate';
 export type OrderStatus = 'pending' | 'paid' | 'cancelled' | 'refunded';
 export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive' | 'expired';
 export type IuctoSyncStatus = 'pending' | 'synced' | 'failed' | 'skipped_sandbox' | 'refunded';

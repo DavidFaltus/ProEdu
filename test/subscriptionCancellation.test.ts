@@ -29,7 +29,10 @@ function calculateCancellationPayload(
       subscriptionCancelledAt: nowIso,
       subscriptionCancelReason: safeReason,
       subscriptionExpiredAt: nowIso,
-      subscriptionPeriodEnd: null
+      subscriptionPeriodEnd: null,
+      initRecurringTransId: null,
+      recurringCancelled: true,
+      recurringCancelledAt: nowIso
     };
   }
 
@@ -38,7 +41,10 @@ function calculateCancellationPayload(
     subscriptionStatus: 'cancelled_at_period_end' as const,
     subscriptionCancelledAt: nowIso,
     subscriptionCancelReason: safeReason,
-    subscriptionPeriodEnd: periodEnd
+    subscriptionPeriodEnd: periodEnd,
+    initRecurringTransId: null,
+    recurringCancelled: true,
+    recurringCancelledAt: nowIso
   };
 }
 
@@ -75,6 +81,8 @@ function calculateReactivatePayload(
     subscriptionStatus: 'active' as const,
     subscriptionCancelledAt: null,
     subscriptionCancelReason: null,
+    recurringCancelled: false,
+    recurringCancelledAt: null,
     subscriptionPeriodEnd: periodEnd
   };
 }
@@ -184,14 +192,108 @@ test('Reactivating subscription restores active status while preserving remainin
 });
 
 test('Comgate recurring charge guard blocks charging cancelled subscriptions', () => {
-  const checkCanChargeRecurring = (status?: SubscriptionStatus): boolean => {
-    if (status === 'cancelled_at_period_end' || status === 'inactive') {
+  const checkCanChargeRecurring = (user: Partial<UserProfile>): boolean => {
+    if (
+      user.subscriptionStatus === 'cancelled_at_period_end' ||
+      user.subscriptionStatus === 'inactive' ||
+      user.subscriptionStatus === 'expired' ||
+      user.recurringCancelled === true ||
+      Boolean(user.subscriptionCancelledAt) ||
+      !user.initRecurringTransId
+    ) {
       return false;
     }
     return true;
   };
 
-  assert.equal(checkCanChargeRecurring('active'), true);
-  assert.equal(checkCanChargeRecurring('cancelled_at_period_end'), false, 'Must block recurring charge for cancelled_at_period_end');
-  assert.equal(checkCanChargeRecurring('inactive'), false, 'Must block recurring charge for inactive');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', initRecurringTransId: 'TRANS_123' }), true);
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'cancelled_at_period_end', initRecurringTransId: 'TRANS_123' }), false, 'Must block recurring charge for cancelled_at_period_end');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'inactive', initRecurringTransId: 'TRANS_123' }), false, 'Must block recurring charge for inactive');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', recurringCancelled: true, initRecurringTransId: 'TRANS_123' }), false, 'Must block when recurringCancelled is true');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', subscriptionCancelledAt: '2026-11-16T12:00:00Z', initRecurringTransId: 'TRANS_123' }), false, 'Must block when subscriptionCancelledAt is set');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', initRecurringTransId: undefined }), false, 'Must block when initRecurringTransId is missing');
+});
+
+test('Manual Premium grant or unexpired period is NOT expired even if historical subscriptionStatus was inactive', () => {
+  const isExpired = (profile: Partial<UserProfile>, nowMs: number) => {
+    if (!profile || profile.role !== 'premium') return false;
+    const rawEnd = profile.subscriptionPeriodEnd;
+    if (!rawEnd) return false;
+    const endMs = new Date(rawEnd).getTime();
+    if (isNaN(endMs)) return false;
+    if (profile.subscriptionStatus === 'cancelled_at_period_end') {
+      return nowMs > endMs;
+    }
+    if (profile.subscriptionStatus === 'active') {
+      return nowMs > endMs + 3 * 24 * 60 * 60 * 1000;
+    }
+    return nowMs > endMs;
+  };
+
+  const now = new Date('2026-11-16T12:00:00.000Z').getTime();
+  const futureEnd = new Date('2026-12-12T12:00:00.000Z').toISOString();
+
+  // 1. User with future periodEnd but stale inactive status
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: futureEnd }, now),
+    false,
+    'Unexpired periodEnd with inactive status must NOT be treated as expired'
+  );
+
+  // 2. User with no periodEnd (lifetime / manual grant)
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: undefined }, now),
+    false,
+    'Manual grant without periodEnd must NOT be treated as expired'
+  );
+
+  // 3. User with past periodEnd and inactive status
+  const pastEnd = new Date('2026-11-10T12:00:00.000Z').toISOString();
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: pastEnd }, now),
+    true,
+    'Past periodEnd with inactive status must be treated as expired'
+  );
+});
+
+test('Comgate payment initialization restricts payment methods strictly to CARD_ALL for recurring billing', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+  const rulesCode = fs.readFileSync('firestore.rules', 'utf8');
+
+  assert.equal(
+    serverCode.includes("method: 'CARD_ALL'"),
+    true,
+    "server/index.js must restrict Comgate payment method to 'CARD_ALL' so bank transfers and QR payments are disabled"
+  );
+  assert.equal(
+    serverCode.includes("method: 'ALL'"),
+    false,
+    "server/index.js must NOT use method: 'ALL' which allows non-recurring bank buttons and QR transfers"
+  );
+  assert.equal(
+    rulesCode.includes("data.preferredPaymentMethod == 'comgate'"),
+    true,
+    "firestore.rules must only allow 'comgate' as preferredPaymentMethod"
+  );
+});
+
+test('Subscription cancellation email is sent ONLY for regular period-end cancellation, NOT for immediate termination', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+
+  // Verify server only sends cancellation email when not immediate
+  assert.equal(
+    serverCode.includes('if (notifyEmail && !immediate)'),
+    true,
+    'server/index.js must condition sendSubscriptionCancelledEmail on !immediate so early termination does not send a second email'
+  );
+
+  const shouldSendEmail = (notifyEmail: string | undefined, immediate: boolean) => {
+    return Boolean(notifyEmail) && !immediate;
+  };
+
+  assert.equal(shouldSendEmail('test@pro-edu.eu', false), true, 'Regular cancellation sends email');
+  assert.equal(shouldSendEmail('test@pro-edu.eu', true), false, 'Immediate early termination suppresses email');
+  assert.equal(shouldSendEmail(undefined, false), false, 'Missing email suppresses email');
 });

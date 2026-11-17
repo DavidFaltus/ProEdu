@@ -18,6 +18,7 @@ import {
   sendPaymentConfirmedEmail,
   sendRecurringChargeSuccessEmail,
   sendRecurringChargeFailedEmail,
+  sendSubscriptionCancelledEmail,
   sendBugReportEmail,
   sendPasswordResetEmailTemplate
 } from './services/emailService.js';
@@ -319,7 +320,10 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
         role: fallbackRole,
         subscriptionStatus: 'inactive',
         subscriptionPeriodEnd: periodEndIso,
-        subscriptionExpiredAt: new Date(nowMs).toISOString()
+        subscriptionExpiredAt: new Date(nowMs).toISOString(),
+        initRecurringTransId: FieldValue.delete(),
+        recurringCancelled: true,
+        recurringCancelledAt: userDoc?.subscriptionCancelledAt || new Date(nowMs).toISOString()
       };
     } else if (rawStatus === 'active') {
       const graceUntilMs = periodEndMs + SUBSCRIPTION_GRACE_MS;
@@ -334,7 +338,10 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
           subscriptionStatus: 'inactive',
           subscriptionPeriodEnd: periodEndIso,
           subscriptionGraceUntil: FieldValue.delete(),
-          subscriptionExpiredAt: new Date(nowMs).toISOString()
+          subscriptionExpiredAt: new Date(nowMs).toISOString(),
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: new Date(nowMs).toISOString()
         };
       } else {
         subscriptionGraceUntil = graceUntilIso;
@@ -346,6 +353,15 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
         }
       }
     }
+  } else if (rawRole === 'premium' && (periodEndMs === null || nowMs <= periodEndMs) && (rawStatus === 'inactive' || rawStatus === 'expired')) {
+    // Pokud má uživatel v databázi roli 'premium' a datum expirace v budoucnu nebo neomezené,
+    // ale status je chybně/historicky 'inactive' nebo 'expired', napravíme stav na aktivní.
+    subscriptionStatus = userDoc?.subscriptionCancelledAt && periodEndMs !== null ? 'cancelled_at_period_end' : 'active';
+    updates = {
+      ...(updates || {}),
+      subscriptionStatus,
+      subscriptionExpiredAt: FieldValue.delete()
+    };
   }
 
   if (role === 'course' && enrolledCourseIds.length === 0) {
@@ -1116,14 +1132,29 @@ app.post('/api/auth/register-confirm', registerConfirmLimiter, async (req, res) 
 
     await db.collection('users').doc(userRecord.uid).set(newProfile);
     await syncCustomClaimsIfNeeded(userRecord.uid, 'free', []);
-    const customToken = await auth.createCustomToken(userRecord.uid);
 
-    console.log(`[Register Confirm] Uživatel úspěšně ověřen a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
+    let customToken = null;
+    const canSignCustomToken = Boolean(
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      isCloudFunction
+    );
+
+    if (canSignCustomToken) {
+      try {
+        customToken = await auth.createCustomToken(userRecord.uid);
+      } catch (tokenErr) {
+        console.warn('[Register Confirm] createCustomToken selhal, použito přímé přihlášení:', tokenErr?.message);
+      }
+    }
+
+    console.log(`[Register Confirm] Uživatel úspěšně ověřen 6místným kódem a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
 
     return res.json({
       success: true,
       message: 'Registrace byla úspěšně ověřena a dokončena!',
       customToken,
+      ...(customToken ? {} : { tempPassword: originalPassword }),
       uid: userRecord.uid,
       email: pending.email,
       name: pending.name
@@ -1911,7 +1942,9 @@ async function activatePremiumForUser(userId, options = {}) {
     subscriptionGraceUntil: FieldValue.delete(),
     subscriptionExpiredAt: FieldValue.delete(),
     subscriptionCancelledAt: null,
-    subscriptionCancelReason: null
+    subscriptionCancelReason: null,
+    recurringCancelled: false,
+    recurringCancelledAt: null
   };
 
   if (options.initRecurringTransId) {
@@ -2136,16 +2169,6 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
         ? clientVariableSymbol.replace(/\D/g, '').slice(0, 10) || String(Date.now()).slice(-9)
         : String(Date.now()).slice(-9);
 
-    const paymentMessage = `ProEdu ${variableSymbol}`.slice(0, 60);
-    const spaydString = serverGenerateSpayd(
-      BANK_ACCOUNT_NUMBER,
-      BANK_CODE,
-      amount,
-      variableSymbol,
-      paymentMessage,
-      BANK_RECIPIENT
-    );
-
     const isTest = COMGATE_TEST_MODE === true || COMGATE_TEST_MODE === 'true';
     const hasComgateCreds = hasComgateCredentials();
 
@@ -2177,7 +2200,6 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       termsAccepted: true,
       newsletterConsent: Boolean(newsletterConsent),
       variableSymbol,
-      spaydString,
       createdAt: new Date().toISOString()
     };
 
@@ -2187,34 +2209,58 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
     if (hasComgateCreds) {
       let comgateJson = null;
       let comgateOk = false;
+      const baseComgatePayload = {
+        merchant: COMGATE_MERCHANT_ID,
+        test: isTest,
+        price: Math.round(amount * 100),
+        curr: 'CZK',
+        label: 'ProEdu Premium',
+        refId: orderId,
+        email: orderData.invoiceEmail,
+        fullName: orderData.clientName || undefined,
+        // Vždy povolujeme výhradně karetní metody (CARD_ALL: karta, Apple Pay, Google Pay),
+        // ze kterých lze příští měsíc automaticky strhnout opakovanou platbu.
+        // Bankovní tlačítka (BANK_ALL), QR platby a odložené platby (LATER_ALL) jsou vypnuty.
+        method: 'CARD_ALL',
+        prepareOnly: true,
+        initRecurring: true,
+        country: 'CZ',
+        lang: 'cs',
+        url_paid: `${appBaseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`,
+        url_cancelled: `${appBaseUrl}/?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
+        url_pending: `${appBaseUrl}/?payment=pending&orderId=${encodeURIComponent(orderId)}`
+      };
+
       try {
-        const comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
+        let comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
           method: 'POST',
           headers: {
             Authorization: getComgateAuthHeader(),
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            merchant: COMGATE_MERCHANT_ID,
-            test: isTest,
-            price: Math.round(amount * 100),
-            curr: 'CZK',
-            label: 'ProEdu Premium',
-            refId: orderId,
-            email: orderData.invoiceEmail,
-            fullName: orderData.clientName || undefined,
-            method: 'ALL',
-            prepareOnly: true,
-            initRecurring: COMGATE_RECURRING_ENABLED,
-            country: 'CZ',
-            lang: 'cs',
-            url_paid: `${appBaseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`,
-            url_cancelled: `${appBaseUrl}/?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
-            url_pending: `${appBaseUrl}/?payment=pending&orderId=${encodeURIComponent(orderId)}`
-          })
+          body: JSON.stringify(baseComgatePayload)
         });
         comgateOk = comgateRes.ok;
         comgateJson = await comgateRes.json().catch(() => null);
+
+        // Pokud na straně Comgate ještě není u obchodníka schválen příznak initRecurring (kód 1316),
+        // v testovacím režimu založíme platbu se stejným omezením method: 'CARD_ALL'
+        if (!comgateOk && comgateJson?.code === 1316 && (isTest || !COMGATE_RECURRING_ENABLED)) {
+          console.warn('[Comgate] Obchodník zatím nemá u Comgate aktivován initRecurring (kód 1316) – zakládám karetní platbu CARD_ALL.');
+          comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
+            method: 'POST',
+            headers: {
+              Authorization: getComgateAuthHeader(),
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              ...baseComgatePayload,
+              initRecurring: false
+            })
+          });
+          comgateOk = comgateRes.ok;
+          comgateJson = await comgateRes.json().catch(() => null);
+        }
       } catch (comgateErr) {
         console.error('[Comgate API Network Error]:', comgateErr);
         return res.status(502).json({ error: 'Nepodařilo se spojit s platební bránou Comgate. Zkuste to prosím za chvíli.' });
@@ -2257,17 +2303,6 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       success: true,
       orderId,
       order: orderData,
-      bankDetails: {
-        accountNumber: BANK_ACCOUNT_NUMBER,
-        bankCode: BANK_CODE,
-        bankName: BANK_NAME,
-        recipientName: BANK_RECIPIENT,
-        amount,
-        currency,
-        variableSymbol,
-        message: paymentMessage,
-        spaydString
-      },
       comgate: comgateData
     });
   } catch (err) {
@@ -2350,7 +2385,7 @@ async function applyComgatePaymentTransition({
       orderId,
       order: txOutcome.order,
       comgateTransId: transId || txOutcome.order.comgateTransId || null,
-      initRecurringTransId: COMGATE_RECURRING_ENABLED ? (transId || txOutcome.order.comgateTransId || null) : null,
+      initRecurringTransId: transId || txOutcome.order.comgateTransId || null,
       isSandbox: Boolean(isSandbox) || Boolean(txOutcome.order.isSandbox),
       isRecurringRenewal: Boolean(txOutcome.order.isRecurringRenewal)
     });
@@ -2736,14 +2771,20 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
           subscriptionCancelReason: safeReason,
           subscriptionPeriodEnd: periodEnd,
           subscriptionGraceUntil: FieldValue.delete(),
-          subscriptionExpiredAt: nowIso
+          subscriptionExpiredAt: nowIso,
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: nowIso
         }
       : {
           role: 'premium',
           subscriptionStatus: 'cancelled_at_period_end',
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason,
-          subscriptionPeriodEnd: periodEnd
+          subscriptionPeriodEnd: periodEnd,
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: nowIso
         };
 
     await userRef.set(updateData, { merge: true });
@@ -2751,6 +2792,19 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
       await syncCustomClaimsIfNeeded(userId, fallbackRole, enrolledCourseIds);
     }
     userRoleCache.delete(userId);
+
+    const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
+    // E-mail s potvrzením o zrušení se odesílá pouze při standardním zrušení členství (vypnutí opakovaných plateb ke konci období),
+    // při předčasném/okamžitém ukončení se duplicitní e-mail již neodesílá.
+    if (notifyEmail && !immediate) {
+      sendSubscriptionCancelledEmail({
+        to: notifyEmail,
+        name: userDoc.billingDetails?.clientName || userDoc.displayName || userDoc.name,
+        periodEnd
+      }).catch((emailErr) => {
+        console.warn('[Subscription Cancel Email Error]:', emailErr?.message || emailErr);
+      });
+    }
 
     const formattedEndDate = new Date(periodEnd).toLocaleDateString('cs-CZ', {
       day: 'numeric',
@@ -2804,6 +2858,8 @@ app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
       subscriptionStatus: 'active',
       subscriptionCancelledAt: null,
       subscriptionCancelReason: null,
+      recurringCancelled: false,
+      recurringCancelledAt: null,
       subscriptionPeriodEnd: periodEnd
     };
 
@@ -2879,7 +2935,13 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
     throw err;
   }
 
-  if (userDoc.subscriptionStatus === 'cancelled_at_period_end' || userDoc.subscriptionStatus === 'inactive') {
+  if (
+    userDoc.subscriptionStatus === 'cancelled_at_period_end' ||
+    userDoc.subscriptionStatus === 'inactive' ||
+    userDoc.subscriptionStatus === 'expired' ||
+    userDoc.recurringCancelled === true ||
+    Boolean(userDoc.subscriptionCancelledAt)
+  ) {
     const err = new Error('Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.');
     err.statusCode = 400;
     throw err;
@@ -3052,13 +3114,20 @@ async function runDueRecurringSubscriptions() {
         summary.graced += 1;
       }
 
-      if (userDoc.subscriptionStatus === 'active' && userDoc.initRecurringTransId) {
+      if (
+        userDoc.subscriptionStatus === 'active' &&
+        userDoc.initRecurringTransId &&
+        !userDoc.recurringCancelled &&
+        !userDoc.subscriptionCancelledAt
+      ) {
         const userRef = db.collection('users').doc(uid);
         const claimed = await db.runTransaction(async (tx) => {
           const freshSnap = await tx.get(userRef);
           if (!freshSnap.exists) return null;
           const fresh = freshSnap.data() || {};
           if (fresh.role !== 'premium' || fresh.subscriptionStatus !== 'active') return null;
+          if (fresh.recurringCancelled === true || fresh.subscriptionCancelledAt) return null;
+          if (!fresh.initRecurringTransId) return null;
           if (fresh.lastRecurringAttemptDate === todayPrague) return null;
           tx.update(userRef, { lastRecurringAttemptDate: todayPrague });
           return { uid, ...fresh };
@@ -3123,7 +3192,12 @@ app.put('/api/subscription/billing', requireAuth, async (req, res) => {
     const { billingDetails, preferredPaymentMethod } = req.body || {};
 
     const updateData = {};
-    if (preferredPaymentMethod === 'comgate') {
+    if (preferredPaymentMethod !== undefined && preferredPaymentMethod !== null) {
+      if (preferredPaymentMethod !== 'comgate') {
+        return res.status(400).json({
+          error: 'Pro předplatné je podporována pouze platební brána Comgate (platba kartou online).'
+        });
+      }
       updateData.preferredPaymentMethod = 'comgate';
     }
 
@@ -3514,8 +3588,29 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
       updatedAt: new Date().toISOString()
     };
 
-    if (effectiveRole === 'premium' || effectiveRole === 'course') {
+    if (effectiveRole === 'premium') {
       updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
+      updateData.subscriptionStatus = 'active';
+      updateData.subscriptionCancelledAt = null;
+      updateData.subscriptionCancelReason = null;
+      updateData.recurringCancelled = false;
+      updateData.recurringCancelledAt = null;
+      updateData.subscriptionExpiredAt = FieldValue.delete();
+      updateData.subscriptionGraceUntil = FieldValue.delete();
+
+      const existingEndMs = parseIsoMillis(existingSnap.data()?.subscriptionPeriodEnd);
+      if (!existingEndMs || existingEndMs < Date.now()) {
+        updateData.subscriptionPeriodEnd = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      }
+    } else if (effectiveRole === 'course') {
+      updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
+    } else if (effectiveRole === 'free') {
+      updateData.subscriptionStatus = 'inactive';
+      updateData.subscriptionExpiredAt = new Date().toISOString();
+      updateData.subscriptionGraceUntil = FieldValue.delete();
+      updateData.initRecurringTransId = FieldValue.delete();
+      updateData.recurringCancelled = true;
+      updateData.recurringCancelledAt = new Date().toISOString();
     }
 
     await userRef.set(updateData, { merge: true });

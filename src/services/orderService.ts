@@ -723,9 +723,7 @@ export function openIuctoInvoicePreview(order: Order) {
   const planTitle = escapeHtml(
     order.planId === 'premium-monthly' ? 'Předplatné ProEducator Premium (měsíční tarif)' : order.planId
   );
-  const paymentLabel = escapeHtml(
-    order.paymentMethod === 'comgate' ? 'Platební brána Comgate (online karta)' : 'Bankovní převod (QR platba)'
-  );
+  const paymentLabel = escapeHtml('Platební brána Comgate (online karta)');
   const safeVarSym = escapeHtml(order.variableSymbol || '-');
   const safeClientName = escapeHtml(order.clientName || 'Zákazník');
   const safeStreet = escapeHtml(order.billingAddress?.street || '');

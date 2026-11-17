@@ -9,6 +9,7 @@ const SMTP_USER = (process.env.SMTP_USER || '').trim();
 // Odstranění mezer z Google App Password (např. "omaq wevr ocqz dkhx" -> "omaqwevrocqzdkhx")
 const SMTP_PASS = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
 const SMTP_FROM = (process.env.SMTP_FROM || 'ProEdu <info@pro-edu.eu>').trim();
+const ADMIN_ORDER_NOTIFICATION_EMAIL = (process.env.ADMIN_ORDER_NOTIFICATION_EMAIL || 'info@pro-edu.eu').trim();
 const APP_URL = process.env.APP_URL || 'https://proeducator.eu';
 const SAFE_APP_URL = sanitizeHttpUrl(APP_URL) || 'https://proeducator.eu';
 
@@ -25,6 +26,14 @@ function isEmailSimulationAllowed() {
 }
 
 let transporter = null;
+
+export function setTransporterForTesting(customTransporter) {
+  transporter = customTransporter;
+}
+
+export function resetTransporterForTesting() {
+  transporter = null;
+}
 
 function getTransporter() {
   if (transporter) return transporter;
@@ -57,10 +66,12 @@ function getTransporter() {
  * Pokud nejsou nastaveny SMTP proměnné, v produkci selže (fail-closed)
  * a v dev/emulator režimu simuluje odeslání bez logování citlivých OTP kódů.
  */
-export async function sendEmail({ to, subject, html, text, replyTo, attachments = [], logDetails = {} }) {
+export async function sendEmail({ to, subject, html, text, replyTo, bcc, cc, attachments = [], logDetails = {} }) {
   const safeTo = sanitizeHeaderValue(to);
   const safeSubject = sanitizeHeaderValue(subject);
   const safeReplyTo = replyTo ? sanitizeHeaderValue(replyTo) : undefined;
+  const safeBcc = bcc ? sanitizeHeaderValue(bcc) : undefined;
+  const safeCc = cc ? sanitizeHeaderValue(cc) : undefined;
   const mailClient = getTransporter();
 
   if (!mailClient) {
@@ -76,6 +87,12 @@ export async function sendEmail({ to, subject, html, text, replyTo, attachments 
     console.log('\n┌────────────────────────────────────────────────────────────────────────┐');
     console.log('│ 📧 [PROEDU EMAIL SIMULÁTOR / DEV LOG]');
     console.log(`│ Komu:     ${safeTo}`);
+    if (safeBcc) {
+      console.log(`│ Bcc:      ${safeBcc}`);
+    }
+    if (safeCc) {
+      console.log(`│ Cc:       ${safeCc}`);
+    }
     if (safeReplyTo) {
       console.log(`│ Reply-To: ${safeReplyTo}`);
     }
@@ -108,6 +125,13 @@ export async function sendEmail({ to, subject, html, text, replyTo, attachments 
       text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       html
     };
+
+    if (safeBcc) {
+      mailOptions.bcc = safeBcc;
+    }
+    if (safeCc) {
+      mailOptions.cc = safeCc;
+    }
 
     if (Array.isArray(attachments) && attachments.length > 0) {
       mailOptions.attachments = attachments;
@@ -338,7 +362,10 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**
@@ -391,7 +418,10 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**
@@ -565,4 +595,54 @@ export async function sendPasswordResetEmailTemplate({ to, name, resetLink }) {
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
   return sendEmail({ to, subject, html, logDetails: { resetLink } });
+}
+
+/**
+ * 8. Šablona: Potvrzení o zrušení předplatného a opakovaných plateb
+ */
+export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, immediate = false }) {
+  const safeName = escapeHtml(name || 'zákazníku');
+  const formattedEndDate = periodEnd
+    ? new Date(periodEnd).toLocaleDateString('cs-CZ', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      })
+    : null;
+
+  const subject = 'Potvrzení o zrušení předplatného – ProEducator';
+  const headline = 'Automatické platby byly zrušeny';
+  const subheadline = formattedEndDate
+    ? `Výhody Premium jsou aktivní do ${escapeHtml(formattedEndDate)}`
+    : 'Opakované strhávání z karty bylo vypnuto';
+  const previewText = 'Potvrzení o zrušení předplatného ProEducator. Další platba z karty již neproběhne.';
+
+  const bodyHtml = `
+    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
+    <p>potvrzujeme, že Vaše předplatné <strong>ProEducator Premium</strong> a související <strong>opakované strhávání plateb přes platební bránu Comgate bylo úspěšně zrušeno</strong>.</p>
+    
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+      <p style="margin: 0; color: #166534; font-weight: 600;">✓ Žádná další platba z Vaší platební karty již neproběhne.</p>
+    </div>
+
+    ${formattedEndDate
+      ? `<p>Všechny výhody tarifu Premium můžete plně využívat až do konce stávajícího zaplaceného období, tedy do <strong>${escapeHtml(formattedEndDate)}</strong>. Po tomto datu bude Váš účet automaticky přepnut na bezplatný tarif bez jakéhokoliv dalšího poplatku.</p>`
+      : `<p>Váš účet byl bezpečně odhlášen z automatického obnovování.</p>`
+    }
+
+    <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Pokud se kdykoliv v budoucnu rozhodnete k Premium vrátit, můžete si tarif znovu jednoduše aktivovat ve svém profilu.</p>
+  `;
+
+  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({
+    to,
+    bcc,
+    subject,
+    html,
+    text: `Dobrý den, ${name || 'zákazníku'}, potvrzujeme zrušení předplatného ProEducator a zastavení opakovaných plateb. Další platba z karty již neproběhne.`
+  });
+}
 }

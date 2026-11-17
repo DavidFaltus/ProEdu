@@ -121,7 +121,7 @@ export function buildCustomerPayload({ userId, userDoc = {}, order = {} }) {
     external_code: `PROEDU_${String(userId || 'unknown')}`.slice(0, 50),
     vat_payer: Boolean(dic),
     usual_maturity: 14,
-    preferred_payment_method: order?.paymentMethod === 'qr_bank_transfer' ? 'transfer' : 'creditcard',
+    preferred_payment_method: 'transfer',
     invoice_language: 'cs',
     address: {
       street: street || '-',
@@ -335,7 +335,19 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
         parsed = null;
       }
 
-      const detail = parsed?.detail || parsed?.message || parsed?.title || rawText || res.statusText;
+      let detail = parsed?.detail || parsed?.message || parsed?.title;
+      if (!detail && parsed?.errors && typeof parsed.errors === 'object') {
+        detail = Object.entries(parsed.errors)
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+          .join('; ');
+      }
+      if (!detail && Array.isArray(parsed)) {
+        detail = parsed.join('; ');
+      }
+      if (!detail) {
+        detail = rawText || res.statusText;
+      }
+
       let prefix = `iÚčto API chyba (${res.status})`;
       if (res.status === 401) {
         prefix = 'Neplatný IUCTO_API_KEY nebo chybějící oprávnění v iÚčtu (401)';
@@ -392,8 +404,13 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
       iuctoRequest('/bank_account?page=1&pageSize=50')
     ]);
 
-    if (!companyProfile || typeof companyProfile.vat_payer !== 'boolean') {
-      throw new Error('iÚčto /company_profile nevrátil platný stav plátcovství DPH (vat_payer).');
+    const isVatPayer =
+      typeof companyProfile?.vat_payer === 'boolean'
+        ? companyProfile.vat_payer
+        : (companyProfile?.vat_type === 'monthly' || companyProfile?.vat_type === 'quarterly');
+
+    if (!companyProfile || (!companyProfile.vat_type && typeof companyProfile.vat_payer !== 'boolean')) {
+      throw new Error('iÚčto /company_profile nevrátil platný profil firmy ani informaci o plátcovství DPH.');
     }
 
     const bankAccounts = bankAccountsResp?._embedded?.bank_account || [];
@@ -417,7 +434,6 @@ export function createIuctoClient({ env = process.env, fetchImpl = globalThis.fe
       );
     }
 
-    const isVatPayer = Boolean(companyProfile.vat_payer);
     const vatRegex = isVatPayer ? /zdaniteln|čr|tuzem/i : /bez dph|neplátce|osvobozen/i;
 
     let accountingFetchFailed = false;

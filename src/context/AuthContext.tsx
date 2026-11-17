@@ -203,11 +203,10 @@ function getEffectivePeriodEnd(profile: Partial<UserProfile> | null | undefined)
 
 function isSubscriptionPeriodExpired(profile: Partial<UserProfile> | null | undefined): boolean {
   if (!profile || profile.role !== 'premium') return false;
-  if (profile.subscriptionStatus === 'inactive' || profile.subscriptionStatus === 'expired') {
-    return true;
-  }
 
   const rawEnd = getEffectivePeriodEnd(profile);
+  // Pokud datum vypršení vůbec neexistuje (např. ručně nastaveno v administraci nebo v DB),
+  // účet sám o sobě neexpiruje
   if (!rawEnd) return false;
   const endMs = new Date(rawEnd).getTime();
   if (isNaN(endMs)) return false;
@@ -220,7 +219,8 @@ function isSubscriptionPeriodExpired(profile: Partial<UserProfile> | null | unde
     return Date.now() > endMs + GRACE_PERIOD_MS;
   }
 
-  return false;
+  // Pro ostatní statusy (např. inactive / expired) expiruje, pokud zaplacené období již uplynulo
+  return Date.now() > endMs;
 }
 
 function normalizeUserProfile(raw: Partial<UserProfile>, authUser: User): UserProfile {

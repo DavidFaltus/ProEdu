@@ -99,7 +99,7 @@ export default function ShippingAndPayment() {
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-5">
           <h2 className="text-xl font-bold text-gray-900">3. Platební metody a průběh platby</h2>
 
-          {/* Platby kartou */}
+          {/* Platby kartou (výhradní metoda pro opakované předplatné) */}
           <div className="p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
@@ -107,11 +107,14 @@ export default function ShippingAndPayment() {
                 <span>Platba platební kartou online (Visa, Mastercard, Apple Pay, Google Pay)</span>
               </h3>
               <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
-                Okamžitá úhrada • Zdarma
+                Okamžitá úhrada • Podpora předplatného
               </span>
             </div>
             <p className="text-gray-700">
-              Nejrychlejší způsob úhrady. Po potvrzení objednávky budete přesměrováni na zabezpečenou platební bránu Comgate, kde zadáte číslo své karty, datum platnosti a CVC/CVV kód (případně potvrdíte platbu pomocí Apple Pay či Google Pay) a platbu autorizujete v mobilní aplikaci své banky (3D Secure). Částka se připíše okamžitě a služba je ihned aktivována.
+              Vzhledem k charakteru pravidelného měsíčního předplatného jsou na platební bráně povoleny <strong>výhradně karetní platební metody</strong> (platební karty Visa, Mastercard, Maestro a digitální peněženky Apple Pay a Google Pay napojené na platební kartu), které umožňují bezpečné automatické stržení platby v následujícím měsíci ze stejného zdroje. Jednorázové bankovní převody, QR platby a odložené platby nejsou pro předplatné podporovány.
+            </p>
+            <p className="text-gray-700">
+              Po potvrzení objednávky budete přesměrováni na zabezpečenou platební bránu Comgate, kde zadáte údaje své karty (případně potvrdíte platbu pomocí Apple Pay či Google Pay) a platbu autorizujete v mobilní aplikaci své banky (3D Secure). Částka se připíše okamžitě a služba je ihned aktivována.
             </p>
             <p className="text-xs text-gray-600">
               U měsíčního předplatného ProEducator Premium (99 Kč / 30 dní) slouží první úspěšná platba kartou jako iniciační autorizace pro následné automatické prodlužování předplatného. Podrobnosti najdete v{' '}
@@ -127,33 +130,6 @@ export default function ShippingAndPayment() {
                 className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:underline"
               >
                 <span>Podrobný průvodce platbou kartou (Comgate Help)</span>
-                <ExternalLink size={12} />
-              </a>
-            </div>
-          </div>
-
-          {/* Platební tlačítka bank */}
-          <div className="p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <Landmark size={18} className="text-indigo-600" />
-                <span>Online bankovní převody (platební tlačítka bank)</span>
-              </h3>
-              <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 bg-blue-100 px-2 py-0.5 rounded-md">
-                Okamžitý převod • Zdarma
-              </span>
-            </div>
-            <p className="text-gray-700">
-              Okamžitá platba prostřednictvím internetového bankovnictví podporovaných českých a slovenských bank. Po výběru své banky na platební bráně Comgate budete přesměrováni do přihlášení svého internetového bankovnictví, kde se zobrazí již předvyplněný platební příkaz se správnou částkou a variabilním symbolem. Po potvrzení příkazu dojde k okamžitému zúčtování a přesměrování zpět na portál.
-            </p>
-            <div>
-              <a
-                href="https://help.comgate.eu/docs/bankovni-prevody"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:underline"
-              >
-                <span>Podrobný průvodce bankovními převody a tlačítky (Comgate Help)</span>
                 <ExternalLink size={12} />
               </a>
             </div>
