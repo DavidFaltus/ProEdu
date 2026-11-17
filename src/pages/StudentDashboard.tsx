@@ -141,6 +141,7 @@ export default function StudentDashboard() {
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
+  const isLoggedInFreeUser = Boolean(user && !hasPaidOrTeacherAccess);
   const isFreeOrGuest = !user || !hasPaidOrTeacherAccess;
   const canViewTutorAndLessons = !isFreeOrGuest;
 
@@ -406,6 +407,9 @@ export default function StudentDashboard() {
           </div>
         </div>
       </header>
+
+      {/* JOKER BONUS & STREAK ZONE (Pro přihlášené Free uživatele nad kalendářem a doporučeným procvičováním) */}
+      {isLoggedInFreeUser && <JokerZoneSection />}
 
       {/* MAIN TWO-COLUMN ROW: Calendar on Left, Recommended Practice on Right */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch">
@@ -690,8 +694,8 @@ export default function StudentDashboard() {
         </Card>
       </div>
 
-      {/* JOKER BONUS & STREAK ZONE (For Free tier, Students, and Guests) */}
-      <JokerZoneSection />
+      {/* JOKER BONUS & STREAK ZONE (Pro odhlášené hosty a ostatní zůstává pod kalendářem) */}
+      {!isLoggedInFreeUser && <JokerZoneSection />}
 
       {/* DYNAMIC GRID: Dotazy (Left) & Naplánovaná hodina (Right) */}
       {(() => {

@@ -43,6 +43,21 @@ export default function AuthModal() {
     return () => clearInterval(timer);
   }, [resendCooldown]);
 
+  useEffect(() => {
+    const handleAuthMode = (e: Event) => {
+      const customEvt = e as CustomEvent<{ mode?: 'login' | 'register' }>;
+      if (customEvt.detail?.mode === 'register') {
+        setIsLogin(false);
+        setStep('form');
+      } else if (customEvt.detail?.mode === 'login') {
+        setIsLogin(true);
+        setStep('form');
+      }
+    };
+    window.addEventListener('proedu-auth-mode', handleAuthMode);
+    return () => window.removeEventListener('proedu-auth-mode', handleAuthMode);
+  }, []);
+
   const resetForm = () => {
     setEmail('');
     setPassword('');

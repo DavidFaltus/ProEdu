@@ -1,28 +1,22 @@
 import React, { useState } from 'react';
-import { 
-  Play, Copy, Lock, ArrowRight 
+import {
+  Play,
+  Lock,
+  Flame,
+  Users,
+  ClipboardList,
+  Check
 } from 'lucide-react';
-import { 
-  HeartPinkIcon, 
-  StarYellowIcon, 
-  CorrectCyanIcon, 
-  CoopBlueIcon, 
-  TeamBlueIcon 
-} from './common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
-import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
 import RewardedAdModal from './common/RewardedAdModal';
-import { 
-  recordGuestVideo, 
-  getGuestState, 
+import {
+  recordGuestVideo,
+  getGuestState,
   GUEST_MAX_VIDEOS,
-  BASE_JOKER_CAP,
   MAX_STREAK_DAYS,
-  REFERRAL_REWARD_JOKERS,
-  SURVEY_REWARD_JOKERS,
-  MAX_REFERRALS,
-  getTodayDateString
+  MAX_REFERRALS
 } from '../services/jokerService';
 import { cn } from '../lib/utils';
 
@@ -48,22 +42,35 @@ const GRADE_OPTIONS = [
   'Jiný ročník'
 ];
 
+function getRemainingDaysLabel(daysRemaining: number): string {
+  if (daysRemaining === 1) return '1 den';
+  if (daysRemaining >= 2 && daysRemaining <= 4) return `${daysRemaining} dny`;
+  return `${daysRemaining} dní`;
+}
+
+function getRemainingVideosLabel(remaining: number): string {
+  if (remaining <= 0) return 'Dnešní limit 3 videí vyčerpán';
+  if (remaining === 1) return 'Dnes zbývá 1 zhlédnutí';
+  return `Dnes zbývají ${remaining} zhlédnutí`;
+}
+
 export default function JokerZoneSection() {
-  const { 
-    user, 
-    profile, 
+  const {
+    user,
+    profile,
     loading,
-    isPremium, 
-    jokers, 
-    streak, 
-    maxJokersCap, 
-    claimVideoReward, 
-    submitSurvey, 
-    openAuthModal 
+    isPremium,
+    jokers,
+    streak,
+    maxJokersCap,
+    claimVideoReward,
+    submitSurvey,
+    openAuthModal
   } = useAuth();
 
   // Dialogy a interakce
   const [isVideoModalOpen, setIsVideoModalOpen] = useState(false);
+  const [isSurveyModalOpen, setIsSurveyModalOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
   const [selectedSurveyOption, setSelectedSurveyOption] = useState<string>('');
   const [customSurveyText, setCustomSurveyText] = useState<string>('');
@@ -71,23 +78,30 @@ export default function JokerZoneSection() {
   const [surveyGrade, setSurveyGrade] = useState<string>('');
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false);
 
-  // Stav pro nepřihlášené hosty: uživatel je host pouze pokud nemá profil ani Firebase user objekt, nebo jde o hosta v dev módu
   const [guestState, setGuestState] = useState(() => getGuestState());
-  const isGuest = (!user && !profile) || user?.uid === 'guest-preview' || profile?.uid === 'guest-preview';
+  const isGuest =
+    (!user && !profile) || user?.uid === 'guest-preview' || profile?.uid === 'guest-preview';
 
-  const today = getTodayDateString();
-  const hasDailyGrantToday = profile?.lastDailyGrantDate === today;
-  const hasPracticedToday = profile?.lastStreakPracticeDate === today;
   const isCapped = !isGuest && jokers >= maxJokersCap;
-  const videosWatchedToday = isGuest ? getGuestState().videosWatched : (profile?.dailyVideosWatched || 0);
+  const videosWatchedToday = isGuest
+    ? guestState.videosWatched
+    : profile?.dailyVideosWatched || 0;
+  const videosRemaining = Math.max(0, 3 - videosWatchedToday);
   const isVideoLimitReached = videosWatchedToday >= 3;
   const currentReferrals = Math.min(MAX_REFERRALS, profile?.referralsCount || 0);
 
-  // Unikátní odkaz pro doporučení
   const referralCode = profile?.referralCode || profile?.uid || '';
-  const referralUrl = typeof window !== 'undefined' && referralCode
-    ? `${window.location.origin}/?ref=${referralCode}`
-    : '';
+  const referralUrl =
+    typeof window !== 'undefined' && referralCode
+      ? `${window.location.origin}/?ref=${referralCode}`
+      : '';
+
+  const handleOpenAuth = (mode: 'login' | 'register' = 'register') => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('proedu-auth-mode', { detail: { mode } }));
+    }
+    openAuthModal();
+  };
 
   const handleCopyReferral = async () => {
     if (!referralUrl) return;
@@ -105,7 +119,9 @@ export default function JokerZoneSection() {
     if (isGuest) {
       const res = recordGuestVideo();
       setGuestState(getGuestState());
-      toast.success(`Video zhlédnuto (${res.videosWatched}/${GUEST_MAX_VIDEOS}). Pro uložení postupu a žolíků se bezplatně zaregistruj!`);
+      toast.success(
+        `Video zhlédnuto (${res.videosWatched}/${GUEST_MAX_VIDEOS}). Pro uložení postupu a žolíků se bezplatně zaregistruj!`
+      );
     } else {
       await claimVideoReward();
     }
@@ -133,536 +149,501 @@ export default function JokerZoneSection() {
     setIsSubmittingSurvey(true);
     try {
       await submitSurvey(
-        selectedSurveyOption, 
+        selectedSurveyOption,
         selectedSurveyOption === 'Jiné' ? customSurveyText.trim() : undefined,
         surveySchool.trim(),
         surveyGrade
       );
+      setIsSurveyModalOpen(false);
     } finally {
       setIsSubmittingSurvey(false);
     }
   };
 
-  // Pokud ještě probíhá zjišťování přihlášení a profil není k dispozici ani z cache,
-  // sekci dočasně neskicujeme, aby se zamezilo probliknutí uzamčených karet či probliknutí u Premium/učitele
   if (loading && !profile) {
     return null;
   }
 
-  // Pokud je uživatel Premium nebo lektor (či jiná vyšší role), sekce se vůbec nezobrazuje
   if (isPremium) {
     return null;
   }
 
+  const capacityPercent = Math.min(
+    100,
+    Math.round(((isGuest ? 10 : jokers) / Math.max(1, isGuest ? 10 : maxJokersCap)) * 100)
+  );
+  const daysToMaxLimit = Math.max(0, MAX_STREAK_DAYS - streak);
+
   return (
-    <section className="bg-white rounded-[2rem] border border-gray-200/80 shadow-md p-4 sm:p-6 lg:p-7 space-y-6 relative overflow-hidden">
-      {/* Decentní barevný přechod v pozadí */}
-      <div className="absolute top-0 right-0 w-72 h-72 bg-gradient-to-br from-yellow-200/25 via-amber-100/15 to-transparent rounded-full blur-3xl -mr-16 -mt-16 pointer-events-none" />
-
+    <section className="bg-white rounded-[2rem] border border-gray-200/80 shadow-sm p-5 sm:p-7 space-y-5 relative overflow-hidden">
       {/* HEADER SECTION */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-gray-100 relative">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shadow-inner shrink-0 text-lg">
-              🃏
-            </div>
-            <div>
-              <h2 className="text-xl sm:text-2xl font-display font-black text-[#1E1B18] tracking-tight">
-                Herní zóna žolíků
-              </h2>
-              <p className="text-gray-500 text-xs sm:text-sm font-medium">
-                Získej bonusové žolíky bez limitu za doporučení a dotazník, drž streak a dobíjej energii videem.
-              </p>
-            </div>
-          </div>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="space-y-0.5">
+          <h2 className="text-2xl sm:text-[26px] font-sans font-black text-[#0F2942] tracking-tight">
+            Herní zóna žolíků
+          </h2>
+          <p className="text-gray-500 text-xs sm:text-sm font-medium">
+            {isGuest
+              ? 'Doplň si žolíky na procvičování. Nejrychleji videem, víc bonusů po registraci.'
+              : 'Bonusy bez limitu a denní doplnění o půlnoci.'}
+          </p>
         </div>
 
-        {/* Joker status pill */}
-        <div className="flex items-center gap-2.5 self-start sm:self-auto bg-[#FAF7F0] border border-gray-200/80 px-3.5 py-1.5 rounded-2xl shadow-2xs">
-          <div className="flex items-center gap-1.5">
-            <span className="text-base">🃏</span>
-            <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Žolíky:</span>
-            <span className="font-mono font-black text-sm text-[#1E1B18]">
-              {isGuest ? '10' : jokers}
+        {/* Joker status box on top right */}
+        {isGuest ? (
+          <div className="self-start sm:self-center bg-[#FCF9F1] border border-[#EFEAD8] px-4 py-2 rounded-full flex items-center gap-3">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+              TVOJE ŽOLÍKY
             </span>
-            {!isGuest && (
-              <span className="text-xs font-bold text-gray-400">
-                / {maxJokersCap}
+            <span className="text-lg font-black text-[#0F2942] leading-none">
+              10
+            </span>
+          </div>
+        ) : (
+          <div className="self-start sm:self-center bg-[#FCF9F1] border border-[#EFEAD8] px-4 py-2.5 rounded-2xl min-w-[168px] space-y-1.5">
+            <div className="flex items-baseline justify-between gap-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                TVOJE ŽOLÍKY
               </span>
-            )}
-          </div>
-
-          {!isGuest && streak > 0 && (
-            <div className="flex items-center gap-1 pl-2 border-l border-gray-200 text-amber-700 font-black text-xs">
-              <HeartPinkIcon size={15} />
-              <span>{streak}d</span>
+              <div>
+                <span className="text-lg font-black text-[#0F2942] leading-none">{jokers}</span>
+                <span className="text-xs font-bold text-gray-400"> / {maxJokersCap}</span>
+              </div>
             </div>
-          )}
-
-          {!isGuest && jokers > maxJokersCap && (
-            <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 font-extrabold text-[10px] tracking-tight border border-emerald-200">
-              +{jokers - maxJokersCap} bonus!
-            </span>
-          )}
-        </div>
+            <div className="w-full h-1.5 rounded-full bg-[#E6DFC8] overflow-hidden">
+              <div
+                className="h-full rounded-full bg-[#2B44B8] transition-all duration-300"
+                style={{ width: `${capacityPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* 4 INTERACTIVE TILES GRID */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 sm:gap-5 items-stretch relative">
-        
-        {/* ========================================================
-            TILE 1: 10DENNÍ STREAK & KAPACITA (DENNÍ PŘÍDĚL)
-           ======================================================== */}
-        <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-600 flex items-center justify-center text-base shadow-2xs">
-                  <HeartPinkIcon size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-[#1E1B18]">10denní streak</h3>
-                  <p className="text-[11px] font-semibold text-gray-500">Odemkne limit 15 žolíků</p>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-lg bg-white border border-gray-200 font-mono font-black text-xs text-orange-600 shadow-2xs">
-                {isGuest ? '0/10' : `${streak}/10`} dní
+      {/* MAIN 2-COLUMN GRID: Left Hero Video Card + Right 3 Stacked Bonus Cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-stretch">
+        {/* LEFT COLUMN: +5 ŽOLÍKŮ VIDEO HERO CARD */}
+        <div className="lg:col-span-6 rounded-3xl bg-[#EEF5FF] border border-[#BFDBFE]/80 p-6 sm:p-7 flex flex-col justify-between gap-6">
+          <div className="space-y-4">
+            <div>
+              <span className="inline-block px-3.5 py-1 rounded-full bg-white text-[#0F2942] text-[10px] font-black uppercase tracking-wider shadow-2xs">
+                {isGuest ? 'NEJRYCHLEJŠÍ ZPŮSOB' : 'DOBÍT VIDEEM'}
               </span>
             </div>
 
-            {/* Streak dots progress */}
-            <div className="space-y-1.5 pt-1">
-              <div className="flex items-center justify-between text-[11px] font-bold">
-                <span className="text-gray-600">Aktuální limit:</span>
-                <span className="font-black text-[#1E1B18]">
-                  {isGuest ? '10' : maxJokersCap} žolíků
+            <div className="flex items-baseline gap-2 pt-1">
+              <span className="text-5xl sm:text-6xl font-black text-[#0F2942] tracking-tight leading-none">
+                +5
+              </span>
+              <span className="text-2xl sm:text-3xl font-black text-[#0F2942]">
+                žolíků
+              </span>
+            </div>
+
+            <p className="text-xs sm:text-sm text-[#0F2942]/80 font-medium leading-relaxed max-w-md">
+              {isGuest
+                ? 'Zhlédni krátké 15s video a doplň energii na procvičování. Funguje hned, bez registrace.'
+                : 'Zhlédni 15s video a doplň energii až do výše své kapacity.'}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {isGuest ? (
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  {[0, 1, 2].map((idx) => {
+                    const isAvailable = idx < videosRemaining;
+                    return (
+                      <span
+                        key={idx}
+                        className={cn(
+                          'w-7 h-2 rounded-full transition-colors',
+                          isAvailable ? 'bg-[#2B44B8]' : 'bg-[#CBD5E1]'
+                        )}
+                      />
+                    );
+                  })}
+                </div>
+                <span className="text-xs font-medium text-[#0F2942]">
+                  {getRemainingVideosLabel(videosRemaining)}
                 </span>
               </div>
-              <div className="grid grid-cols-10 gap-1">
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-black text-[#0F2942]">
+                  <span>Kapacita</span>
+                  <span>
+                    {jokers} / {maxJokersCap}
+                  </span>
+                </div>
+                <div className="w-full h-2.5 rounded-full bg-white overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-[#2B44B8] transition-all duration-300"
+                    style={{ width: `${capacityPercent}%` }}
+                  />
+                </div>
+                <p className="text-xs font-medium text-gray-600">
+                  {isVideoLimitReached
+                    ? 'Dnešní limit 3 videí vyčerpán'
+                    : isCapped
+                      ? `Máš plnou kapacitu (${jokers}/${maxJokersCap})`
+                      : getRemainingVideosLabel(videosRemaining)}
+                </p>
+              </div>
+            )}
+
+            <button
+              type="button"
+              disabled={isVideoLimitReached || isCapped}
+              onClick={() => setIsVideoModalOpen(true)}
+              className="w-full h-12 sm:h-13 rounded-full bg-[#FACC15] hover:bg-[#EAB308] active:scale-[0.99] disabled:opacity-50 disabled:pointer-events-none text-[#0F2942] font-black text-xs sm:text-sm flex items-center justify-center gap-2.5 shadow-2xs transition-all cursor-pointer"
+            >
+              <Play size={14} className="fill-[#0F2942] text-[#0F2942]" />
+              <span>
+                {isVideoLimitReached
+                  ? 'Limit 3 videí vyčerpán'
+                  : isCapped
+                    ? `Kapacita je plná (${jokers}/${maxJokersCap})`
+                    : 'Zhlédnout video a získat +5'}
+              </span>
+            </button>
+          </div>
+        </div>
+
+        {/* RIGHT COLUMN: 3 STACKED BONUS CARDS */}
+        <div className="lg:col-span-6 flex flex-col justify-between gap-3.5">
+          {/* CARD 1: SÉRIE 10 DNÍ V ŘADĚ */}
+          <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-[#FDE68A]/70 text-[#92400E] flex items-center justify-center shrink-0">
+                  <Flame size={19} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
+                    Série 10 dní v řadě
+                  </h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    {isGuest
+                      ? 'Denní limit se zvýší z 10 na 15 žolíků.'
+                      : streak >= MAX_STREAK_DAYS
+                        ? 'Maximální denní limit 15 žolíků je aktivní!'
+                        : `Ještě ${getRemainingDaysLabel(daysToMaxLimit)} do limitu 15 žolíků.`}
+                  </p>
+                </div>
+              </div>
+
+              {isGuest ? (
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#FDE68A]/80 text-[#92400E] text-[11px] font-black">
+                    limit 15
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAuth('register')}
+                    className="text-[11px] text-gray-500 hover:text-[#0F2942] font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Lock size={11} />
+                    <span>Po registraci</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-[#FDE68A]/80 text-[#92400E] text-xs font-black shrink-0">
+                  {Math.min(MAX_STREAK_DAYS, streak)} / {MAX_STREAK_DAYS} dní
+                </span>
+              )}
+            </div>
+
+            {!isGuest && (
+              <div className="grid grid-cols-10 gap-1.5 pt-0.5">
                 {Array.from({ length: MAX_STREAK_DAYS }).map((_, idx) => {
-                  const dayNum = idx + 1;
-                  const isActive = !isGuest && streak >= dayNum;
+                  const isActiveDay = idx < streak;
                   return (
                     <div
-                      key={dayNum}
+                      key={idx}
                       className={cn(
-                        "h-2 rounded-full transition-all duration-300",
-                        isActive
-                          ? "bg-gradient-to-r from-amber-500 to-orange-500 shadow-2xs"
-                          : "bg-gray-200"
+                        'h-2 rounded-full transition-colors',
+                        isActiveDay ? 'bg-[#2B44B8]' : 'bg-[#E6DFC8]'
                       )}
-                      title={`Den ${dayNum}: ${dayNum >= 10 ? 'odemčen limit 15' : 'základní limit 10'} žolíků`}
+                      title={`Den ${idx + 1}`}
                     />
                   );
                 })}
               </div>
-              <div className="flex justify-between text-[10px] text-gray-400 font-bold px-0.5">
-                <span>Základ 10</span>
-                <span>10 dní = 15 🎯</span>
-              </div>
-            </div>
-
-            {/* Daily status box */}
-            <div className="rounded-xl bg-white p-3 border border-gray-200/80 text-xs space-y-1 shadow-2xs">
-              <div className="flex items-center gap-1.5 text-[#1E1B18] font-bold">
-                <StarYellowIcon size={15} />
-                <span>Denní obnova: Do plné kapacity</span>
-              </div>
-              <p className="text-[11px] text-gray-500 font-medium leading-relaxed">
-                {isGuest ? (
-                  'Každý den o půlnoci se žolíky doplní do plné kapacity (10 nebo 15 dle streaku).'
-                ) : hasDailyGrantToday ? (
-                  <span className="text-emerald-700 font-bold flex items-center gap-1">
-                    <CorrectCyanIcon size={13} /> Dnešní energie je připravena!
-                  </span>
-                ) : (
-                  'Doplní se automaticky dnes o půlnoci do plné kapacity.'
-                )}
-              </p>
-            </div>
-          </div>
-
-          {/* Action or Streak extension prompt */}
-          <div>
-            {isGuest ? (
-              <Button
-                size="sm"
-                onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
-              >
-                <Lock size={12} className="text-[#0F2942]" />
-                <span>Registrace pro streak</span>
-              </Button>
-            ) : hasPracticedToday ? (
-              <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold text-center flex items-center justify-center gap-1.5">
-                <CorrectCyanIcon size={14} />
-                <span>Dnešní streak splněn! 🔥</span>
-              </div>
-            ) : (
-              <div className="p-2 rounded-xl bg-amber-50/80 border border-amber-200 text-amber-900 text-[11px] font-bold text-center flex items-center justify-center gap-1">
-                <span>⚡ Vyřeš dnes 1 cvičení a zvedni streak!</span>
-              </div>
             )}
           </div>
-        </div>
 
-        {/* ========================================================
-            TILE 2: DOBÍT ŽOLÍKY VIDEEM (+5 DO KAPACITY)
-           ======================================================== */}
-        <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-yellow-100 text-yellow-700 flex items-center justify-center text-base shadow-2xs">
-                  <Play size={16} className="fill-current" />
+          {/* CARD 2: POZVI KAMARÁDA */}
+          <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-[#DCFCE7] text-[#166534] flex items-center justify-center shrink-0">
+                  <Users size={18} />
                 </div>
-                <div>
-                  <h3 className="font-bold text-sm text-[#1E1B18]">Dobít videem</h3>
-                  <p className="text-[11px] font-semibold text-gray-500">15s sponzorované video (max. 3x/den)</p>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-lg bg-amber-100 text-amber-800 font-black text-xs border border-amber-200 shadow-2xs">
-                +5 žolíků
-              </span>
-            </div>
-
-            <p className="text-xs text-gray-600 font-medium leading-relaxed">
-              Zhlédni krátké video a doplň si energii na procvičování otázek až do výše tvé kapacity.
-            </p>
-
-            {/* Capacity gauge */}
-            <div className="rounded-xl bg-white p-3 border border-gray-200/80 space-y-2 shadow-2xs">
-              <div className="flex justify-between items-center text-xs font-bold">
-                <span className="text-gray-500">Stav kapacity:</span>
-                <span className={cn(
-                  "font-mono font-black",
-                  isCapped ? "text-amber-600" : "text-[#1E1B18]"
-                )}>
-                  {isGuest ? 'Host' : `${jokers} / ${maxJokersCap}`}
-                </span>
-              </div>
-              <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
-                <div 
-                  className={cn(
-                    "h-full rounded-full transition-all duration-300",
-                    isCapped 
-                      ? "bg-gradient-to-r from-amber-500 to-yellow-400" 
-                      : "bg-[#2B44B8]"
-                  )}
-                  style={{ 
-                    width: `${Math.min(100, Math.round(((isGuest ? 10 : jokers) / (isGuest ? 10 : maxJokersCap)) * 100))}%` 
-                  }}
-                />
-              </div>
-              <p className="text-[10px] text-gray-400 font-semibold text-center">
-                {isVideoLimitReached
-                  ? 'Dnešní limit 3 videí vyčerpán'
-                  : isCapped 
-                  ? 'Máš plnou kapacitu – nelze dobít nad limit' 
-                  : `Dnes zbývá: ${Math.max(0, 3 - videosWatchedToday)} zhlédnutí`}
-              </p>
-            </div>
-          </div>
-
-          {/* Action button */}
-          <div>
-            {isVideoLimitReached ? (
-              <Button
-                disabled
-                size="sm"
-                className="w-full rounded-xl bg-gray-100 border border-gray-200 text-gray-400 font-bold text-xs h-9 cursor-not-allowed flex items-center justify-center gap-1.5"
-              >
-                <Lock size={13} />
-                <span>Limit 3 videí vyčerpán</span>
-              </Button>
-            ) : isCapped ? (
-              <Button
-                disabled
-                size="sm"
-                className="w-full rounded-xl bg-gray-100 border border-gray-200 text-gray-400 font-bold text-xs h-9 cursor-not-allowed flex items-center justify-center gap-1.5"
-              >
-                <CorrectCyanIcon size={14} />
-                <span>Kapacita je plná ({jokers}/{maxJokersCap})</span>
-              </Button>
-            ) : (
-              <Button
-                size="sm"
-                onClick={() => setIsVideoModalOpen(true)}
-                className="w-full rounded-xl bg-amber-400 hover:bg-amber-500 text-black font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs transition-transform hover:scale-[1.02]"
-              >
-                <Play size={13} className="fill-current" />
-                <span>Zhlédnout video (+5) – zbývá {Math.max(0, 3 - videosWatchedToday)}x</span>
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* ========================================================
-            TILE 3: POZVI KAMARÁDA (+30 ŽOLÍKŮ PRO OBA)
-           ======================================================== */}
-        <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center text-base shadow-2xs">
-                  <CoopBlueIcon size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-[#1E1B18]">Doporuč kamaráda</h3>
-                  <p className="text-[11px] font-semibold text-emerald-700">Bonusová aktivita</p>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-lg bg-emerald-100 text-emerald-800 font-black text-xs border border-emerald-200 shadow-2xs">
-                +30 pro oba
-              </span>
-            </div>
-
-            <p className="text-xs text-gray-600 font-medium leading-relaxed">
-              Za každého kamaráda, který se zaregistruje přes tvůj odkaz, získáte <strong>oba +30 žolíků bez limitu</strong>.
-            </p>
-
-            {/* Referral slots 5x */}
-            <div className="rounded-xl bg-white p-3 border border-gray-200/80 space-y-2 shadow-2xs">
-              <div className="flex justify-between items-center text-xs font-bold">
-                <span className="text-gray-500">Využito doporučení:</span>
-                <span className="font-mono font-black text-emerald-700">
-                  {isGuest ? '0 / 5' : `${currentReferrals} / ${MAX_REFERRALS}`}
-                </span>
-              </div>
-
-              {/* 5 slot badges */}
-              <div className="grid grid-cols-5 gap-1.5 pt-0.5">
-                {Array.from({ length: MAX_REFERRALS }).map((_, idx) => {
-                  const slotNum = idx + 1;
-                  const isClaimedSlot = !isGuest && currentReferrals >= slotNum;
-                  return (
-                    <div
-                      key={slotNum}
-                      className={cn(
-                        "h-8 rounded-lg flex items-center justify-center text-xs font-black transition-all",
-                        isClaimedSlot
-                          ? "bg-emerald-500 text-white shadow-2xs"
-                          : "bg-gray-100 text-gray-400 border border-dashed border-gray-300"
-                      )}
-                      title={isClaimedSlot ? `Doporučení ${slotNum} vyplaceno (+30)` : `Slot ${slotNum}: volný`}
-                    >
-                      {isClaimedSlot ? <CorrectCyanIcon size={15} /> : `+30`}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <p className="text-[10px] text-gray-400 font-semibold text-center">
-                Maximálně 5 doporučení (až +150 žolíků)
-              </p>
-            </div>
-          </div>
-
-          {/* Copy link or Guest lock */}
-          <div>
-            {isGuest ? (
-              <Button
-                size="sm"
-                onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
-              >
-                <Lock size={12} className="text-[#0F2942]" />
-                <span>Odemknout doporučení</span>
-              </Button>
-            ) : currentReferrals >= MAX_REFERRALS ? (
-              <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-bold text-center flex items-center justify-center gap-1">
-                <span>🎉 Všech 5 doporučení splněno!</span>
-              </div>
-            ) : (
-              <Button
-                size="sm"
-                onClick={handleCopyReferral}
-                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80 transition-transform hover:scale-[1.02]"
-              >
-                {isCopied ? (
-                  <>
-                    <CorrectCyanIcon size={14} />
-                    <span>Zkopírováno do schránky</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy size={13} className="text-[#0F2942]" />
-                    <span>Kopírovat odkaz pro kamarády</span>
-                  </>
-                )}
-              </Button>
-            )}
-          </div>
-        </div>
-
-        {/* ========================================================
-            TILE 4: ODKUD JSTE O NÁS SLYŠELI ? (+15 ŽOLÍKŮ)
-           ======================================================== */}
-        <div className="rounded-2xl bg-[#FAF7F0] border border-gray-200/70 p-4 sm:p-5 flex flex-col justify-between space-y-4 relative">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center text-base shadow-2xs">
-                  <TeamBlueIcon size={18} />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-[#1E1B18] line-clamp-1">
-                    Odkud jste o nás slyšeli ?
+                <div className="min-w-0">
+                  <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
+                    Pozvi kamaráda
                   </h3>
-                  <p className="text-[11px] font-semibold text-blue-700">Jednorázový bonus</p>
-                </div>
-              </div>
-              <span className="px-2 py-0.5 rounded-lg bg-blue-100 text-blue-800 font-black text-xs border border-blue-200 shadow-2xs shrink-0">
-                +15 žolíků
-              </span>
-            </div>
-
-            {/* If completed */}
-            {!isGuest && profile?.surveyCompleted ? (
-              <div className="rounded-xl bg-white p-3.5 border border-emerald-200/80 text-center space-y-2 shadow-2xs my-auto">
-                <div className="w-9 h-9 rounded-full bg-emerald-100 text-emerald-700 mx-auto flex items-center justify-center">
-                  <CorrectCyanIcon size={20} />
-                </div>
-                <div>
-                  <h4 className="font-bold text-xs text-emerald-900">Dotazník dokončen!</h4>
-                  <p className="text-[10px] text-gray-500 font-medium">
-                    +15 bonusových žolíků bylo připsáno k tvému účtu.
+                  <p className="text-xs text-gray-500 font-medium">
+                    {isGuest
+                      ? 'Za každého kamaráda dostanete oba +30. Až 5 doporučení.'
+                      : 'Za každého dostanete oba +30 žolíků.'}
                   </p>
                 </div>
-                <div className="space-y-1 text-[10px] font-bold text-gray-700 text-left bg-[#FAF7F0] p-2 rounded-lg border border-gray-200/60">
-                  {profile?.surveyAnswer && (
-                    <div className="truncate"><span className="text-gray-400 font-medium">Zdroj:</span> {profile.surveyAnswer}</div>
-                  )}
-                  {profile?.surveySchool && (
-                    <div className="truncate"><span className="text-gray-400 font-medium">Škola:</span> {profile.surveySchool}</div>
-                  )}
-                  {profile?.surveyGrade && (
-                    <div className="truncate"><span className="text-gray-400 font-medium">Ročník:</span> {profile.surveyGrade}</div>
-                  )}
-                </div>
               </div>
-            ) : isGuest ? (
-              <div className="space-y-2.5">
-                <p className="text-xs text-gray-600 font-medium leading-relaxed">
-                  Zodpověz 3 rychlé otázky a získej <strong>+15 žolíků ihned</strong> nad rámec denního limitu.
-                </p>
-                <div className="rounded-xl bg-white p-3 border border-gray-200/80 space-y-2 shadow-2xs text-xs text-gray-400">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-gray-300" />
-                    <span>Odkud o nás víte?</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-gray-300" />
-                    <span>Na jakou školu chodíte?</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-gray-300" />
-                    <span>Do kterého ročníku?</span>
-                  </div>
+
+              {isGuest ? (
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#DCFCE7] text-[#166534] text-[11px] font-black">
+                    +30 pro oba
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAuth('register')}
+                    className="text-[11px] text-gray-500 hover:text-[#0F2942] font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Lock size={11} />
+                    <span>Po registraci</span>
+                  </button>
                 </div>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-[#DCFCE7] text-[#166534] text-xs font-black shrink-0">
+                  {currentReferrals} / {MAX_REFERRALS}
+                </span>
+              )}
+            </div>
+
+            {!isGuest && (
+              <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap pt-0.5">
+                <div className="grid grid-cols-5 gap-1.5 flex-1 min-w-[210px]">
+                  {Array.from({ length: MAX_REFERRALS }).map((_, idx) => {
+                    const isClaimed = currentReferrals >= idx + 1;
+                    return (
+                      <div
+                        key={idx}
+                        className={cn(
+                          'h-8 rounded-xl text-xs flex items-center justify-center gap-0.5 transition-colors',
+                          isClaimed
+                            ? 'bg-[#DCFCE7] text-[#166534] font-black'
+                            : 'bg-white/80 border border-[#E6DFC8] text-gray-500 font-bold'
+                        )}
+                      >
+                        {isClaimed && <Check size={12} strokeWidth={3} />}
+                        <span>+30</span>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyReferral}
+                  className="h-8 px-4 rounded-full bg-white hover:bg-gray-50 border border-gray-300 text-[#0F2942] font-bold text-xs shrink-0 transition-colors cursor-pointer"
+                >
+                  {isCopied ? 'Zkopírováno!' : 'Zkopírovat odkaz'}
+                </button>
               </div>
-            ) : (
-              /* Questionnaire Form for registered user who hasn't answered yet */
-              <form onSubmit={handleSurveySubmit} className="space-y-2.5">
-                {/* 1. Otázka: Odkud jste o nás slyšeli */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-gray-500 tracking-wider">
-                    1. Odkud jste o nás slyšeli?
-                  </label>
-                  <select
-                    value={selectedSurveyOption}
-                    onChange={(e) => setSelectedSurveyOption(e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white font-medium focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs"
-                  >
-                    <option value="">-- Vyber možnost --</option>
-                    {SURVEY_OPTIONS.map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {selectedSurveyOption === 'Jiné' && (
-                  <input
-                    type="text"
-                    value={customSurveyText}
-                    onChange={(e) => setCustomSurveyText(e.target.value)}
-                    placeholder="Uveďte odkud..."
-                    maxLength={100}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                )}
-
-                {/* 2. Otázka: Na jakou školu chodíš */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-gray-500 tracking-wider">
-                    2. Na jakou školu chodíš?
-                  </label>
-                  <input
-                    type="text"
-                    value={surveySchool}
-                    onChange={(e) => setSurveySchool(e.target.value)}
-                    placeholder="např. ZŠ Novoborská, Praha"
-                    maxLength={150}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white focus:outline-none focus:border-blue-500 shadow-2xs"
-                  />
-                </div>
-
-                {/* 3. Otázka: Do kterého ročníku */}
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black uppercase text-gray-500 tracking-wider">
-                    3. Do kterého ročníku?
-                  </label>
-                  <select
-                    value={surveyGrade}
-                    onChange={(e) => setSurveyGrade(e.target.value)}
-                    className="w-full text-xs px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white font-medium focus:outline-none focus:border-blue-500 cursor-pointer shadow-2xs"
-                  >
-                    <option value="">-- Vyber ročník --</option>
-                    {GRADE_OPTIONS.map((grade) => (
-                      <option key={grade} value={grade}>{grade}</option>
-                    ))}
-                  </select>
-                </div>
-              </form>
             )}
           </div>
 
-          {/* Action button */}
-          <div>
-            {isGuest ? (
-              <Button
-                size="sm"
-                onClick={openAuthModal}
-                className="w-full rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs border border-blue-200/80"
-              >
-                <Lock size={12} className="text-[#0F2942]" />
-                <span>Registrace pro +15 žolíků</span>
-              </Button>
-            ) : profile?.surveyCompleted ? (
-              <div className="p-2 rounded-xl bg-gray-100 border border-gray-200 text-gray-500 text-[11px] font-bold text-center">
-                Bonus již byl vyplacen
+          {/* CARD 3: RYCHLÝ DOTAZNÍK */}
+          <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
+                  <ClipboardList size={18} />
+                </div>
+                <div className="min-w-0">
+                  <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
+                    Rychlý dotazník
+                  </h3>
+                  <p className="text-xs text-gray-500 font-medium">
+                    {isGuest
+                      ? 'Tři krátké otázky, žolíky navíc k dennímu limitu.'
+                      : 'Tři krátké otázky, jednorázový bonus.'}
+                  </p>
+                </div>
               </div>
-            ) : (
-              <Button
-                size="sm"
-                disabled={!selectedSurveyOption || !surveySchool.trim() || !surveyGrade || isSubmittingSurvey}
-                onClick={handleSurveySubmit}
-                className="w-full rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-black text-xs h-9 cursor-pointer flex items-center justify-center gap-1.5 shadow-2xs transition-transform hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isSubmittingSurvey ? (
-                  <span>Odesílám...</span>
+
+              {isGuest ? (
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span className="px-2.5 py-0.5 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-[11px] font-black">
+                    +15 žolíků
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAuth('register')}
+                    className="text-[11px] text-gray-500 hover:text-[#0F2942] font-medium flex items-center gap-1 cursor-pointer"
+                  >
+                    <Lock size={11} />
+                    <span>Po registraci</span>
+                  </button>
+                </div>
+              ) : (
+                <span className="px-3 py-1 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-xs font-black shrink-0">
+                  +15 žolíků
+                </span>
+              )}
+            </div>
+
+            {!isGuest && (
+              <div>
+                {profile?.surveyCompleted ? (
+                  <div className="w-full h-10 rounded-full bg-[#DCFCE7] text-[#166534] font-black text-xs flex items-center justify-center gap-1.5">
+                    <Check size={14} strokeWidth={2.5} />
+                    <span>Dotazník vyplněn (+15 žolíků připsáno)</span>
+                  </div>
                 ) : (
-                  <>
-                    <span>Odeslat dotazník (+15)</span>
-                    <ArrowRight size={13} />
-                  </>
+                  <button
+                    type="button"
+                    onClick={() => setIsSurveyModalOpen(true)}
+                    className="w-full h-10 rounded-full bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs sm:text-sm flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    Vyplnit dotazník
+                  </button>
                 )}
-              </Button>
+              </div>
             )}
           </div>
         </div>
-
       </div>
+
+      {/* BOTTOM GUEST REGISTRATION BANNER */}
+      {isGuest && (
+        <div className="rounded-2xl bg-[#EEF5FF] border border-[#BFDBFE]/80 px-5 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-0.5">
+            <h3 className="font-black text-sm sm:text-base text-[#0F2942]">
+              Zaregistruj se zdarma a odemkni všechny bonusy
+            </h3>
+            <p className="text-xs text-gray-500 font-medium">
+              Série, doporučení i dotazník: až +165 žolíků navíc a vyšší denní limit.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => handleOpenAuth('register')}
+              className="px-5 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#EAB308] text-[#0F2942] font-black text-xs sm:text-sm transition-colors cursor-pointer"
+            >
+              Registrovat se
+            </button>
+            <button
+              type="button"
+              onClick={() => handleOpenAuth('login')}
+              className="px-5 py-2.5 rounded-full bg-white hover:bg-gray-50 border border-gray-300 text-[#0F2942] font-bold text-xs sm:text-sm transition-colors cursor-pointer"
+            >
+              Přihlásit se
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* DOTAZNÍK MODAL PRO PŘIHLÁŠENÉ */}
+      <Dialog open={isSurveyModalOpen} onOpenChange={setIsSurveyModalOpen}>
+        <DialogContent className="max-w-md p-6 sm:p-7 rounded-3xl bg-white border border-gray-200 shadow-2xl">
+          <div className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
+                <ClipboardList size={20} />
+              </div>
+              <div>
+                <DialogTitle className="font-black text-lg text-[#0F2942]">
+                  Rychlý dotazník (+15 žolíků)
+                </DialogTitle>
+                <DialogDescription className="text-xs text-gray-500 font-medium">
+                  Zodpověz 3 krátké otázky a okamžitě ti připíšeme 15 žolíků nad denní limit.
+                </DialogDescription>
+              </div>
+            </div>
+
+            <form onSubmit={handleSurveySubmit} className="space-y-4 pt-1">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#0F2942] block">
+                  1. Odkud jste o nás slyšeli?
+                </label>
+                <select
+                  value={selectedSurveyOption}
+                  onChange={(e) => setSelectedSurveyOption(e.target.value)}
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white font-medium focus:outline-none focus:border-[#2563EB] cursor-pointer"
+                >
+                  <option value="">-- Vyber možnost --</option>
+                  {SURVEY_OPTIONS.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedSurveyOption === 'Jiné' && (
+                <input
+                  type="text"
+                  value={customSurveyText}
+                  onChange={(e) => setCustomSurveyText(e.target.value)}
+                  placeholder="Uveďte odkud..."
+                  maxLength={100}
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-[#2563EB]"
+                />
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#0F2942] block">
+                  2. Na jakou školu chodíš?
+                </label>
+                <input
+                  type="text"
+                  value={surveySchool}
+                  onChange={(e) => setSurveySchool(e.target.value)}
+                  placeholder="např. ZŠ Novoborská, Praha"
+                  maxLength={150}
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white focus:outline-none focus:border-[#2563EB]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-[#0F2942] block">
+                  3. Do kterého ročníku?
+                </label>
+                <select
+                  value={surveyGrade}
+                  onChange={(e) => setSurveyGrade(e.target.value)}
+                  className="w-full text-xs sm:text-sm px-3.5 py-2.5 rounded-xl border border-gray-200 bg-white font-medium focus:outline-none focus:border-[#2563EB] cursor-pointer"
+                >
+                  <option value="">-- Vyber ročník --</option>
+                  {GRADE_OPTIONS.map((grade) => (
+                    <option key={grade} value={grade}>
+                      {grade}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSurveyModalOpen(false)}
+                  className="px-4 py-2.5 rounded-full border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold text-xs cursor-pointer"
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="submit"
+                  disabled={
+                    !selectedSurveyOption ||
+                    !surveySchool.trim() ||
+                    !surveyGrade ||
+                    isSubmittingSurvey
+                  }
+                  className="px-6 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#EAB308] disabled:opacity-50 disabled:pointer-events-none text-[#0F2942] font-black text-xs sm:text-sm transition-colors cursor-pointer"
+                >
+                  {isSubmittingSurvey ? 'Odesílám...' : 'Odeslat a získat +15'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Rewarded video modal */}
       <RewardedAdModal

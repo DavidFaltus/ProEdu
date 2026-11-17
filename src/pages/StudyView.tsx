@@ -1,20 +1,23 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  ArrowLeft, ChevronDown, ChevronUp, 
-  Play, AlertTriangle
+import {
+  ArrowLeft,
+  ChevronDown,
+  ChevronUp,
+  Play,
+  Lock,
+  Check,
+  RotateCcw
 } from 'lucide-react';
 import {
-  BookCyanIcon,
   CorrectCyanIcon,
   WrongPinkIcon,
   StarPinkIcon,
   StarYellowIcon,
-  BulbYellowIcon,
+  BulbYellowIcon
 } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
-import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import {
   fetchStudySubtopic,
@@ -23,9 +26,14 @@ import {
 } from '../services/practiceService';
 import { PracticeSubtopic, StudyStep, MaterialStatus } from '../types';
 import { MathRenderer } from '../components/common/MathRenderer';
-import { Lock } from 'lucide-react';
 import InlineStudyMedia from '../components/common/InlineStudyMedia';
+import TheoryMaterialViewer from '../components/study/TheoryMaterialViewer';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+
+interface StoredStudyProgress {
+  completedSteps: number[];
+  verifiedAnswers: Record<number, string>;
+}
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
@@ -40,7 +48,12 @@ export default function StudyView() {
   const [accessDenied, setAccessDenied] = useState(false);
 
   const [expandedTips, setExpandedTips] = useState<Record<number, boolean>>({});
-  const [stepAnswers, setStepAnswers] = useState<Record<number, string | null>>({});
+  const [completedSteps, setCompletedSteps] = useState<number[]>([]);
+  const [verifiedAnswers, setVerifiedAnswers] = useState<Record<number, string>>({});
+  const [selectedOptions, setSelectedOptions] = useState<Record<number, string>>({});
+  const [wrongAttemptStep, setWrongAttemptStep] = useState<Record<number, boolean>>({});
+  const [expandedCompletedSteps, setExpandedCompletedSteps] = useState<Record<number, boolean>>({});
+
   const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
   const [materialMeta, setMaterialMeta] = useState<{
     status?: MaterialStatus;
@@ -52,6 +65,12 @@ export default function StudyView() {
     fileType?: string | null;
     originalName?: string | null;
   } | null>(null);
+
+  const progressStorageKey = useMemo(() => {
+    if (!subtopicId) return null;
+    const uidPart = user?.uid || 'guest';
+    return `proedu_study_progress_${uidPart}_${subtopicId}`;
+  }, [user?.uid, subtopicId]);
 
   useEffect(() => {
     async function loadData() {
@@ -71,7 +90,7 @@ export default function StudyView() {
       try {
         const [studyRes, catalog] = await Promise.all([
           fetchStudySubtopic(subtopicId),
-          fetchPracticeCatalog({ includeHidden: isTeacher }).catch(() => null),
+          fetchPracticeCatalog({ includeHidden: isTeacher }).catch(() => null)
         ]);
 
         if (studyRes.forbidden) {
@@ -91,7 +110,7 @@ export default function StudyView() {
           setQuestionCount(cfgTotal || data.questionCount || 0);
 
           const matchedTopic = catalog?.topics.find(
-            t => t.id === data.topicId || t.title === data.topicId
+            (t) => t.id === data.topicId || t.title === data.topicId
           );
           setTopicTitle(matchedTopic?.title || data.topicId || '');
         }
@@ -104,7 +123,101 @@ export default function StudyView() {
     loadData();
   }, [subtopicId, hasStudyAccess, isTeacher]);
 
-  const linkedMaterialId = React.useMemo(() => {
+  const steps: StudyStep[] = subtopic?.studySteps || [];
+
+  // Load saved step completion progress from localStorage
+  useEffect(() => {
+    if (!progressStorageKey || !subtopic) return;
+    const totalSteps = (subtopic.studySteps || []).length;
+    try {
+      const raw = localStorage.getItem(progressStorageKey);
+      if (!raw) {
+        setCompletedSteps([]);
+        setVerifiedAnswers({});
+        setSelectedOptions({});
+        setWrongAttemptStep({});
+        setExpandedCompletedSteps({});
+        return;
+      }
+      const parsed: StoredStudyProgress = JSON.parse(raw);
+      const validCompleted = Array.isArray(parsed.completedSteps)
+        ? parsed.completedSteps.filter((idx) => typeof idx === 'number' && idx >= 0 && idx < totalSteps)
+        : [];
+      const validAnswers =
+        parsed.verifiedAnswers && typeof parsed.verifiedAnswers === 'object'
+          ? parsed.verifiedAnswers
+          : {};
+      setCompletedSteps(validCompleted);
+      setVerifiedAnswers(validAnswers);
+      setSelectedOptions(validAnswers);
+      setWrongAttemptStep({});
+      setExpandedCompletedSteps({});
+    } catch {
+      setCompletedSteps([]);
+      setVerifiedAnswers({});
+      setSelectedOptions({});
+      setWrongAttemptStep({});
+      setExpandedCompletedSteps({});
+    }
+  }, [progressStorageKey, subtopic]);
+
+  const saveProgress = (nextCompleted: number[], nextVerified: Record<number, string>) => {
+    if (!progressStorageKey) return;
+    try {
+      const payload: StoredStudyProgress = {
+        completedSteps: nextCompleted,
+        verifiedAnswers: nextVerified
+      };
+      localStorage.setItem(progressStorageKey, JSON.stringify(payload));
+    } catch {
+      // Ignore quota errors
+    }
+  };
+
+  const markStepCompleted = (idx: number, answerVal: string) => {
+    const nextCompleted = completedSteps.includes(idx)
+      ? completedSteps
+      : [...completedSteps, idx].sort((a, b) => a - b);
+    const nextVerified = { ...verifiedAnswers, [idx]: answerVal };
+    setCompletedSteps(nextCompleted);
+    setVerifiedAnswers(nextVerified);
+    setWrongAttemptStep((prev) => ({ ...prev, [idx]: false }));
+    setExpandedCompletedSteps((prev) => ({ ...prev, [idx]: false }));
+    saveProgress(nextCompleted, nextVerified);
+  };
+
+  const handleResetStepsProgress = () => {
+    setCompletedSteps([]);
+    setVerifiedAnswers({});
+    setSelectedOptions({});
+    setWrongAttemptStep({});
+    setExpandedCompletedSteps({});
+    if (progressStorageKey) {
+      try {
+        localStorage.removeItem(progressStorageKey);
+      } catch {}
+    }
+  };
+
+  const handleSelectOption = (idx: number, opt: string) => {
+    setSelectedOptions((prev) => ({ ...prev, [idx]: opt }));
+    if (wrongAttemptStep[idx]) {
+      setWrongAttemptStep((prev) => ({ ...prev, [idx]: false }));
+    }
+  };
+
+  const handleCheckStepAnswer = (idx: number, step: StudyStep) => {
+    const chosen = selectedOptions[idx]?.trim();
+    if (!chosen) return;
+    const expected = step.correctAnswer?.trim();
+    if (!expected || chosen === expected) {
+      markStepCompleted(idx, selectedOptions[idx]!);
+    } else {
+      setWrongAttemptStep((prev) => ({ ...prev, [idx]: true }));
+    }
+  };
+
+  const linkedMaterialId = useMemo(() => {
     if (!subtopic) return null;
     if (subtopic.materialId) return subtopic.materialId;
     const candidateUrl = subtopic.pdfUrl || subtopic.fileUrl || subtopic.svgUrl || '';
@@ -153,7 +266,11 @@ export default function StudyView() {
   }, [linkedMaterialId, hasStudyAccess]);
 
   const toggleTip = (index: number) => {
-    setExpandedTips(prev => ({ ...prev, [index]: !prev[index] }));
+    setExpandedTips((prev) => ({ ...prev, [index]: !prev[index] }));
+  };
+
+  const toggleCompletedStepExpand = (index: number) => {
+    setExpandedCompletedSteps((prev) => ({ ...prev, [index]: !prev[index] }));
   };
 
   if (loading) {
@@ -232,24 +349,46 @@ export default function StudyView() {
     );
   }
 
-  const effectiveFileUrl = materialMeta?.fileUrl || subtopic.fileUrl || subtopic.pdfUrl || subtopic.svgUrl || null;
+  const effectiveFileUrl =
+    materialMeta?.fileUrl || subtopic.fileUrl || subtopic.pdfUrl || subtopic.svgUrl || null;
   const effectivePdfUrl = materialMeta?.pdfUrl || subtopic.pdfUrl || null;
+  const effectiveDownloadUrl = materialMeta?.downloadUrl || subtopic.downloadUrl || null;
   const effectiveFileType = materialMeta?.fileType || subtopic.fileType || null;
   const effectiveOriginalName = materialMeta?.originalName || subtopic.originalName || null;
 
-  const hasVisualMaterial = Boolean(effectiveFileUrl || effectivePdfUrl || subtopic.svgUrl || subtopic.svgContent);
+  const hasVisualMaterial = Boolean(
+    effectiveFileUrl || effectivePdfUrl || subtopic.svgUrl || subtopic.svgContent
+  );
   const isMaterialProcessing = materialMeta?.status === 'processing';
   const isMaterialError = materialMeta?.status === 'error';
-  const steps: StudyStep[] = subtopic.studySteps || [];
+  const cleanTheoryText =
+    subtopic.studyTheory?.trim() && !subtopic.studyTheory.includes('<svg')
+      ? subtopic.studyTheory.trim()
+      : '';
+
+  const hasTheorySection = Boolean(
+    isMaterialProcessing || isMaterialError || hasVisualMaterial || cleanTheoryText
+  );
+  const hasStepsSection = steps.length > 0;
+  const isTwoColumnLayout = hasTheorySection && hasStepsSection;
+
+  // Determine the first incomplete step index (steps unlock strictly sequentially)
+  let firstIncompleteIdx = steps.length;
+  for (let i = 0; i < steps.length; i++) {
+    if (!completedSteps.includes(i)) {
+      firstIncompleteIdx = i;
+      break;
+    }
+  }
+  const allStepsCompleted = steps.length === 0 || completedSteps.length >= steps.length;
 
   return (
-    <>
-      <div className="w-full max-w-5xl mx-auto space-y-8 pb-16 relative">
+    <div className="w-full max-w-7xl mx-auto space-y-6 pb-16 relative">
       {/* Top Breadcrumb Navigation */}
-      <div className="flex items-center justify-between">
-        <Link 
-          to="/practice" 
-          className="inline-flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-[#1E1B18] transition-colors bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100"
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <Link
+          to="/practice"
+          className="inline-flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-[#1E1B18] transition-colors bg-white px-4 py-2 rounded-xl shadow-2xs border border-gray-100"
         >
           <ArrowLeft size={16} /> Zpět na témata
         </Link>
@@ -257,7 +396,7 @@ export default function StudyView() {
         {questionCount > 0 && (
           <Button
             onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-5 h-11 flex items-center gap-2 shadow-xs hover:scale-[1.02] transition-transform cursor-pointer"
+            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-5 h-11 flex items-center gap-2 shadow-2xs hover:scale-[1.01] transition-transform cursor-pointer"
           >
             <Play size={16} className="fill-[#0F2942] text-[#0F2942]" />
             <span>Spustit procvičování ({questionCount} úloh)</span>
@@ -266,19 +405,14 @@ export default function StudyView() {
       </div>
 
       {/* Main Topic Header */}
-      <header className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm relative overflow-hidden">
-        <div className="relative z-10 space-y-2">
-          {/* Breadcrumbs single row: Předmět -> téma -> podtéma -> studijní materiál */}
+      <header className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-2xs relative overflow-hidden">
+        <div className="relative z-10 space-y-1.5">
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-bold text-gray-500 flex-wrap">
-            <span className="text-gray-900 font-black">{subtopic.subjectId}</span>
+            <span>{subtopic.subjectId}</span>
             <span className="text-gray-300">→</span>
             <span>{topicTitle || 'Téma'}</span>
             <span className="text-gray-300">→</span>
             <span className="text-gray-700">{subtopic.title}</span>
-            <span className="text-gray-300">→</span>
-            <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200/60">
-              Studijní materiál
-            </span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-playful text-gray-700 tracking-tight pt-1">
@@ -287,326 +421,494 @@ export default function StudyView() {
         </div>
       </header>
 
-      {/* Vizuální výukový list NEBO Teoretický výklad (pokud není k dispozici soubor) */}
-      {isMaterialProcessing ? (
-        <div className="bg-amber-50/80 border border-amber-200 rounded-3xl p-10 text-center space-y-3 shadow-sm">
-          <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <h3 className="font-bold text-lg text-amber-950">Studijní materiál se právě připravuje...</h3>
-          <p className="text-xs sm:text-sm text-amber-800 max-w-md mx-auto">
-            Soubor se dokončuje na serveru a během okamžiku se zde automaticky zobrazí.
-          </p>
-        </div>
-      ) : isMaterialError ? (
-        <div className="bg-rose-50 border border-rose-200 rounded-3xl p-8 text-center space-y-2 shadow-sm">
-          <AlertTriangle size={28} className="text-rose-600 mx-auto" />
-          <h3 className="font-bold text-base text-rose-900">Materiál se nepodařilo připravit</h3>
-          <p className="text-xs text-rose-700">{materialMeta?.errorMessage || 'Zkuste to prosím později nebo kontaktujte vyučujícího.'}</p>
-        </div>
-      ) : hasVisualMaterial ? (
-        <InlineStudyMedia
-          svgContent={subtopic.svgContent}
-          fileUrl={effectiveFileUrl}
-          pdfUrl={effectivePdfUrl}
-          svgUrl={subtopic.svgUrl}
-          fileType={effectiveFileType}
-          originalName={effectiveOriginalName}
-          alt={subtopic.title}
-        />
-      ) : (subtopic.studyTheory?.trim() && !subtopic.studyTheory.includes('<svg')) ? (
-        <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-              <BookCyanIcon size={22} />
-            </div>
-            <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18]">
-              Teoretický výklad
-            </h3>
-          </div>
-          <div className="text-gray-700 font-medium text-sm sm:text-base leading-relaxed">
-            <MathRenderer
-              content={subtopic.studyTheory}
-              imageMap={subtopic.sampleProblem?.theoryImages}
+      {/* Main Study Layout: 2-Column when both Theory & Steps exist, 1-Column otherwise */}
+      <div
+        className={
+          isTwoColumnLayout
+            ? 'grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start'
+            : 'max-w-4xl mx-auto w-full space-y-6'
+        }
+      >
+        {/* LEFT COLUMN: 1 Teorie (Sticky on desktop) */}
+        {hasTheorySection && (
+          <div className={isTwoColumnLayout ? 'lg:col-span-5 lg:sticky lg:top-6' : 'w-full'}>
+            <TheoryMaterialViewer
+              title={subtopic.title}
+              svgContent={subtopic.svgContent}
+              fileUrl={effectiveFileUrl}
+              pdfUrl={effectivePdfUrl}
+              svgUrl={subtopic.svgUrl}
+              downloadUrl={effectiveDownloadUrl}
+              fileType={effectiveFileType}
+              originalName={effectiveOriginalName}
+              studyTheory={cleanTheoryText}
+              theoryImages={subtopic.sampleProblem?.theoryImages}
+              isProcessing={isMaterialProcessing}
+              isError={isMaterialError}
+              errorMessage={materialMeta?.errorMessage}
+              showStickyHint={isTwoColumnLayout}
             />
           </div>
-        </div>
-      ) : null}
+        )}
 
-      {/* Postup řešení krok za krokem */}
-      {steps.length > 0 && (
-        <div className="space-y-4">
-          <div className="flex items-center gap-3 px-2">
-            <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-              <CorrectCyanIcon size={22} />
+        {/* RIGHT COLUMN: 2 Postup řešení krok za krokem */}
+        {hasStepsSection && (
+          <div className={isTwoColumnLayout ? 'lg:col-span-7 space-y-4' : 'w-full space-y-4'}>
+            {/* Section Header */}
+            <div className="flex items-center justify-between gap-3 px-1">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-[#DCEBFE] text-[#1D4ED8] font-black text-sm flex items-center justify-center shrink-0">
+                  {hasTheorySection ? '2' : '1'}
+                </div>
+                <h2 className="font-sans font-black text-xl sm:text-2xl text-[#0F2942]">
+                  Postup řešení krok za krokem
+                </h2>
+              </div>
+
+              {completedSteps.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleResetStepsProgress}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-gray-500 hover:text-[#0F2942] transition-colors cursor-pointer"
+                  title="Resetovat splněné kroky a projít je znovu"
+                >
+                  <RotateCcw size={13} />
+                  <span>Projít znovu</span>
+                </button>
+              )}
             </div>
-            <h3 className="font-sans font-black text-2xl text-[#1E1B18]">
-              Postup řešení krok za krokem
-            </h3>
-          </div>
 
-          <div className="grid gap-4">
-            {steps.map((step, idx) => {
-              const isLocked = !hasStudyAccess && idx > 0;
-              if (isLocked && idx > 1) return null;
+            {/* Steps List */}
+            <div className="space-y-3.5">
+              {steps.map((step, idx) => {
+                const isCompleted = completedSteps.includes(idx);
+                const isActive = idx === firstIncompleteIdx;
+                const isLocked = !isCompleted && idx > firstIncompleteIdx;
+                const isExpandedCompleted = isCompleted && Boolean(expandedCompletedSteps[idx]);
 
-              if (isLocked) {
-                return (
-                  <div
-                    key="premium-lock"
-                    className="p-8 bg-gradient-to-br from-amber-500/10 via-yellow-500/5 to-white rounded-3xl border-2 border-yellow-400/50 shadow-xl text-center space-y-4 relative overflow-hidden"
-                  >
-                    <div className="w-14 h-14 mx-auto rounded-2xl bg-yellow-400 text-black flex items-center justify-center shadow-md">
-                      <StarPinkIcon className="w-8 h-8" />
-                    </div>
-                    <div className="max-w-md mx-auto space-y-1.5">
-                      <h4 className="text-xl font-display font-black text-[#1E1B18]">
-                        Další kroky řešení jsou součástí ProEdu Premium
-                      </h4>
-                      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed">
-                        Odemkni kompletní teorii, rozbory všech {steps.length} kroků a tipy lektora pro úspěšné zvládnutí přijímaček.
-                      </p>
-                    </div>
-                    <div className="flex justify-center pt-2">
-                      <Button
-                        onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-                        className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-xs h-11 px-6 shadow-xs cursor-pointer"
-                      >
-                        <Play size={14} className="fill-[#0F2942] text-[#0F2942] mr-1" />
-                        Přejít na procvičování tohoto tématu
-                      </Button>
-                    </div>
-                  </div>
+                const hasStepAttachment = Boolean(
+                  step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl
                 );
-              }
+                const validOptions = Array.isArray(step.testOptions)
+                  ? step.testOptions.filter(Boolean).slice(0, 4)
+                  : [];
+                const hasMultipleChoiceQuestion = Boolean(
+                  step.testQuestion && validOptions.length > 0
+                );
 
-              return (
-              <motion.div
-                key={idx}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.08 }}
-                className="p-6 bg-white rounded-3xl border border-gray-100 shadow-sm flex flex-col gap-4 sm:gap-6 hover:shadow-md transition-shadow"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex items-start gap-4 sm:gap-6 flex-1 min-w-0">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-2xl bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 font-black text-base sm:text-lg flex items-center justify-center shrink-0 shadow-xs">
-                      {idx + 1}
+                // STATE 1: COMPLETED & COLLAPSED (Compact bar like Krok 1 in design)
+                if (isCompleted && !isExpandedCompleted) {
+                  return (
+                    <motion.div
+                      key={idx}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      onClick={() => toggleCompletedStepExpand(idx)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleCompletedStepExpand(idx);
+                        }
+                      }}
+                      className="bg-white rounded-2xl px-5 py-4 border border-gray-100 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all flex items-center justify-between gap-4 cursor-pointer"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                          <Check size={18} strokeWidth={2.5} />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
+                            KROK {idx + 1}
+                          </span>
+                          <h3 className="font-black text-sm sm:text-base text-[#0F2942] truncate">
+                            <MathRenderer content={step.title} inline />
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black">
+                          Splněno
+                        </span>
+                        <ChevronDown size={16} className="text-gray-400" />
+                      </div>
+                    </motion.div>
+                  );
+                }
+
+                // STATE 2: LOCKED STEP (Compact bar with lock icon)
+                if (isLocked) {
+                  return (
+                    <div
+                      key={idx}
+                      className="bg-white/75 rounded-2xl px-5 py-4 border border-gray-200/70 flex items-center justify-between gap-4 select-none"
+                    >
+                      <div className="flex items-center gap-3.5 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
+                          <Lock size={16} />
+                        </div>
+                        <div className="min-w-0">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
+                            KROK {idx + 1}
+                          </span>
+                          <h3 className="font-bold text-sm sm:text-base text-gray-500 truncate">
+                            <MathRenderer content={step.title} inline />
+                          </h3>
+                        </div>
+                      </div>
+
+                      <span className="text-xs font-bold text-gray-400 shrink-0">
+                        Odemkne se po kroku {idx}
+                      </span>
                     </div>
-                    <div className="space-y-1.5 flex-1 min-w-0">
-                      <h4 className="font-bold text-lg sm:text-xl text-[#1E1B18] tracking-tight">
-                        <MathRenderer content={step.title} inline />
-                      </h4>
-                      <div className="text-gray-600 font-medium text-sm sm:text-base leading-relaxed">
+                  );
+                }
+
+                // STATE 3: ACTIVE STEP (or EXPANDED COMPLETED STEP)
+                return (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`p-5 sm:p-6 bg-white rounded-3xl transition-all flex flex-col gap-4 ${
+                      isActive
+                        ? 'border-2 border-[#B9D8FC] shadow-sm'
+                        : 'border border-emerald-200 shadow-2xs'
+                    }`}
+                  >
+                    {/* Step Header */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                        {isCompleted ? (
+                          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
+                            <Check size={18} strokeWidth={2.5} />
+                          </div>
+                        ) : (
+                          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#DCEBFE] text-[#1D4ED8] font-black text-sm sm:text-base flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </div>
+                        )}
+
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
+                            KROK {idx + 1} Z {steps.length}
+                          </span>
+                          <h3 className="font-black text-lg sm:text-xl text-[#0F2942] tracking-tight leading-snug">
+                            <MathRenderer content={step.title} inline />
+                          </h3>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {step.tutorTip && (
+                          <button
+                            type="button"
+                            onClick={() => toggleTip(idx)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold text-xs transition-all cursor-pointer ${
+                              expandedTips[idx]
+                                ? 'bg-amber-400 text-[#1E1B18] shadow-2xs ring-2 ring-amber-400/40'
+                                : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80'
+                            }`}
+                            title={expandedTips[idx] ? 'Skrýt tip od lektora' : 'Zobrazit tip od lektora'}
+                          >
+                            <BulbYellowIcon size={15} />
+                            <span>Tip od lektora</span>
+                          </button>
+                        )}
+
+                        {isCompleted && (
+                          <button
+                            type="button"
+                            onClick={() => toggleCompletedStepExpand(idx)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-black transition-colors cursor-pointer"
+                            title="Sbalit krok"
+                          >
+                            <span>Splněno</span>
+                            <ChevronUp size={14} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Tutor Tip Bubble */}
+                    {step.tutorTip && (
+                      <AnimatePresence>
+                        {expandedTips[idx] && (
+                          <motion.div
+                            initial={{ opacity: 0, y: -6, scale: 0.98 }}
+                            animate={{ opacity: 1, y: 0, scale: 1 }}
+                            exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                            transition={{ duration: 0.18 }}
+                            className="relative"
+                          >
+                            <div className="p-4 bg-gradient-to-br from-amber-50 to-orange-50/50 rounded-2xl border border-amber-200/80 text-amber-950 shadow-2xs space-y-1">
+                              <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-wider text-amber-800">
+                                <StarPinkIcon size={14} />
+                                <span>Doporučení lektora</span>
+                              </div>
+                              <div className="text-xs sm:text-sm font-medium leading-relaxed text-amber-900">
+                                <MathRenderer content={step.tutorTip} />
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    )}
+
+                    {/* Step Explanation Text */}
+                    {step.content?.trim() && (
+                      <div className="text-gray-700 font-medium text-sm sm:text-base leading-relaxed">
                         <MathRenderer
                           content={step.content}
                           imageMap={subtopic.sampleProblem?.theoryImages}
                         />
                       </div>
-                    </div>
-                  </div>
-
-                  {/* Tutor Tip Button in top right corner */}
-                  {step.tutorTip && (
-                    <div className="shrink-0 pt-0.5">
-                      <button 
-                        onClick={() => toggleTip(idx)}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl font-bold text-xs sm:text-sm transition-all cursor-pointer shadow-xs ${
-                          expandedTips[idx]
-                            ? "bg-amber-400 text-[#1E1B18] shadow-sm ring-2 ring-amber-400/40"
-                            : "bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80"
-                        }`}
-                        title={expandedTips[idx] ? "Skrýt tip od lektora" : "Zobrazit tip od lektora"}
-                      >
-                        <BulbYellowIcon size={16} />
-                        <span className="hidden sm:inline">Tip od lektora</span>
-                        <span className="sm:hidden">Tip</span>
-                        {expandedTips[idx] ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Step Image / SVG */}
-                {(step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl) && (
-                  <InlineStudyMedia
-                    svgContent={step.svgContent}
-                    fileUrl={step.fileUrl}
-                    pdfUrl={step.pdfUrl}
-                    imageUrl={step.imageUrl}
-                    fileType={step.fileType}
-                    originalName={step.originalName}
-                    alt={step.title || `Příloha ke kroku ${idx + 1}`}
-                    className="py-1"
-                  />
-                )}
-
-                {/* Tutor Tip - Bublinka lektora rozkliknutá přímo pod záhlavím s ocáskem směřujícím k tlačítku vpravo */}
-                {step.tutorTip && (
-                  <AnimatePresence>
-                    {expandedTips[idx] && (
-                      <motion.div
-                        initial={{ opacity: 0, y: -6, scale: 0.98 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -6, scale: 0.98 }}
-                        transition={{ duration: 0.2 }}
-                        className="relative mt-1"
-                      >
-                        {/* Triangle speech bubble tail positioned towards the button in the top right */}
-                        <div className="absolute -top-2 right-8 sm:right-12 w-0 h-0 border-x-8 border-x-transparent border-b-8 border-b-amber-200" />
-                        <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-50 to-orange-50/50 rounded-2xl border border-amber-200/80 text-amber-950 shadow-sm space-y-1.5">
-                          <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider text-amber-800">
-                            <StarPinkIcon size={15} />
-                            <span>Doporučení lektora</span>
-                          </div>
-                          <div className="text-sm sm:text-base font-medium leading-relaxed text-amber-900">
-                            <MathRenderer content={step.tutorTip} />
-                          </div>
-                        </div>
-                      </motion.div>
                     )}
-                  </AnimatePresence>
-                )}
-                
-                {/* 4-choice Test Question */}
-                {step.testQuestion && (
-                  <div className="mt-2 pt-4 border-t border-gray-100 space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-black uppercase tracking-wider bg-blue-100 text-blue-900 px-2.5 py-0.5 rounded-md">
-                        Otázka k ověření kroku
-                      </span>
-                    </div>
-                    <div className="font-bold text-gray-900 text-sm sm:text-base leading-snug">
-                      <MathRenderer content={step.testQuestion} />
-                    </div>
 
-                    {step.testOptions && step.testOptions.length > 0 && step.testOptions.some(Boolean) ? (
-                      <div className="space-y-3">
-                        <div className="grid sm:grid-cols-2 gap-2.5">
-                          {step.testOptions.filter(Boolean).slice(0, 4).map((opt, oIdx) => {
-                            const isSelected = stepAnswers[idx]?.trim() === opt.trim();
-                            const isCorrect = step.correctAnswer?.trim() === opt.trim();
-                            const hasAnswered = stepAnswers[idx] !== undefined && stepAnswers[idx] !== null;
+                    {/* Step Embedded SVG Image (purely embedded, non-interactive, no download) */}
+                    {hasStepAttachment && (
+                      <div
+                        className="py-1 pointer-events-none select-none"
+                        onContextMenu={(e) => e.preventDefault()}
+                      >
+                        <InlineStudyMedia
+                          svgContent={step.svgContent}
+                          fileUrl={step.fileUrl}
+                          pdfUrl={step.pdfUrl}
+                          imageUrl={step.imageUrl}
+                          fileType={step.fileType}
+                          originalName={step.originalName}
+                          alt={step.title || `Krok ${idx + 1}`}
+                        />
+                      </div>
+                    )}
 
-                            let btnClass = "p-3.5 rounded-2xl border text-sm font-semibold text-left transition-all flex items-center gap-3 ";
-                            if (hasAnswered) {
-                              if (isSelected) {
-                                btnClass += isCorrect
-                                  ? "bg-emerald-100 border-emerald-400 text-emerald-950 font-bold shadow-sm"
-                                  : "bg-red-100 border-red-400 text-red-950 font-bold shadow-sm";
-                              } else {
-                                btnClass += isCorrect
-                                  ? "bg-emerald-50 border-emerald-300 text-emerald-900 font-bold"
-                                  : "bg-gray-50 border-gray-100 text-gray-400 opacity-50";
-                              }
-                            } else {
-                              btnClass += "bg-white border-gray-200 hover:border-gray-900 hover:bg-gray-50/80 text-gray-800 cursor-pointer shadow-xs";
-                            }
-
-                            return (
-                              <button 
-                                key={oIdx} 
-                                className={btnClass}
-                                onClick={() => !hasAnswered && setStepAnswers(prev => ({ ...prev, [idx]: opt }))}
-                                disabled={hasAnswered}
-                              >
-                                <span className="w-6 h-6 rounded-xl bg-gray-100 text-gray-700 text-xs font-black flex items-center justify-center shrink-0">
-                                  {['A', 'B', 'C', 'D'][oIdx] || oIdx + 1}
-                                </span>
-                                <span className="leading-snug flex-1">
-                                  <MathRenderer content={opt} inline />
-                                </span>
-                              </button>
-                            );
-                          })}
+                    {/* Verification Question or Step Completion Action */}
+                    {step.testQuestion ? (
+                      <div className="pt-3 border-t border-gray-100 space-y-3">
+                        <div>
+                          <span className="inline-block text-[10px] font-black uppercase tracking-wider bg-[#EBF3FE] text-[#1E40AF] px-2.5 py-1 rounded-md">
+                            Otázka k ověření kroku
+                          </span>
                         </div>
 
-                        {stepAnswers[idx] !== undefined && stepAnswers[idx] !== null && (
-                          <div className={`p-3.5 rounded-2xl border text-xs sm:text-sm font-bold flex items-center justify-between gap-3 ${
-                            stepAnswers[idx]?.trim() === step.correctAnswer?.trim()
-                              ? "bg-emerald-50 border-emerald-200 text-emerald-900"
-                              : "bg-rose-50 border-rose-200 text-rose-900"
-                          }`}>
-                            <div className="flex items-center gap-2.5">
-                              {stepAnswers[idx]?.trim() === step.correctAnswer?.trim() ? (
-                                <>
-                                  <CorrectCyanIcon size={20} className="shrink-0" />
-                                  <span>Správná odpověď! Skvělá práce.</span>
-                                </>
-                              ) : (
-                                <>
-                                  <WrongPinkIcon size={20} className="shrink-0" />
-                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                    <span>Nesprávně.</span>
-                                    {step.correctAnswer && (
-                                      <span>
-                                        Správná odpověď je: <MathRenderer content={step.correctAnswer} inline />
-                                      </span>
-                                    )}
-                                  </span>
-                                </>
-                              )}
+                        <div className="font-black text-[#0F2942] text-sm sm:text-base leading-snug">
+                          <MathRenderer content={step.testQuestion} />
+                        </div>
+
+                        {hasMultipleChoiceQuestion ? (
+                          <div className="space-y-3.5">
+                            <div className="grid sm:grid-cols-2 gap-2.5">
+                              {validOptions.map((opt, oIdx) => {
+                                const currentSelection = isCompleted
+                                  ? verifiedAnswers[idx] || step.correctAnswer
+                                  : selectedOptions[idx];
+                                const isSelected = currentSelection?.trim() === opt.trim();
+                                const isWrongSelected =
+                                  !isCompleted && isSelected && Boolean(wrongAttemptStep[idx]);
+
+                                let btnClass =
+                                  'p-3.5 rounded-2xl text-sm font-bold text-left transition-all flex items-center gap-3 ';
+                                let badgeClass =
+                                  'w-7 h-7 rounded-full text-xs font-black flex items-center justify-center shrink-0 transition-colors ';
+
+                                if (isCompleted) {
+                                  if (isSelected) {
+                                    btnClass +=
+                                      'bg-emerald-50/80 border-2 border-emerald-500 text-emerald-950';
+                                    badgeClass += 'bg-emerald-600 text-white';
+                                  } else {
+                                    btnClass +=
+                                      'bg-gray-50/60 border border-gray-200 text-gray-400 opacity-60';
+                                    badgeClass += 'bg-gray-100 text-gray-400';
+                                  }
+                                } else if (isWrongSelected) {
+                                  btnClass +=
+                                    'bg-rose-50/70 border-2 border-rose-400 text-rose-950 cursor-pointer';
+                                  badgeClass += 'bg-rose-600 text-white';
+                                } else if (isSelected) {
+                                  btnClass +=
+                                    'bg-white border-2 border-[#2563EB] text-[#0F2942] shadow-2xs cursor-pointer';
+                                  badgeClass += 'bg-[#2563EB] text-white';
+                                } else {
+                                  btnClass +=
+                                    'bg-white border border-gray-200 hover:border-gray-300 hover:bg-gray-50/60 text-gray-800 cursor-pointer';
+                                  badgeClass += 'bg-gray-100 text-gray-600';
+                                }
+
+                                return (
+                                  <button
+                                    key={oIdx}
+                                    type="button"
+                                    className={btnClass}
+                                    onClick={() => !isCompleted && handleSelectOption(idx, opt)}
+                                    disabled={isCompleted}
+                                  >
+                                    <span className={badgeClass}>
+                                      {['A', 'B', 'C', 'D'][oIdx] || oIdx + 1}
+                                    </span>
+                                    <span className="leading-snug flex-1">
+                                      <MathRenderer content={opt} inline />
+                                    </span>
+                                  </button>
+                                );
+                              })}
                             </div>
-                            {stepAnswers[idx]?.trim() !== step.correctAnswer?.trim() && (
-                              <button
-                                onClick={() => setStepAnswers(prev => ({ ...prev, [idx]: null }))}
-                                className="text-xs underline font-black text-rose-700 hover:text-rose-950 cursor-pointer shrink-0"
-                              >
-                                Zkusit znovu
-                              </button>
+
+                            {/* Wrong attempt feedback */}
+                            {!isCompleted && wrongAttemptStep[idx] && (
+                              <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs sm:text-sm font-bold flex items-center gap-2.5">
+                                <WrongPinkIcon size={18} className="shrink-0" />
+                                <span>
+                                  Nesprávná odpověď. Projdi si prosím krok ještě jednou a vyber správnou možnost.
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Action Row: Zkontrolovat button + unlock hint */}
+                            {!isCompleted ? (
+                              <div className="flex items-center justify-between gap-3 pt-0.5 flex-wrap">
+                                <button
+                                  type="button"
+                                  disabled={!selectedOptions[idx]}
+                                  onClick={() => handleCheckStepAnswer(idx, step)}
+                                  className="px-6 py-2.5 rounded-full bg-[#F5C400] hover:bg-[#E5B600] active:scale-95 disabled:opacity-40 disabled:pointer-events-none text-[#0F2942] font-black text-xs sm:text-sm shadow-2xs transition-all cursor-pointer"
+                                >
+                                  Zkontrolovat
+                                </button>
+
+                                <span className="text-xs font-bold text-gray-500">
+                                  {idx + 1 < steps.length
+                                    ? `Správně odemkne krok ${idx + 2}`
+                                    : 'Správně dokončí studium'}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs sm:text-sm font-bold flex items-center gap-2">
+                                <CorrectCyanIcon size={18} className="shrink-0" />
+                                <span>Správná odpověď! Krok je splněn.</span>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          /* Open question fallback (no options configured) */
+                          <div className="space-y-3">
+                            {!isCompleted ? (
+                              <div className="flex items-center justify-between gap-3 flex-wrap">
+                                <button
+                                  type="button"
+                                  onClick={() => markStepCompleted(idx, 'revealed')}
+                                  className="px-6 py-2.5 rounded-full bg-[#F5C400] hover:bg-[#E5B600] text-[#0F2942] font-black text-xs sm:text-sm shadow-2xs transition-all cursor-pointer"
+                                >
+                                  Zkontrolovat řešení
+                                </button>
+                                <span className="text-xs font-bold text-gray-500">
+                                  {idx + 1 < steps.length
+                                    ? `Odemkne krok ${idx + 2}`
+                                    : 'Dokončí studium'}
+                                </span>
+                              </div>
+                            ) : (
+                              step.correctAnswer && (
+                                <div className="p-3.5 bg-emerald-50 rounded-2xl border border-emerald-200 text-emerald-900 font-bold text-sm">
+                                  <MathRenderer content={step.correctAnswer} />
+                                </div>
+                              )
                             )}
                           </div>
                         )}
                       </div>
                     ) : (
-                      <div>
-                        <Button
-                          onClick={() => setStepAnswers(prev => ({ ...prev, [idx]: 'revealed' }))}
-                          variant="outline"
-                          className="rounded-xl font-bold text-sm h-10 px-4 cursor-pointer"
-                          disabled={stepAnswers[idx] === 'revealed'}
-                        >
-                          {stepAnswers[idx] === 'revealed' ? 'Odpověď odhalena' : 'Zobrazit řešení'}
-                        </Button>
-                        {stepAnswers[idx] === 'revealed' && step.correctAnswer && (
-                          <div className="mt-3 p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-emerald-800 font-medium text-sm">
-                            {step.correctAnswer}
-                          </div>
-                        )}
-                      </div>
+                      /* Step without verification question */
+                      !isCompleted && (
+                        <div className="pt-2 border-t border-gray-100 flex items-center justify-between gap-3 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => markStepCompleted(idx, 'done')}
+                            className="px-6 py-2.5 rounded-full bg-[#F5C400] hover:bg-[#E5B600] text-[#0F2942] font-black text-xs sm:text-sm shadow-2xs transition-all cursor-pointer"
+                          >
+                            {idx + 1 < steps.length ? 'Pokračovat na další krok' : 'Dokončit studium'}
+                          </button>
+                          <span className="text-xs font-bold text-gray-500">
+                            {idx + 1 < steps.length
+                              ? `Odemkne krok ${idx + 2}`
+                              : 'Dokončí studium'}
+                          </span>
+                        </div>
+                      )
                     )}
-                  </div>
-                )}
-              </motion.div>
-            );
-          })}
+                  </motion.div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Prominent Bottom Action Banner to Practice */}
-      <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] rounded-[2.5rem] p-8 sm:p-10 shadow-sm border-2 border-[#B9D8FC] flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-80 h-80 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
+      <div
+        className={`rounded-[2.5rem] p-8 sm:p-10 shadow-xs border-2 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden transition-all ${
+          allStepsCompleted
+            ? 'bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] border-[#B9D8FC]'
+            : 'bg-gray-50 text-gray-600 border-gray-200/80'
+        }`}
+      >
+        {allStepsCompleted && (
+          <div className="absolute top-0 right-0 w-80 h-80 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
+        )}
 
         <div className="space-y-2 text-center md:text-left z-10">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 text-xs font-black uppercase tracking-wider">
-            <StarYellowIcon size={15} /> Jsi připraven?
+          <div
+            className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider ${
+              allStepsCompleted
+                ? 'bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80'
+                : 'bg-gray-200/80 text-gray-600'
+            }`}
+          >
+            {allStepsCompleted ? (
+              <>
+                <StarYellowIcon size={15} /> Jsi připraven?
+              </>
+            ) : (
+              <>
+                <Lock size={13} /> Splněno {completedSteps.length} z {steps.length} kroků
+              </>
+            )}
           </div>
           <h3 className="text-2xl sm:text-3xl font-display font-black tracking-tight text-[#0F2942]">
-            Máš látku nastudovanou?
+            {allStepsCompleted ? 'Máš látku nastudovanou?' : 'Nejprve dokonči všechny kroky studia'}
           </h3>
           <p className="text-gray-600 font-medium text-sm sm:text-base max-w-xl">
-            Vyzkoušej si interaktivní procvičování a ověř si, zda látku ovládáš na 100 %.
+            {allStepsCompleted
+              ? 'Vyzkoušej si interaktivní procvičování a ověř si, zda látku ovládáš na 100 %.'
+              : 'Odpověz správně na kontrolní otázky v jednotlivých krocích výkladu, abys odemkl závěrečný přechod k procvičování.'}
           </p>
         </div>
 
         <Button
-          onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-          className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-base px-8 h-14 shadow-sm hover:scale-105 transition-transform shrink-0 flex items-center gap-3 cursor-pointer z-10"
+          onClick={() => allStepsCompleted && navigate(`/practice/session/${subtopic.id}`)}
+          disabled={!allStepsCompleted}
+          className={`rounded-2xl font-black text-base px-8 h-14 shadow-xs shrink-0 flex items-center gap-3 z-10 transition-all ${
+            allStepsCompleted
+              ? 'bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 hover:scale-105 cursor-pointer'
+              : 'bg-gray-200 text-gray-500 cursor-not-allowed opacity-75'
+          }`}
         >
-          <Play size={20} className="fill-[#0F2942] text-[#0F2942]" />
-          <span>Spustit procvičování</span>
+          {allStepsCompleted ? (
+            <>
+              <Play size={20} className="fill-[#0F2942] text-[#0F2942]" />
+              <span>Spustit procvičování</span>
+            </>
+          ) : (
+            <>
+              <Lock size={18} />
+              <span>Odemkne se po splnění kroků</span>
+            </>
+          )}
         </Button>
       </div>
     </div>
-  </>
   );
 }

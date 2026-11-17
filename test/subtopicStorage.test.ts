@@ -79,3 +79,36 @@ test('LEARNING_SHEETS_COLLECTION targets learningSheets and normalizeMaterialPay
   assert.equal(matPayload.fileUrl, 'https://example.com/geo.svg');
   assert(matPayload.content.includes('<svg>geometry</svg>'));
 });
+
+test('updateSubtopicsOrder is exported and buildSubtopicUpdatePayload updates order accurately', async () => {
+  const { updateSubtopicsOrder, buildSubtopicUpdatePayload } = await import('../src/services/practiceService');
+  assert.equal(typeof updateSubtopicsOrder, 'function');
+
+  // Verify buildSubtopicUpdatePayload handles order
+  const existingSub = {
+    id: 'sub_1',
+    title: 'Lineární rovnice',
+    topicId: 'topic_algebra',
+    subjectId: 'Matematika',
+    order: 1
+  };
+
+  const updatedWithNewOrder = buildSubtopicUpdatePayload(existingSub as any, { order: 5 });
+  assert.equal(updatedWithNewOrder.order, 5);
+  assert.equal(updatedWithNewOrder.title, 'Lineární rovnice');
+
+  // Verify sequential reordering calculation
+  const subs = [
+    { id: 'sub_a', order: 10 },
+    { id: 'sub_b', order: 20 },
+    { id: 'sub_c', order: 30 }
+  ];
+  // Move sub_c to position 0
+  const reordered = [subs[2], subs[0], subs[1]];
+  const updates = reordered.map((s, idx) => ({ id: s.id, order: idx + 1 }));
+  assert.deepEqual(updates, [
+    { id: 'sub_c', order: 1 },
+    { id: 'sub_a', order: 2 },
+    { id: 'sub_b', order: 3 }
+  ]);
+});

@@ -24,7 +24,7 @@ import {
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
   setTopicVisibility, setSubtopicVisibility,
   saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
-  updateTopicsOrder,
+  updateTopicsOrder, updateSubtopicsOrder,
   uploadMaterial, fetchMaterialStatus, LEARNING_SHEETS_COLLECTION,
   ExistingMaterialItem, cleanStudyStep,
   parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
@@ -41,6 +41,7 @@ import MaterialSelectorModal from './MaterialSelectorModal';
 import { convertFileToSvg, svgStringToDataUrl, isPdfResource } from '../../utils/pdfToSvg';
 import { sanitizeSvg, sanitizeSafeUrl } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
+import InlineStudyMedia from '../common/InlineStudyMedia';
 import QuickFormulaToolbar from './QuickFormulaToolbar';
 import { validateLatexSyntax } from '../../utils/mathPreprocessor';
 import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
@@ -65,6 +66,11 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [originalTopics, setOriginalTopics] = useState<PracticeTopic[]>([]);
   const [draggedTopicId, setDraggedTopicId] = useState<string | null>(null);
   const [dragOverTopicId, setDragOverTopicId] = useState<string | null>(null);
+
+  // Reordering state for subtopics
+  const [draggedSubtopicId, setDraggedSubtopicId] = useState<string | null>(null);
+  const [dragOverSubtopicId, setDragOverSubtopicId] = useState<string | null>(null);
+  const [isSavingSubtopicOrder, setIsSavingSubtopicOrder] = useState<boolean>(false);
 
   // Modals state
   const [isTopicModalOpen, setIsTopicModalOpen] = useState(false);
@@ -262,6 +268,118 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     setTopics(originalTopics);
     setHasReorderChanges(false);
     toast.info('Změny pořadí témat byly zrušeny');
+  };
+
+  // --- SUBTOPIC REORDER HANDLERS ---
+  const persistSubtopicOrder = async (topicId: string, reorderedTopicSubtopics: PracticeSubtopic[]) => {
+    const updates = reorderedTopicSubtopics.map((s, idx) => ({
+      id: s.id,
+      order: idx + 1
+    }));
+    const orderMap = new Map(updates.map(u => [u.id, u.order]));
+
+    // Optimistic UI update
+    setSubtopics(prev =>
+      prev.map(s => {
+        if (orderMap.has(s.id)) {
+          return { ...s, order: orderMap.get(s.id)! };
+        }
+        return s;
+      })
+    );
+
+    setIsSavingSubtopicOrder(true);
+    try {
+      await updateSubtopicsOrder(updates);
+      toast.success('Pořadí podtémat bylo uloženo');
+    } catch (err: any) {
+      console.error('Chyba při ukládání pořadí podtémat:', err);
+      toast.error('Nepodařilo se uložit pořadí podtémat: ' + (err?.message || 'Neznámá chyba'));
+      await loadData();
+    } finally {
+      setIsSavingSubtopicOrder(false);
+    }
+  };
+
+  const handleMoveSubtopicUp = (topicId: string, index: number, topicSubtopics: PracticeSubtopic[]) => {
+    if (index <= 0 || isSavingSubtopicOrder) return;
+    const newItems = [...topicSubtopics];
+    const temp = newItems[index];
+    newItems[index] = newItems[index - 1];
+    newItems[index - 1] = temp;
+    persistSubtopicOrder(topicId, newItems);
+  };
+
+  const handleMoveSubtopicDown = (topicId: string, index: number, topicSubtopics: PracticeSubtopic[]) => {
+    if (index >= topicSubtopics.length - 1 || isSavingSubtopicOrder) return;
+    const newItems = [...topicSubtopics];
+    const temp = newItems[index];
+    newItems[index] = newItems[index + 1];
+    newItems[index + 1] = temp;
+    persistSubtopicOrder(topicId, newItems);
+  };
+
+  const handleDragStartSubtopic = (e: React.DragEvent, subtopicId: string, topicId: string) => {
+    e.stopPropagation();
+    try {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'subtopic', subtopicId, topicId }));
+    } catch {
+      // Fallback
+    }
+    e.dataTransfer.effectAllowed = 'move';
+    setDraggedSubtopicId(subtopicId);
+  };
+
+  const handleDragOverSubtopic = (e: React.DragEvent, subtopicId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverSubtopicId !== subtopicId) {
+      setDragOverSubtopicId(subtopicId);
+    }
+  };
+
+  const handleDropSubtopic = (e: React.DragEvent, targetSubtopicId: string, topicId: string, topicSubtopics: PracticeSubtopic[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverSubtopicId(null);
+
+    let sourceSubtopicId = draggedSubtopicId;
+    try {
+      const dataStr = e.dataTransfer.getData('text/plain');
+      if (dataStr) {
+        const parsed = JSON.parse(dataStr);
+        if (parsed && parsed.type === 'subtopic' && parsed.topicId === topicId) {
+          sourceSubtopicId = parsed.subtopicId;
+        }
+      }
+    } catch {
+      // Fallback to state
+    }
+
+    if (!sourceSubtopicId || sourceSubtopicId === targetSubtopicId) {
+      setDraggedSubtopicId(null);
+      return;
+    }
+
+    const sourceIndex = topicSubtopics.findIndex(s => s.id === sourceSubtopicId);
+    const targetIndex = topicSubtopics.findIndex(s => s.id === targetSubtopicId);
+    if (sourceIndex === -1 || targetIndex === -1) {
+      setDraggedSubtopicId(null);
+      return;
+    }
+
+    const newItems = [...topicSubtopics];
+    const [moved] = newItems.splice(sourceIndex, 1);
+    newItems.splice(targetIndex, 0, moved);
+
+    setDraggedSubtopicId(null);
+    persistSubtopicOrder(topicId, newItems);
+  };
+
+  const handleDragEndSubtopic = () => {
+    setDraggedSubtopicId(null);
+    setDragOverSubtopicId(null);
   };
 
   // --- TOPIC ACTIONS ---
@@ -2014,7 +2132,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           )}
 
           {topics.map((topic, index) => {
-            const topicSubtopics = subtopics.filter(s => s.topicId === topic.id || s.topicId === topic.title);
+            const topicSubtopics = subtopics
+              .filter(s => s.topicId === topic.id || s.topicId === topic.title)
+              .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
             const isExpanded = !!expandedTopics[topic.id];
             const visibleSubtopicsCount = topicSubtopics.filter(s => !s.isHidden).length;
             const isTopicEffectivelyHidden = Boolean(topic.isHidden || visibleSubtopicsCount === 0);
@@ -2209,22 +2329,38 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    {topicSubtopics.map((sub) => {
+                    {topicSubtopics.map((sub, subIdx) => {
                       const questions = questionsMap[sub.id] || [];
                       const isExpanded = !!expandedSubtopics[sub.id];
 
                       return (
                         <div 
                           key={sub.id}
+                          onDragOver={(e) => handleDragOverSubtopic(e, sub.id)}
+                          onDrop={(e) => handleDropSubtopic(e, sub.id, topic.id, topicSubtopics)}
                           className={`rounded-2xl border p-4 sm:p-5 space-y-4 transition-all ${
-                            sub.isHidden
-                              ? 'border-dashed border-gray-300 bg-gray-100/60'
-                              : 'border-gray-200/80 bg-[#FAF7F0]'
-                          }`}
+                            dragOverSubtopicId === sub.id
+                              ? 'border-amber-500 ring-2 ring-amber-300 bg-amber-50/40 shadow-sm'
+                              : sub.isHidden
+                                ? 'border-dashed border-gray-300 bg-gray-100/60'
+                                : 'border-gray-200/80 bg-[#FAF7F0]'
+                          } ${draggedSubtopicId === sub.id ? 'opacity-40' : ''}`}
                         >
                           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                             <div className="space-y-1 flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
+                                {/* Subtopic Drag Handle */}
+                                <div 
+                                  draggable={true}
+                                  onDragStart={(e) => handleDragStartSubtopic(e, sub.id, topic.id)}
+                                  onDragEnd={handleDragEndSubtopic}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-7 h-7 rounded-lg bg-white hover:bg-amber-100 text-gray-400 hover:text-amber-900 border border-gray-200/90 flex items-center justify-center shrink-0 cursor-grab active:cursor-grabbing transition-colors shadow-2xs"
+                                  title="Přetáhněte pro změnu pořadí podtématu"
+                                >
+                                  <GripVertical size={14} />
+                                </div>
+
                                 <button
                                   onClick={() => toggleSubtopic(sub.id)}
                                   className={`font-bold text-base hover:text-brand-blue flex items-center gap-1.5 cursor-pointer text-left ${
@@ -2293,6 +2429,32 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
                             {/* Desktop Subtopic Action Buttons */}
                             <div className="hidden md:flex items-center gap-2 shrink-0 self-center flex-wrap">
+                              {/* Subtopic Reorder Arrows Up / Down */}
+                              <div className="flex items-center bg-white border border-gray-200 rounded-xl p-0.5 shadow-2xs">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={subIdx === 0 || isSavingSubtopicOrder}
+                                  onClick={() => handleMoveSubtopicUp(topic.id, subIdx, topicSubtopics)}
+                                  className="h-7 w-7 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Posunout podtéma nahoru"
+                                >
+                                  <ArrowUp size={13} />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={subIdx === topicSubtopics.length - 1 || isSavingSubtopicOrder}
+                                  onClick={() => handleMoveSubtopicDown(topic.id, subIdx, topicSubtopics)}
+                                  className="h-7 w-7 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Posunout podtéma dolů"
+                                >
+                                  <ArrowDown size={13} />
+                                </Button>
+                              </div>
+
                               <Button
                                 type="button"
                                 variant="outline"
@@ -2382,6 +2544,31 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
                             {/* Mobile Subtopic Action Bar */}
                             <div className="flex md:hidden items-center gap-2 w-full pt-2.5 border-t border-gray-200/70 justify-between">
+                              <div className="flex items-center bg-white border border-gray-200 rounded-xl p-0.5 shadow-2xs">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={subIdx === 0 || isSavingSubtopicOrder}
+                                  onClick={() => handleMoveSubtopicUp(topic.id, subIdx, topicSubtopics)}
+                                  className="h-8 w-8 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Posunout podtéma nahoru"
+                                >
+                                  <ArrowUp size={14} />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={subIdx === topicSubtopics.length - 1 || isSavingSubtopicOrder}
+                                  onClick={() => handleMoveSubtopicDown(topic.id, subIdx, topicSubtopics)}
+                                  className="h-8 w-8 p-0 rounded-lg text-gray-500 hover:text-black hover:bg-gray-100 disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
+                                  title="Posunout podtéma dolů"
+                                >
+                                  <ArrowDown size={14} />
+                                </Button>
+                              </div>
+
                               <Button
                                 onClick={() => handleOpenNewQuestion(sub)}
                                 size="sm"
@@ -3111,9 +3298,9 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                         <div className="flex items-center justify-between">
                           <label className="text-xs font-bold text-gray-800 flex items-center gap-1.5">
                             <ImageIcon size={15} className="text-amber-600" />
-                            <span>Grafický podklad / Obrázek ke kroku (volitelné - konvertuje se do SVG)</span>
+                            <span>Grafický podklad / Obrázek ke kroku (volitelné — vloží se jako čisté SVG)</span>
                           </label>
-                          {(step.svgContent || step.imageUrl) && (
+                          {(step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl) && (
                             <button
                               type="button"
                               onClick={() => handleRemoveStepImage(idx)}
@@ -3132,48 +3319,24 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           </div>
                         ) : (step.svgContent || step.imageUrl || step.fileUrl || step.pdfUrl) ? (
                           <div className="rounded-xl border border-gray-200 bg-white p-3 flex flex-col items-center justify-center space-y-2.5 shadow-2xs">
-                            {isPdfResource(step) ? (
-                              <div className="w-full flex items-center justify-between gap-3 bg-rose-50/70 border border-rose-200 rounded-xl px-4 py-3">
-                                <div className="flex items-center gap-2.5 min-w-0">
-                                  <FileText size={20} className="text-rose-700 shrink-0" />
-                                  <div className="min-w-0">
-                                    <p className="text-xs font-bold text-gray-900 truncate">
-                                      {step.originalName || 'PDF příloha ke kroku'}
-                                    </p>
-                                    <p className="text-[11px] text-rose-700 font-medium">PDF dokument připraven</p>
-                                  </div>
-                                </div>
-                                {sanitizeSafeUrl(step.pdfUrl || step.fileUrl) && (
-                                  <a
-                                    href={sanitizeSafeUrl(step.pdfUrl || step.fileUrl)!}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="px-3 py-1.5 bg-white border border-gray-300 hover:border-black rounded-lg text-xs font-bold text-gray-800 inline-flex items-center gap-1.5 shrink-0"
-                                  >
-                                    <Eye size={13} />
-                                    Otevřít PDF
-                                  </a>
-                                )}
-                              </div>
-                            ) : step.svgContent ? (
-                              <div 
-                                className="max-h-52 w-full overflow-hidden flex justify-center [&>svg]:max-h-52 [&>svg]:w-auto [&>svg]:max-w-full"
-                                dangerouslySetInnerHTML={{ __html: sanitizeSvg(step.svgContent) }}
-                              />
-                            ) : sanitizeSafeUrl(step.imageUrl || step.fileUrl) ? (
-                              <img
-                                src={sanitizeSafeUrl(step.imageUrl || step.fileUrl)!}
+                            <div className="max-h-64 w-full overflow-y-auto flex justify-center pointer-events-none select-none">
+                              <InlineStudyMedia
+                                svgContent={step.svgContent}
+                                fileUrl={step.fileUrl}
+                                pdfUrl={step.pdfUrl}
+                                imageUrl={step.imageUrl}
+                                fileType={step.fileType}
+                                originalName={step.originalName}
                                 alt={`Náhled ke kroku ${idx + 1}`}
-                                className="max-h-52 w-auto max-w-full rounded-lg object-contain border border-gray-100 shadow-2xs"
                               />
-                            ) : null}
+                            </div>
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
                                 onClick={() => handleRemoveStepImage(idx)}
                                 className="px-2.5 py-1 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-xs font-bold transition-colors cursor-pointer"
                               >
-                                Změnit / Smazat soubor
+                                Změnit / Smazat obrázek
                               </button>
                             </div>
                           </div>
@@ -3183,7 +3346,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               {/* File Upload Button */}
                               <label className="w-full sm:w-auto px-4 py-2 bg-white hover:bg-gray-50 border border-gray-300 rounded-xl text-xs font-bold text-gray-700 flex items-center justify-center gap-2 cursor-pointer shadow-2xs hover:border-black transition-all shrink-0">
                                 <Upload size={14} className="text-amber-600" />
-                                <span>Nahrát soubor (obrázek / SVG / PDF)</span>
+                                <span>Nahrát obrázek / SVG / PDF ke kroku</span>
                                 <input
                                   type="file"
                                   accept=".pdf,.svg,.png,.jpg,.jpeg,.webp,image/*,application/pdf"
@@ -3207,7 +3370,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                               </div>
                             </div>
                             <p className="text-[11px] text-gray-400 font-medium">
-                              Nahraný soubor se automaticky převede na SVG a zobrazí se žákům v tomto kroku výkladu.
+                              Nahraný soubor se automaticky převede na čisté vložené SVG (bez stahování a ovládacích prvků) přímo v kartě tohoto kroku.
                             </p>
                           </div>
                         )}

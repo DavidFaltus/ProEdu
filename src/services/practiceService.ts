@@ -952,6 +952,31 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
   }
 }
 
+/**
+ * Updates the sort order for multiple subtopics in batches.
+ */
+export async function updateSubtopicsOrder(orderedSubtopics: { id: string; order: number }[]): Promise<void> {
+  if (!orderedSubtopics || orderedSubtopics.length === 0) return;
+
+  const now = Timestamp.now();
+  const BATCH_SIZE = 450;
+  for (let i = 0; i < orderedSubtopics.length; i += BATCH_SIZE) {
+    const chunk = orderedSubtopics.slice(i, i + BATCH_SIZE);
+    const batch = writeBatch(db);
+    for (const item of chunk) {
+      if (!item.id) continue;
+      const docRef = doc(db, PRACTICE_SUBTOPICS_COLLECTION, item.id);
+      batch.update(docRef, {
+        order: item.order,
+        updatedAt: now
+      });
+    }
+    await batch.commit();
+  }
+
+  cacheManager.invalidate('subtopics');
+}
+
 // -------------------------------------------------------------
 // MATERIALS / LEARNING SHEETS API (Stored in `learningSheets`)
 // -------------------------------------------------------------
