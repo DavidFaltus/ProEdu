@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { saveCredentialToBrowser } from '../lib/credentialHelper';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Input } from '../components/ui/input';
@@ -24,7 +25,7 @@ export default function Login() {
       return '';
     }
   });
-  const [step, setStep] = useState<'form' | 'otp'>('form');
+  const [step, setStep] = useState<'form' | 'otp' | 'forgot'>('form');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -34,10 +35,13 @@ export default function Login() {
   const [otpCode, setOtpCode] = useState('');
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resending, setResending] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   
   const { 
+    user,
     signInWithGoogle, 
     signInWithEmail, 
+    resetPassword,
     initRegistration, 
     confirmRegistration, 
     resendRegistrationOtp 
@@ -68,6 +72,7 @@ export default function Login() {
     try {
       if (isLogin) {
         await signInWithEmail(email, password);
+        await saveCredentialToBrowser({ id: email, password });
         toast.success('Přihlášení proběhlo úspěšně');
         navigate('/dashboard');
       } else {
@@ -118,6 +123,36 @@ export default function Login() {
     }
   };
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.error('Zadejte prosím svou e-mailovou adresu.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await resetPassword(trimmedEmail);
+      setResetSent(true);
+      toast.success(`Odkaz pro obnovení hesla byl odeslán na ${trimmedEmail}!`);
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      let message = 'Nepodařilo se odeslat odkaz pro obnovení hesla.';
+      if (err.code === 'auth/user-not-found') {
+        message = 'Uživatel s tímto e-mailem nebyl nalezen.';
+      } else if (err.code === 'auth/invalid-email') {
+        message = 'Zadaná e-mailová adresa není platná.';
+      } else if (err.code === 'auth/too-many-requests') {
+        message = 'Příliš mnoho pokusů. Zkuste to prosím za chvíli.';
+      } else if (err?.message) {
+        message = err.message;
+      }
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleConfirmOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode || otpCode.trim().length !== 6) {
@@ -128,6 +163,7 @@ export default function Login() {
     setLoading(true);
     try {
       await confirmRegistration(email, otpCode.trim());
+      await saveCredentialToBrowser({ id: email, password, name });
       toast.success('Registrace byla úspěšně dokončena! Vítejte v ProEdu.');
       navigate('/dashboard');
     } catch (err: any) {
@@ -192,6 +228,8 @@ export default function Login() {
               <CardTitle className="text-3xl font-serif font-black text-[#1E1B18]">
                 {step === 'otp'
                   ? 'Ověření e-mailu'
+                  : step === 'forgot'
+                  ? 'Obnovení hesla'
                   : isLogin
                   ? 'Vítejte zpět'
                   : 'Vytvořit účet'}
@@ -199,6 +237,8 @@ export default function Login() {
               <CardDescription className="text-gray-500 text-base">
                 {step === 'otp'
                   ? `Zadejte 6místný kód zaslaný na adresu ${email}`
+                  : step === 'forgot'
+                  ? 'Zadejte svůj e-mail a my vám zašleme odkaz pro nastavení nového hesla.'
                   : isLogin
                   ? 'Přihlaste se ke svému účtu ProEdu'
                   : 'Začněte svou cestu k úspěchu ještě dnes'}
@@ -206,8 +246,67 @@ export default function Login() {
             </div>
           </CardHeader>
           <CardContent className="px-8 pb-10">
-            {step === 'form' ? (
-              <form onSubmit={handleAuth} className="space-y-5">
+            {step === 'forgot' ? (
+              <form onSubmit={handlePasswordReset} method="post" className="space-y-5">
+                <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
+                  <ShieldCheck className="text-blue-600 shrink-0 mt-0.5" size={22} />
+                  <div className="text-xs text-gray-700 leading-relaxed">
+                    Zadejte svou e-mailovou adresu, na kterou vám zašleme odkaz pro bezpečné obnovení hesla.
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="login-forgot-email" className="text-blue-900 font-semibold ml-1">
+                    E-mailová adresa
+                  </Label>
+                  <div className="relative">
+                    <MailBlueIcon className="absolute left-4 top-1/2 -translate-y-1/2" size={18} />
+                    <Input 
+                      id="login-forgot-email"
+                      name="email"
+                      type="email"
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="tvuj@email.cz"
+                      className="pl-12 h-12 rounded-2xl border-gray-100 bg-gray-50/50 focus:bg-white transition-all font-semibold"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {resetSent && (
+                  <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200/80 text-emerald-900 text-xs font-medium flex items-start gap-3">
+                    <ShieldCheck size={20} className="text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <strong className="font-bold">Odkaz byl odeslán!</strong> Zkontrolujte e-mail <strong className="font-bold">{email}</strong> (včetně složek Hromadné a Spam) a následujte zaslaný odkaz pro nastavení nového hesla.
+                    </div>
+                  </div>
+                )}
+
+                <Button 
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-14 bg-[#F5C400] text-[#1E1B18] border-b-4 border-[#C29B00] hover:bg-[#EAB308] rounded-2xl text-lg font-bold shadow-md transition-all active:translate-y-[2px] active:border-b-0 cursor-pointer"
+                >
+                  {loading ? 'Odesílám...' : resetSent ? 'Poslat odkaz znovu' : 'Odeslat odkaz pro obnovení'}
+                </Button>
+
+                <p className="text-center text-sm text-gray-500 pt-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setStep('form');
+                      setResetSent(false);
+                    }}
+                    className="text-[#2B44B8] font-bold hover:underline cursor-pointer"
+                  >
+                    ← Zpět k přihlášení
+                  </button>
+                </p>
+              </form>
+            ) : step === 'form' ? (
+              <form onSubmit={handleAuth} method="post" className="space-y-5">
                 {pendingReferralCode && !isLogin && (
                   <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200/80 text-emerald-900 text-xs font-bold flex items-center gap-2">
                     <ShieldCheck size={16} className="text-emerald-600 shrink-0" />
@@ -222,10 +321,14 @@ export default function Login() {
                       exit={{ opacity: 0, height: 0 }}
                       className="space-y-2"
                     >
-                      <Label className="text-blue-900 font-semibold ml-1">Jméno a příjmení</Label>
+                      <Label htmlFor="login-name" className="text-blue-900 font-semibold ml-1">Jméno a příjmení</Label>
                       <div className="relative">
                         <TeamBlueIcon className="absolute left-4 top-1/2 -translate-y-1/2" size={18} />
                         <Input 
+                          id="login-name"
+                          name="name"
+                          type="text"
+                          autoComplete="name"
                           value={name}
                           onChange={(e) => setName(e.target.value)}
                           placeholder="Jan Novák"
@@ -237,11 +340,14 @@ export default function Login() {
                 </AnimatePresence>
 
                 <div className="space-y-2">
-                  <Label className="text-blue-900 font-semibold ml-1">E-mailová adresa</Label>
+                  <Label htmlFor="login-email" className="text-blue-900 font-semibold ml-1">E-mailová adresa</Label>
                   <div className="relative">
                     <MailBlueIcon className="absolute left-4 top-1/2 -translate-y-1/2" size={18} />
                     <Input 
+                      id="login-email"
+                      name="username"
                       type="email"
+                      autoComplete="username"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="tvuj@email.cz"
@@ -252,11 +358,31 @@ export default function Login() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-blue-900 font-semibold ml-1">Heslo</Label>
+                  <div className="flex items-center justify-between ml-1">
+                    <Label htmlFor="login-password" className="text-blue-900 font-semibold">Heslo</Label>
+                    {isLogin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStep('forgot');
+                          setResetSent(false);
+                          if (!email && user?.email) {
+                            setEmail(user.email);
+                          }
+                        }}
+                        className="text-xs font-bold text-[#2B44B8] hover:underline cursor-pointer"
+                      >
+                        Zapomněli jste heslo?
+                      </button>
+                    )}
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                     <Input 
+                      id="login-password"
+                      name="password"
                       type={showPassword ? 'text' : 'password'}
+                      autoComplete={isLogin ? 'current-password' : 'new-password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••"
@@ -277,11 +403,14 @@ export default function Login() {
 
                 {!isLogin && (
                   <div className="space-y-2">
-                    <Label className="text-blue-900 font-semibold ml-1">Potvrzení hesla</Label>
+                    <Label htmlFor="login-confirm-password" className="text-blue-900 font-semibold ml-1">Potvrzení hesla</Label>
                     <div className="relative">
                       <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
                       <Input 
+                        id="login-confirm-password"
+                        name="confirm-password"
                         type={showConfirmPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         placeholder="••••••••"
@@ -350,7 +479,7 @@ export default function Login() {
               </form>
             ) : (
               /* OTP Step on Login page */
-              <form onSubmit={handleConfirmOtp} className="space-y-6">
+              <form onSubmit={handleConfirmOtp} method="post" className="space-y-6">
                 <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
                   <ShieldCheck className="text-blue-600 shrink-0 mt-0.5" size={22} />
                   <div className="text-xs text-gray-700 leading-relaxed">
@@ -359,11 +488,15 @@ export default function Login() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label className="text-xs font-black text-gray-700 uppercase tracking-wider text-center block">
+                  <Label htmlFor="login-otp-code" className="text-xs font-black text-gray-700 uppercase tracking-wider text-center block">
                     6místný ověřovací kód
                   </Label>
                   <Input 
+                    id="login-otp-code"
+                    name="one-time-code"
                     type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
                     maxLength={6}
                     required
                     autoFocus

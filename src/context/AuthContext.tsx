@@ -8,7 +8,8 @@ import {
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   updatePassword,
-  updateProfile as updateAuthProfile
+  updateProfile as updateAuthProfile,
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { doc, getDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
@@ -69,6 +70,7 @@ interface AuthContextType {
   signInWithGoogle: () => Promise<void>;
   signInWithEmail: (email: string, pass: string) => Promise<void>;
   signUpWithEmail: (email: string, pass: string, name: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<void>;
   initRegistration: (email: string, pass: string, name: string, confirmPassword?: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   resendRegistrationOtp: (email: string) => Promise<{ success: boolean; simulated?: boolean; message?: string }>;
   confirmRegistration: (email: string, code: string) => Promise<{ success: boolean; message?: string }>;
@@ -106,6 +108,7 @@ const AuthContext = createContext<AuthContextType>({
   signInWithGoogle: async () => {},
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
+  resetPassword: async () => {},
   initRegistration: async () => ({ success: false }),
   resendRegistrationOtp: async () => ({ success: false }),
   confirmRegistration: async () => ({ success: false }),
@@ -651,6 +654,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await initRegistration(email, pass, name);
   };
 
+  const resetPassword = async (email: string) => {
+    const trimmed = (email || '').trim();
+    if (!trimmed) {
+      throw new Error('Zadej prosím platnou e-mailovou adresu.');
+    }
+    const actionCodeSettings = typeof window !== 'undefined' && window.location?.origin ? {
+      url: `${window.location.origin}/login`,
+      handleCodeInApp: false,
+    } : undefined;
+
+    await sendPasswordResetEmail(auth, trimmed, actionCodeSettings);
+  };
+
   const signOut = async () => {
     clearSessionStorageKeys();
     cacheManager.clear();
@@ -852,6 +868,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     signInWithGoogle, 
     signInWithEmail, 
     signUpWithEmail, 
+    resetPassword,
     initRegistration,
     resendRegistrationOtp,
     confirmRegistration,

@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { saveCredentialToBrowser } from '../lib/credentialHelper';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -14,7 +15,7 @@ import { cn } from '../lib/utils';
 const EMOJIS = ['🎓', '🦊', '🦁', '🦉', '🦖', '🚀', '🧠', '👾', '🌟', '🦄', '🐼', '🐯', '🐧', '🐨', '🎯', '🎨', '🎮', '🎧', '🐱', '🐶'];
 const COLORS = ['#FEF3C7', '#FEE2E2', '#E0F2FE', '#D1FAE5', '#F3E8FF', '#FCE7F3', '#FFEDD5', '#E2E8F0', '#CFFAFE', '#F5F5F5'];
 export default function Settings() {
-  const { profile, updateProfileData, updateUserPassword } = useAuth();
+  const { user, profile, updateProfileData, updateUserPassword, resetPassword } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') === 'subscription' ? 'subscription' : 'profile';
   const [name, setName] = useState(profile?.name || '');
@@ -58,6 +59,12 @@ export default function Settings() {
     setIsChangingPassword(true);
     try {
       await updateUserPassword(newPassword);
+      if (profile?.email || user?.email) {
+        await saveCredentialToBrowser({
+          id: profile?.email || user?.email || '',
+          password: newPassword,
+        });
+      }
       toast.success('Heslo bylo úspěšně změněno');
       setNewPassword('');
       setConfirmPassword('');
@@ -382,9 +389,12 @@ export default function Settings() {
             </div>
             
             <div className="space-y-3">
-              <Label className="text-sm font-bold text-gray-400 uppercase tracking-widest px-1">Nové heslo</Label>
+              <Label htmlFor="settings-new-password" className="text-sm font-bold text-gray-400 uppercase tracking-widest px-1">Nové heslo</Label>
               <Input 
+                id="settings-new-password"
+                name="new-password"
                 type="password"
+                autoComplete="new-password"
                 placeholder="********"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
@@ -393,9 +403,12 @@ export default function Settings() {
             </div>
 
             <div className="space-y-3">
-              <Label className="text-sm font-bold text-gray-400 uppercase tracking-widest px-1">Potvrzení hesla</Label>
+              <Label htmlFor="settings-confirm-password" className="text-sm font-bold text-gray-400 uppercase tracking-widest px-1">Potvrzení hesla</Label>
               <Input 
+                id="settings-confirm-password"
+                name="confirm-password"
                 type="password"
+                autoComplete="new-password"
                 placeholder="********"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -410,6 +423,27 @@ export default function Settings() {
             >
               {isChangingPassword ? 'Změna...' : 'Aktualizovat heslo'}
             </Button>
+
+            {(profile?.email || user?.email) && (
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const emailToReset = profile?.email || user?.email;
+                    if (!emailToReset) return;
+                    try {
+                      await resetPassword(emailToReset);
+                      toast.success(`Odkaz pro obnovení hesla byl odeslán na ${emailToReset}!`);
+                    } catch (e: any) {
+                      toast.error(e.message || 'Nepodařilo se odeslat odkaz pro obnovení.');
+                    }
+                  }}
+                  className="text-xs font-bold text-gray-500 hover:text-gray-800 hover:underline cursor-pointer"
+                >
+                  Nebo poslat odkaz pro obnovení hesla na e-mail ({profile?.email || user?.email})
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

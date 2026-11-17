@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { saveCredentialToBrowser } from '../lib/credentialHelper';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -12,9 +13,11 @@ import { toast } from 'sonner';
 
 export default function AuthModal() {
   const { 
+    user,
     isAuthModalOpen, 
     setIsAuthModalOpen, 
     signInWithEmail, 
+    resetPassword,
     initRegistration, 
     confirmRegistration, 
     resendRegistrationOtp, 
@@ -22,8 +25,9 @@ export default function AuthModal() {
   } = useAuth();
 
   const [isLogin, setIsLogin] = useState(true);
-  const [step, setStep] = useState<'form' | 'otp'>('form');
+  const [step, setStep] = useState<'form' | 'otp' | 'forgot'>('form');
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [resending, setResending] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -68,6 +72,7 @@ export default function AuthModal() {
     setOtpCode('');
     setStep('form');
     setResendCooldown(0);
+    setResetSent(false);
   };
 
   const handleClose = (open: boolean) => {
@@ -84,6 +89,7 @@ export default function AuthModal() {
     try {
       if (isLogin) {
         await signInWithEmail(email, password);
+        await saveCredentialToBrowser({ id: email, password });
         toast.success('Úspěšně přihlášeno! Vítej zpět.');
         setIsAuthModalOpen(false);
         resetForm();
@@ -140,6 +146,36 @@ export default function AuthModal() {
     }
   };
 
+  const handlePasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      toast.error('Zadej prosím svou e-mailovou adresu.');
+      return;
+    }
+    setLoading(true);
+    try {
+      await resetPassword(trimmedEmail);
+      setResetSent(true);
+      toast.success(`Odkaz pro obnovení hesla byl odeslán na ${trimmedEmail}!`);
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      let message = 'Nepodařilo se odeslat odkaz pro obnovení hesla.';
+      if (err.code === 'auth/user-not-found') {
+        message = 'Uživatel s tímto e-mailem nebyl nalezen.';
+      } else if (err.code === 'auth/invalid-email') {
+        message = 'Zadaná e-mailová adresa není platná.';
+      } else if (err.code === 'auth/too-many-requests') {
+        message = 'Příliš mnoho pokusů. Zkuste to prosím za chvíli.';
+      } else if (err?.message) {
+        message = err.message;
+      }
+      toast.error(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleConfirmOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpCode || otpCode.trim().length !== 6) {
@@ -150,6 +186,7 @@ export default function AuthModal() {
     setLoading(true);
     try {
       await confirmRegistration(email, otpCode.trim());
+      await saveCredentialToBrowser({ id: email, password, name });
       toast.success('Účet byl úspěšně ověřen a vytvořen! Vítej v ProEdu.');
       setIsAuthModalOpen(false);
       resetForm();
@@ -207,6 +244,8 @@ export default function AuthModal() {
             <span>
               {step === 'otp'
                 ? 'Ověření e-mailu'
+                : step === 'forgot'
+                ? 'Obnovení hesla'
                 : isLogin
                 ? 'Přihlášení k účtu'
                 : 'Vytvořit nový účet'}
@@ -216,6 +255,8 @@ export default function AuthModal() {
           <DialogDescription className="text-xs text-[#284B63] font-medium mt-1">
             {step === 'otp'
               ? `Zadej 6místný kód zaslaný na adresu ${email}`
+              : step === 'forgot'
+              ? 'Zadej svůj e-mail a my ti zašleme odkaz pro nastavení nového hesla.'
               : isLogin
               ? 'Přihlas se a pokračuj ve své studijní cestě.'
               : 'Zaregistruj se a získej přístup ke všem testům a materiálům.'}
@@ -224,7 +265,66 @@ export default function AuthModal() {
 
         {/* Modal body */}
         <div className="p-6 md:p-8 space-y-5 bg-white rounded-t-[2rem]">
-          {step === 'form' ? (
+          {step === 'forgot' ? (
+            <form onSubmit={handlePasswordReset} method="post" className="space-y-4">
+              <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
+                <ShieldCheck className="text-blue-600 shrink-0 mt-0.5" size={20} />
+                <div className="text-xs text-gray-700 leading-relaxed">
+                  Zadej svůj e-mail, na který ti zašleme odkaz pro bezpečné obnovení hesla.
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-forgot-email" className="text-xs font-black text-gray-700 uppercase tracking-wider">
+                  E-mailová adresa
+                </Label>
+                <div className="relative">
+                  <MailBlueIcon className="absolute left-3.5 top-1/2 -translate-y-1/2" size={16} />
+                  <Input
+                    id="auth-forgot-email"
+                    name="email"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="student@skola.cz"
+                    className="pl-10 h-12 rounded-xl border-gray-200 bg-[#FAF7F0]/60 font-bold focus:bg-white text-sm"
+                  />
+                </div>
+              </div>
+
+              {resetSent && (
+                <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-800 flex items-start gap-2.5">
+                  <ShieldCheck size={18} className="text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <strong>Odkaz byl odeslán!</strong> Zkontroluj e-mail <strong>{email}</strong> (včetně složek Hromadné a Spam) a klikni na zaslaný odkaz pro nastavení nového hesla.
+                  </div>
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                disabled={loading}
+                className="w-full h-12 rounded-xl font-black text-sm bg-[#B9D8FC] text-[#0F2942] hover:bg-[#A3CCFA] border border-blue-200/80 transition-all shadow-sm hover:shadow-md cursor-pointer flex items-center justify-center gap-2 mt-2"
+              >
+                {loading ? 'Odesílám odkaz...' : resetSent ? 'Poslat odkaz znovu' : 'Odeslat odkaz pro obnovení'}
+              </Button>
+
+              <div className="text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStep('form');
+                    setResetSent(false);
+                  }}
+                  className="text-xs font-bold text-gray-500 hover:text-gray-800 hover:underline cursor-pointer py-1"
+                >
+                  ← Zpět k přihlášení
+                </button>
+              </div>
+            </form>
+          ) : step === 'form' ? (
             <>
               {/* Mode Switcher */}
               <div className="flex bg-[#FAF7F0] p-1 rounded-2xl border border-gray-200">
@@ -252,14 +352,19 @@ export default function AuthModal() {
                 </button>
               </div>
 
-              <form onSubmit={handleSubmit} className="space-y-4">
+              <form onSubmit={handleSubmit} method="post" className="space-y-4">
                 {!isLogin && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">Jméno a příjmení</Label>
+                    <Label htmlFor="auth-name" className="text-xs font-black text-gray-700 uppercase tracking-wider">
+                      Jméno a příjmení
+                    </Label>
                     <div className="relative">
                       <TeamBlueIcon className="absolute left-3.5 top-1/2 -translate-y-1/2" size={16} />
                       <Input
+                        id="auth-name"
+                        name="name"
                         type="text"
+                        autoComplete="name"
                         required
                         value={name}
                         onChange={(e) => setName(e.target.value)}
@@ -271,11 +376,16 @@ export default function AuthModal() {
                 )}
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">E-mail</Label>
+                  <Label htmlFor="auth-email" className="text-xs font-black text-gray-700 uppercase tracking-wider">
+                    E-mail
+                  </Label>
                   <div className="relative">
                     <MailBlueIcon className="absolute left-3.5 top-1/2 -translate-y-1/2" size={16} />
                     <Input
+                      id="auth-email"
+                      name="username"
                       type="email"
+                      autoComplete="username"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -286,11 +396,33 @@ export default function AuthModal() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">Heslo</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="auth-password" className="text-xs font-black text-gray-700 uppercase tracking-wider">
+                      Heslo
+                    </Label>
+                    {isLogin && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStep('forgot');
+                          setResetSent(false);
+                          if (!email && user?.email) {
+                            setEmail(user.email);
+                          }
+                        }}
+                        className="text-xs font-bold text-blue-600 hover:text-blue-800 hover:underline cursor-pointer"
+                      >
+                        Zapomněli jste heslo?
+                      </button>
+                    )}
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                     <Input
+                      id="auth-password"
+                      name="password"
                       type={showPassword ? 'text' : 'password'}
+                      autoComplete={isLogin ? 'current-password' : 'new-password'}
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -311,11 +443,16 @@ export default function AuthModal() {
 
                 {!isLogin && (
                   <div className="space-y-1.5">
-                    <Label className="text-xs font-black text-gray-700 uppercase tracking-wider">Potvrzení hesla</Label>
+                    <Label htmlFor="auth-confirm-password" className="text-xs font-black text-gray-700 uppercase tracking-wider">
+                      Potvrzení hesla
+                    </Label>
                     <div className="relative">
                       <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
                       <Input
+                        id="auth-confirm-password"
+                        name="confirm-password"
                         type={showConfirmPassword ? 'text' : 'password'}
+                        autoComplete="new-password"
                         required
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
@@ -398,7 +535,7 @@ export default function AuthModal() {
             </>
           ) : (
             /* OTP Verification Step */
-            <form onSubmit={handleConfirmOtp} className="space-y-5">
+            <form onSubmit={handleConfirmOtp} method="post" className="space-y-5">
               <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
                 <ShieldCheck className="text-blue-600 shrink-0 mt-0.5" size={20} />
                 <div className="text-xs text-gray-700 leading-relaxed">
@@ -407,11 +544,15 @@ export default function AuthModal() {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-xs font-black text-gray-700 uppercase tracking-wider text-center block">
+                <Label htmlFor="auth-otp-code" className="text-xs font-black text-gray-700 uppercase tracking-wider text-center block">
                   6místný ověřovací kód
                 </Label>
                 <Input
+                  id="auth-otp-code"
+                  name="one-time-code"
                   type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
                   maxLength={6}
                   required
                   autoFocus
