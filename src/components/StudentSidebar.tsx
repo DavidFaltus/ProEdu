@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import { 
   BrainPinkIcon, 
-  BookCyanIcon, 
   MaterialYellowIcon, 
   CapIcon, 
   StarPinkIcon, 
@@ -74,7 +73,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
     {
       name: 'Materiály',
       path: '/learning',
-      icon: location.pathname.startsWith('/learning') ? BookCyanIcon : MaterialYellowIcon,
+      icon: MaterialYellowIcon,
       active: location.pathname.startsWith('/learning'),
       locked: !isPremium,
     },

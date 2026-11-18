@@ -412,7 +412,7 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
           return {
             id: d.id,
             title: data.title || data.name || 'Bez názvu',
-            subjectId: data.subjectId || 'Matematika',
+            subjectId: normalizeSubjectName(data.subjectId || data.subject),
             description: data.description || '',
             order: typeof data.order === 'number' ? data.order : 0,
             isHidden: Boolean(data.isHidden),
@@ -428,7 +428,8 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
 
     let topics = allTopics;
     if (subjectId) {
-      topics = topics.filter(t => t.subjectId === subjectId);
+      const targetSubject = normalizeSubjectName(subjectId);
+      topics = topics.filter(t => normalizeSubjectName(t.subjectId) === targetSubject);
     }
 
     return topics.sort((a, b) => {
@@ -453,7 +454,7 @@ export async function getTopicById(topicId: string): Promise<PracticeTopic | nul
     return {
       id: snap.id,
       title: data.title || data.name || 'Téma',
-      subjectId: data.subjectId || 'Matematika',
+      subjectId: normalizeSubjectName(data.subjectId || data.subject),
       description: data.description || '',
       order: typeof data.order === 'number' ? data.order : 0,
       isHidden: Boolean(data.isHidden),
@@ -471,7 +472,7 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
   const now = Timestamp.now();
   const effectiveUserId = getEffectiveUserId(userId);
   const title = topicData.title?.trim() || 'Nové téma';
-  const subjectId = topicData.subjectId || 'Matematika';
+  const subjectId = normalizeSubjectName(topicData.subjectId);
 
   if (topicData.id) {
     const docRef = doc(db, 'customTopics', topicData.id);
@@ -779,7 +780,7 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     id: d.id,
     title: data.title || 'Podtéma',
     topicId: data.topicId || data.topic || '',
-    subjectId: data.subjectId || data.subject || 'Matematika',
+    subjectId: normalizeSubjectName(data.subjectId || data.subject),
     description: description,
     order: order,
     isHidden: Boolean(data.isHidden),
@@ -819,7 +820,8 @@ export async function getSubtopics(topicId?: string, subjectId?: string): Promis
     if (topicId) {
       subtopics = subtopics.filter(s => s.topicId === topicId);
     } else if (subjectId) {
-      subtopics = subtopics.filter(s => s.subjectId === subjectId);
+      const targetSubject = normalizeSubjectName(subjectId);
+      subtopics = subtopics.filter(s => normalizeSubjectName(s.subjectId) === targetSubject);
     }
 
     return subtopics.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
