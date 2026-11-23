@@ -1,634 +1,1459 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
-import { Button } from '../components/ui/button';
-import { 
-  Search, Filter, 
-  Eye, X, Download,
-  ZoomIn, ZoomOut, ExternalLink
-} from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  CapIcon,
-  BookCyanIcon,
-  MaterialYellowIcon,
-} from '../components/common/CustomIcon';
+  BookOpen,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Download,
+  Loader2,
+  Lock,
+  Maximize2,
+  Search,
+  Sparkles,
+  Star,
+} from 'lucide-react';
+import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { motion } from 'motion/react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+} from '../components/ui/select';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../components/ui/dialog';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../lib/utils';
-import { sanitizeSvg } from '../utils/svgUtils';
-import { isPdfResource } from '../utils/pdfToSvg';
 import { useAuth } from '../context/AuthContext';
 import {
-  fetchMaterialsCatalog,
-  fetchProtectedMaterialResource,
-  downloadProtectedMaterialFile,
   ExistingMaterialItem,
+  MaterialGrade,
+  MaterialQuotaSummary,
+  MaterialType,
+  PracticeTopic,
+  StudyProgressRecord,
+} from '../types';
+import {
+  authorizeMaterialExport,
+  fetchMaterialsCatalog,
+  fetchPracticeCatalog,
 } from '../services/practiceService';
-import { toast } from 'sonner';
+import { fetchAllUserStudyProgress } from '../services/studyProgressService';
+import {
+  exportProtectedMaterialAsPdf,
+  loadMaterialPages,
+  MaterialPageItem,
+  printWatermarkedPages,
+} from '../utils/materialPages';
+import {
+  FullscreenMaterialReaderModal,
+  ProtectedMaterialCanvas,
+} from '../components/study/ProtectedMaterialCanvas';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
+import {
+  BrainPinkIcon,
+  BrainWhiteIcon,
+  BookCyanIcon,
+  BookWhiteIcon,
+} from '../components/common/CustomIcon';
 import { trackSectionClick } from '../services/analyticsService';
-import { Lock } from 'lucide-react';
+import { toast } from 'sonner';
 
-function ProtectedMaterialThumbnail({
-  material,
-  hasAccess,
-}: {
-  material: ExistingMaterialItem;
-  hasAccess: boolean;
-}) {
-  const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  const [svgMarkup, setSvgMarkup] = useState<string | null>(material.svgContent || null);
-  const sourceUrl = material.thumbnailUrl || material.svgUrl || null;
+const TOPIC_DOT_COLORS = [
+  'bg-sky-500',
+  'bg-emerald-500',
+  'bg-amber-400',
+  'bg-pink-400',
+  'bg-violet-400',
+  'bg-orange-400',
+  'bg-teal-500',
+  'bg-indigo-400',
+];
 
-  useEffect(() => {
-    setSvgMarkup(material.svgContent || null);
-    if (!hasAccess || material.locked || !sourceUrl || material.svgContent) {
-      setBlobUrl(null);
-      return;
-    }
+const MATERIAL_TYPE_LABELS: Record<MaterialType, string> = {
+  worksheet: 'Pracovní list',
+  summary: 'Shrnutí',
+  cheatsheet: 'Tahák',
+};
 
-    let cancelled = false;
-    let createdBlob: string | undefined;
+const MATERIAL_TYPE_FILTER_LABELS: Array<{ key: MaterialType; label: string }> = [
+  { key: 'worksheet', label: 'Pracovní listy' },
+  { key: 'summary', label: 'Shrnutí' },
+  { key: 'cheatsheet', label: 'Taháky' },
+];
 
-    fetchProtectedMaterialResource(sourceUrl)
-      .then((res) => {
-        if (cancelled) {
-          if (res.blobUrl) URL.revokeObjectURL(res.blobUrl);
-          return;
-        }
-        if (res.svgMarkup) {
-          setSvgMarkup(res.svgMarkup);
-        }
-        if (res.blobUrl) {
-          createdBlob = res.blobUrl;
-          setBlobUrl(res.blobUrl);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setBlobUrl(null);
-      });
+type SortOption = 'number' | 'newest' | 'title';
+type GradeFilter = 'all' | '9' | '7' | '5';
 
-    return () => {
-      cancelled = true;
-      if (createdBlob) URL.revokeObjectURL(createdBlob);
-    };
-  }, [material.id, material.locked, material.svgContent, sourceUrl, hasAccess]);
+const GRADE_LABELS: Record<GradeFilter, string> = {
+  all: 'Vše',
+  '9': '9.',
+  '7': '7.',
+  '5': '5.',
+};
 
-  if (svgMarkup) {
-    return (
-      <div
-        className="w-full h-full flex items-center justify-center p-2 overflow-hidden pointer-events-none group-hover:scale-105 transition-transform duration-300 [&>svg]:max-w-full [&>svg]:max-h-full [&>svg]:h-auto [&>svg]:w-auto"
-        dangerouslySetInnerHTML={{ __html: sanitizeSvg(svgMarkup) }}
-      />
-    );
+// Ročník je prozatím v UI skrytý (stav i filtrační logika zůstávají zachované pro budoucí zapnutí).
+const SHOW_GRADE_FILTER_UI = false;
+
+const SORT_LABELS: Record<SortOption, string> = {
+  number: 'Podle čísla',
+  newest: 'Od nejnovějších',
+  title: 'Podle názvu',
+};
+
+function formatListNoun(count: number): string {
+  if (count === 1) return 'list';
+  if (count >= 2 && count <= 4) return 'listy';
+  return 'listů';
+}
+
+function formatPagesLabel(pages: number): string {
+  const n = Math.max(1, pages);
+  if (n === 1) return '1 strana';
+  if (n >= 2 && n <= 4) return `${n} strany`;
+  return `${n} stran`;
+}
+
+function formatStepsLabel(steps: number): string {
+  if (steps === 1) return '1 krok';
+  if (steps >= 2 && steps <= 4) return `${steps} kroky`;
+  return `${steps} kroků`;
+}
+
+function formatQuestionsLabel(count: number): string {
+  if (count === 1) return '1 úloha na procvičení';
+  if (count >= 2 && count <= 4) return `${count} úlohy na procvičení`;
+  return `${count} úloh na procvičení`;
+}
+
+function formatCompletedLabel(count: number): string {
+  if (count === 1) return '1 splněný';
+  if (count >= 2 && count <= 4) return `${count} splněné`;
+  return `${count} splněných`;
+}
+
+function formatShortCzechDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat('cs-CZ', {
+    day: 'numeric',
+    month: 'numeric',
+  }).format(d);
+}
+
+function buildFallbackWatermark(email?: string | null, uid?: string | null): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  return `ProEducator • ${email || uid || 'Host'} • ${today}`;
+}
+
+function matchesGradeFilter(mat: ExistingMaterialItem, filter: GradeFilter): boolean {
+  if (filter === 'all') return true;
+  const grade = mat.grade || '9';
+  if (grade === 'all') return true;
+  if (filter === '9' && !mat.hasExplicitGrade) return true;
+  return grade === filter;
+}
+
+function getMaterialFileBadge(mat: ExistingMaterialItem): string {
+  const orig = (mat.originalName || '').toLowerCase();
+  if (mat.fileType === 'application/pdf' || orig.endsWith('.pdf')) {
+    return 'PDF';
   }
-
-  if (blobUrl) {
-    return (
-      <img
-        src={blobUrl}
-        alt={material.title}
-        className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-300"
-        loading="lazy"
-      />
-    );
+  if (mat.fileType || orig || mat.fileUrl || mat.pdfUrl || mat.svgUrl || mat.svgContent) {
+    return 'Grafický list';
   }
+  return 'Výklad';
+}
 
+interface TopicSidebarGroup {
+  key: string;
+  label: string;
+  dotColor: string;
+  topicIndex: number;
+  count: number;
+}
+
+function LockedSheetIllustration({ onUnlock }: { onUnlock: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center gap-2 text-gray-400 p-4 text-center">
-      <div
-        className={cn(
-          'w-12 h-12 rounded-2xl flex items-center justify-center shadow-xs',
-          material.subject === 'Matematika' ? 'bg-teal-50 text-teal-600' : 'bg-rose-50 text-rose-600'
-        )}
-      >
-        {material.locked || !hasAccess ? <Lock size={22} /> : <BookCyanIcon size={24} />}
+    <div
+      onClick={onUnlock}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onUnlock();
+        }
+      }}
+      className="relative w-full aspect-[4/3] rounded-2xl bg-[#EEF3F9] border border-slate-200/70 p-4 flex items-center justify-center overflow-hidden cursor-pointer group"
+    >
+      {/* Blurred schematic sheet preview (no protected data exposed) */}
+      <div className="w-[72%] h-full bg-white rounded-xl shadow-sm border border-gray-200/70 overflow-hidden select-none pointer-events-none blur-[2px] opacity-80 flex flex-col">
+        <div className="h-9 bg-[#1D6FE2] px-4 flex items-center justify-center">
+          <div className="w-28 h-2.5 rounded-full bg-white/80" />
+        </div>
+        <div className="p-4 space-y-2.5 flex-1">
+          <div className="w-20 h-2.5 rounded-full bg-[#3B82F6]/70" />
+          <div className="w-full h-2 rounded-full bg-slate-200" />
+          <div className="w-4/5 h-2 rounded-full bg-slate-200" />
+          <div className="mt-2 p-2.5 rounded-lg bg-slate-100 space-y-1.5">
+            <div className="w-2/3 h-2 rounded-full bg-slate-300" />
+            <div className="w-full h-2 rounded-full bg-slate-200" />
+            <div className="w-3/4 h-2 rounded-full bg-slate-200" />
+          </div>
+        </div>
       </div>
-      <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">
-        {material.locked || !hasAccess ? 'Pouze pro Premium' : 'Výukový přehled'}
-      </span>
+
+      <div className="absolute inset-0 bg-[#0F1E36]/10 group-hover:bg-[#0F1E36]/15 transition-colors flex flex-col items-center justify-center gap-2 p-4 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-white shadow-md text-[#0F1E36] flex items-center justify-center group-hover:scale-105 transition-transform">
+          <Lock size={22} />
+        </div>
+        <span className="bg-white/95 backdrop-blur-xs text-[#0F1E36] text-xs font-black px-3.5 py-1.5 rounded-full shadow-sm border border-gray-200/80">
+          Odemknout s ProEducator Premium
+        </span>
+      </div>
     </div>
   );
 }
 
 export default function LearningSheets() {
-  const { user, isPremium, isCourseUser, isTeacher, openAuthModal } = useAuth();
+  const { user, isPremium, isCourseUser, isTeacher } = useAuth();
   const hasMaterialsAccess = isPremium || isCourseUser || isTeacher;
   const navigate = useNavigate();
-  const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [selectedTopic, setSelectedTopic] = useState<string>('Vše');
-  const [selectedSubject, setSelectedSubject] = useState<string>('Vše');
-  const [previewMaterial, setPreviewMaterial] = useState<ExistingMaterialItem | null>(null);
-  const [previewResource, setPreviewResource] = useState<{
-    blobUrl?: string;
-    svgMarkup?: string;
-    loading: boolean;
-    error?: string;
-  }>({ loading: false });
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [isPaywallDismissed, setIsPaywallDismissed] = useState(false);
 
-  const handleDownload = async (mat: ExistingMaterialItem) => {
-    if (!hasMaterialsAccess || mat.locked) {
-      if (!user) openAuthModal();
-      else setIsPaywallDismissed(false);
-      return;
-    }
-    if (downloadingId === mat.id) return;
-    trackSectionClick('material_download_click', `/learning`, {
-      materialId: mat.id,
-      title: mat.title,
-      subject: mat.subject
-    });
-    setDownloadingId(mat.id);
-    try {
-      await downloadProtectedMaterialFile(mat);
-      toast.success(`Materiál „${mat.title}“ byl stažen.`);
-    } catch (err: any) {
-      console.error('Failed to download material:', err);
-      toast.error(err?.message || 'Nepodařilo se stáhnout soubor materiálu.');
-    } finally {
-      setDownloadingId(null);
-    }
-  };
+  const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
+  const [practiceTopics, setPracticeTopics] = useState<PracticeTopic[]>([]);
+  const [studyProgressMap, setStudyProgressMap] = useState<Record<string, StudyProgressRecord>>({});
+  const [quota, setQuota] = useState<MaterialQuotaSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Filters & sorting
+  const [activeSubject, setActiveSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
+  const [gradeFilter, setGradeFilter] = useState<GradeFilter>('all');
+  const [search, setSearch] = useState('');
+  const [selectedTopicKey, setSelectedTopicKey] = useState<string>('all'); // 'all' | '__exam__' | topic group key
+  const [selectedTypes, setSelectedTypes] = useState<Record<MaterialType, boolean>>({
+    worksheet: true,
+    summary: true,
+    cheatsheet: true,
+  });
+  const [sortBy, setSortBy] = useState<SortOption>('number');
+  const [visibleLimit, setVisibleLimit] = useState(8);
+
+  // Selected sheet & preview state
+  const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
+  const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
+
+  const [previewPages, setPreviewPages] = useState<MaterialPageItem[]>([]);
+  const [previewPageIdx, setPreviewPageIdx] = useState(0);
+  const [previewWatermark, setPreviewWatermark] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [measuredPageCounts, setMeasuredPageCounts] = useState<Record<string, number>>({});
+
+  // Fullscreen reader & export states
+  const [isReaderOpen, setIsReaderOpen] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [isPaywallOpen, setIsPaywallOpen] = useState(false);
+  const [paywallDescription, setPaywallDescription] = useState<string | undefined>(undefined);
 
   useEffect(() => {
-    async function load() {
+    let cancelled = false;
+    async function loadAll() {
       setLoading(true);
       try {
-        const res = await fetchMaterialsCatalog({ includeHidden: isTeacher });
-        setMaterials(res.materials);
+        const [catalogRes, practiceRes, progressRes] = await Promise.all([
+          fetchMaterialsCatalog({ includeHidden: isTeacher }),
+          fetchPracticeCatalog({ includeHidden: isTeacher }).catch(() => ({
+            topics: [] as PracticeTopic[],
+            subtopics: [],
+          })),
+          fetchAllUserStudyProgress(user?.uid).catch(() => ({})),
+        ]);
+
+        if (cancelled) return;
+        setMaterials(catalogRes.materials);
+        setQuota(catalogRes.quota || null);
+        setPracticeTopics(practiceRes.topics || []);
+        setStudyProgressMap(progressRes);
       } catch (err) {
         console.error('Failed to load learning sheets:', err);
-        setMaterials([]);
+        if (!cancelled) {
+          setMaterials([]);
+        }
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    load();
+    loadAll();
+    return () => {
+      cancelled = true;
+    };
   }, [user?.uid, isTeacher, isPremium, isCourseUser]);
 
-  // Authenticated load for Preview Modal
+  // Reset topic selection & pagination when subject changes
   useEffect(() => {
-    if (!previewMaterial || !hasMaterialsAccess || previewMaterial.locked) {
-      setPreviewResource({ loading: false });
-      return;
-    }
-    const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
-    if (!fileSrc) {
-      setPreviewResource({
-        loading: false,
-        svgMarkup: previewMaterial.svgContent ? sanitizeSvg(previewMaterial.svgContent) : undefined,
-      });
-      return;
-    }
+    setSelectedTopicKey('all');
+    setVisibleLimit(8);
+  }, [activeSubject, gradeFilter]);
 
-    let cancelled = false;
-    let createdBlobUrl: string | undefined;
-    setPreviewResource({ loading: true });
+  useEffect(() => {
+    setVisibleLimit(8);
+  }, [selectedTopicKey, search, selectedTypes, sortBy]);
 
-    fetchProtectedMaterialResource(fileSrc)
-      .then((res) => {
-        if (cancelled) {
-          if (res.blobUrl) URL.revokeObjectURL(res.blobUrl);
-          return;
-        }
-        createdBlobUrl = res.blobUrl;
-        setPreviewResource({
-          loading: false,
-          blobUrl: res.blobUrl,
-          svgMarkup: res.svgMarkup,
+  const libraryMaterials = useMemo(
+    () =>
+      materials.filter(
+        (m) => !m.hiddenFromLibrary && m.status !== 'processing' && m.status !== 'error'
+      ),
+    [materials]
+  );
+
+  // Materials belonging to active subject + grade (before topic/type/search filters)
+  const subjectGradeMaterials = useMemo(
+    () =>
+      libraryMaterials.filter(
+        (m) =>
+          (m.subject || 'Matematika') === activeSubject &&
+          matchesGradeFilter(m, gradeFilter)
+      ),
+    [libraryMaterials, activeSubject, gradeFilter]
+  );
+
+  // Helper to resolve which sidebar topic key a material belongs to
+  const subjectPracticeTopics = useMemo(
+    () =>
+      practiceTopics.filter(
+        (t) => (t.subjectId || 'Matematika') === activeSubject
+      ),
+    [practiceTopics, activeSubject]
+  );
+
+  const resolveMaterialTopicKey = useMemo(() => {
+    const byId = new Map<string, string>();
+    const byLowerTitle = new Map<string, string>();
+    subjectPracticeTopics.forEach((t) => {
+      const canonical = `pt:${t.id}`;
+      byId.set(t.id, canonical);
+      if (t.title) byLowerTitle.set(t.title.trim().toLowerCase(), canonical);
+    });
+
+    return (mat: ExistingMaterialItem): string => {
+      if (mat.topicId && byId.has(mat.topicId)) {
+        return byId.get(mat.topicId)!;
+      }
+      const topicName = (mat.topic || '').trim().toLowerCase();
+      if (topicName && byLowerTitle.has(topicName)) {
+        return byLowerTitle.get(topicName)!;
+      }
+      if (mat.linkedSubtopic?.topicId && byId.has(mat.linkedSubtopic.topicId)) {
+        return byId.get(mat.linkedSubtopic.topicId)!;
+      }
+      return `custom:${topicName || 'obecné'}`;
+    };
+  }, [subjectPracticeTopics]);
+
+  const topicGroups: TopicSidebarGroup[] = useMemo(() => {
+    const counts = new Map<string, number>();
+    const customLabels = new Map<string, string>();
+
+    subjectGradeMaterials.forEach((m) => {
+      const key = resolveMaterialTopicKey(m);
+      counts.set(key, (counts.get(key) || 0) + 1);
+      if (key.startsWith('custom:') && !customLabels.has(key)) {
+        customLabels.set(key, (m.topic || '').trim() || 'Obecné');
+      }
+    });
+
+    const groups: TopicSidebarGroup[] = [];
+    subjectPracticeTopics.forEach((t) => {
+      const key = `pt:${t.id}`;
+      const cnt = counts.get(key) || 0;
+      if (cnt > 0) {
+        groups.push({
+          key,
+          label: t.title,
+          dotColor: TOPIC_DOT_COLORS[groups.length % TOPIC_DOT_COLORS.length],
+          topicIndex: groups.length + 1,
+          count: cnt,
         });
-      })
-      .catch((err: any) => {
-        if (!cancelled) {
-          setPreviewResource({
-            loading: false,
-            error: err?.message || 'Nepodařilo se načíst náhled materiálu.',
+      }
+    });
+
+    Array.from(customLabels.entries())
+      .sort((a, b) => a[1].localeCompare(b[1], 'cs'))
+      .forEach(([key, label]) => {
+        const cnt = counts.get(key) || 0;
+        if (cnt > 0) {
+          groups.push({
+            key,
+            label,
+            dotColor: TOPIC_DOT_COLORS[groups.length % TOPIC_DOT_COLORS.length],
+            topicIndex: groups.length + 1,
+            count: cnt,
           });
         }
       });
 
-    return () => {
-      cancelled = true;
-      if (createdBlobUrl) URL.revokeObjectURL(createdBlobUrl);
-    };
-  }, [previewMaterial, hasMaterialsAccess]);
+    return groups;
+  }, [subjectGradeMaterials, subjectPracticeTopics, resolveMaterialTopicKey]);
 
-  const libraryMaterials = materials.filter(
-    m => !m.hiddenFromLibrary && m.status !== 'processing' && m.status !== 'error'
+  const examPrepCount = useMemo(
+    () => subjectGradeMaterials.filter((m) => Boolean(m.isExamPrep)).length,
+    [subjectGradeMaterials]
   );
-  const topicsList = Array.from(new Set(libraryMaterials.map(m => m.topic).filter(Boolean)));
 
-  const filteredMaterials = libraryMaterials.filter(m => {
-    const matchesSubject = selectedSubject === 'Vše' || m.subject === selectedSubject;
-    const matchesTopic = selectedTopic === 'Vše' || m.topic === selectedTopic;
+  // Map each material to a clean display code like "1.1", "1.2"
+  const materialCodeMap = useMemo(() => {
+    const topicIdxByKey = new Map<string, number>();
+    topicGroups.forEach((g) => topicIdxByKey.set(g.key, g.topicIndex));
+
+    const buckets = new Map<string, ExistingMaterialItem[]>();
+    subjectGradeMaterials.forEach((m) => {
+      const key = resolveMaterialTopicKey(m);
+      const list = buckets.get(key) || [];
+      list.push(m);
+      buckets.set(key, list);
+    });
+
+    const codeMap = new Map<string, string>();
+    buckets.forEach((list, key) => {
+      const tIdx = topicIdxByKey.get(key) || 1;
+      const sorted = [...list].sort((a, b) => {
+        const aHasOrd = typeof a.order === 'number' && Number.isFinite(a.order);
+        const bHasOrd = typeof b.order === 'number' && Number.isFinite(b.order);
+        if (aHasOrd && bHasOrd && a.order !== b.order) return a.order! - b.order!;
+        if (aHasOrd && !bHasOrd) return -1;
+        if (!aHasOrd && bHasOrd) return 1;
+        return String(a.title || '').localeCompare(String(b.title || ''), 'cs');
+      });
+      sorted.forEach((item, idx) => {
+        const subNum =
+          typeof item.order === 'number' && Number.isFinite(item.order) && item.order > 0
+            ? item.order
+            : idx + 1;
+        codeMap.set(item.id, `${tIdx}.${subNum}`);
+      });
+    });
+    return codeMap;
+  }, [subjectGradeMaterials, topicGroups, resolveMaterialTopicKey]);
+
+  const getStepProgressForMaterial = (mat: ExistingMaterialItem) => {
+    const linked = mat.linkedSubtopic;
+    if (!linked || linked.stepsCount <= 0) {
+      return { totalSteps: 0, completedCount: 0, isCompleted: false, isInProgress: false };
+    }
+    const rec = studyProgressMap[linked.id];
+    const completedCount = rec ? Math.min(linked.stepsCount, rec.completedSteps.length) : 0;
+    const isCompleted = completedCount >= linked.stepsCount;
+    const isInProgress = completedCount > 0 && !isCompleted;
+    return { totalSteps: linked.stepsCount, completedCount, isCompleted, isInProgress };
+  };
+
+  const filteredMaterials = useMemo(() => {
     const q = search.toLowerCase().trim();
-    const matchesSearch = !q || 
-      m.title.toLowerCase().includes(q) || 
-      (m.topic && m.topic.toLowerCase().includes(q)) ||
-      (m.studyTheory && m.studyTheory.toLowerCase().includes(q));
-    return matchesSubject && matchesTopic && matchesSearch;
-  });
+    const list = subjectGradeMaterials.filter((m) => {
+      if (selectedTopicKey === '__exam__') {
+        if (!m.isExamPrep) return false;
+      } else if (selectedTopicKey !== 'all') {
+        if (resolveMaterialTopicKey(m) !== selectedTopicKey) return false;
+      }
 
-  return (
-    <div className="page-container space-y-8 pb-16">
-      <section className="text-center space-y-4 max-w-3xl mx-auto">
-        <motion.h1 
-          initial={{ opacity: 0, y: -15 }} 
-          animate={{ opacity: 1, y: 0 }} 
-          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
-        >
-          Výukové materiály
-        </motion.h1>
-        <motion.p 
-          initial={{ opacity: 0 }} 
-          animate={{ opacity: 1 }} 
-          transition={{ delay: 0.1 }} 
-          className="text-base md:text-lg text-gray-500 leading-relaxed"
-        >
-          Přehledné grafické listy, shrnutí látky z PDF a taháky pro přípravu na přijímačky.
-        </motion.p>
+      const mType: MaterialType = m.materialType || 'worksheet';
+      if (!selectedTypes[mType]) return false;
 
-        {/* Search & Filter Bar */}
-        <motion.div
-          initial={{ opacity: 0, y: 15 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="flex flex-col sm:flex-row gap-3 justify-center mt-6 max-w-4xl mx-auto flex-wrap items-center relative z-10"
-        >
-          <div className="w-full sm:w-auto flex-1 flex gap-2 relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 z-10" size={18} />
-            <Input 
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Hledat v materiálech..."
-              className="pl-11 h-12 rounded-2xl border-none bg-white shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500/20 font-bold placeholder:text-gray-400 text-sm"
-            />
+      if (q) {
+        const hay = `${m.title} ${m.topic} ${m.studyTheory || ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    return [...list].sort((a, b) => {
+      if (sortBy === 'title') {
+        return String(a.title || '').localeCompare(String(b.title || ''), 'cs');
+      }
+      if (sortBy === 'newest') {
+        const aMs = a.createdAt ? new Date(a.createdAt).getTime() || 0 : 0;
+        const bMs = b.createdAt ? new Date(b.createdAt).getTime() || 0 : 0;
+        return bMs - aMs;
+      }
+      // 'number'
+      const aCode = materialCodeMap.get(a.id) || '999.999';
+      const bCode = materialCodeMap.get(b.id) || '999.999';
+      const [aT, aS] = aCode.split('.').map(Number);
+      const [bT, bS] = bCode.split('.').map(Number);
+      if (aT !== bT) return aT - bT;
+      return aS - bS;
+    });
+  }, [
+    subjectGradeMaterials,
+    selectedTopicKey,
+    selectedTypes,
+    search,
+    sortBy,
+    resolveMaterialTopicKey,
+    materialCodeMap,
+  ]);
+
+  const completedInViewCount = useMemo(
+    () =>
+      filteredMaterials.filter((m) => getStepProgressForMaterial(m).isCompleted).length,
+    [filteredMaterials, studyProgressMap]
+  );
+
+  // Ensure a selected material exists whenever filtered list updates
+  useEffect(() => {
+    if (filteredMaterials.length === 0) {
+      setSelectedMaterialId(null);
+      return;
+    }
+    if (!selectedMaterialId || !filteredMaterials.some((m) => m.id === selectedMaterialId)) {
+      setSelectedMaterialId(filteredMaterials[0].id);
+    }
+  }, [filteredMaterials, selectedMaterialId]);
+
+  const selectedMaterial = useMemo(
+    () => filteredMaterials.find((m) => m.id === selectedMaterialId) || null,
+    [filteredMaterials, selectedMaterialId]
+  );
+
+  // Load preview pages for the currently selected material
+  useEffect(() => {
+    setPreviewPageIdx(0);
+    setPreviewError(null);
+
+    if (!selectedMaterial || selectedMaterial.locked) {
+      setPreviewPages([]);
+      setPreviewWatermark(null);
+      setPreviewLoading(false);
+      return;
+    }
+
+    const hasSource = Boolean(
+      selectedMaterial.fileUrl ||
+        selectedMaterial.pdfUrl ||
+        selectedMaterial.svgUrl ||
+        selectedMaterial.svgContent
+    );
+    if (!hasSource) {
+      setPreviewPages([]);
+      setPreviewWatermark(null);
+      setPreviewLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
+    setPreviewLoading(true);
+    setPreviewPages([]);
+
+    loadMaterialPages({
+      fileUrl: selectedMaterial.fileUrl,
+      pdfUrl: selectedMaterial.pdfUrl,
+      svgUrl: selectedMaterial.svgUrl,
+      svgContent: selectedMaterial.svgContent,
+      fileType: selectedMaterial.fileType,
+      originalName: selectedMaterial.originalName,
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        setPreviewPages(res.pages);
+        setPreviewWatermark(res.watermarkText);
+        if (res.pages.length > 0) {
+          setMeasuredPageCounts((prev) =>
+            prev[selectedMaterial.id] === res.pages.length
+              ? prev
+              : { ...prev, [selectedMaterial.id]: res.pages.length }
+          );
+        }
+        if (res.isLocked) {
+          setPreviewError('Tento materiál vyžaduje aktivní předplatné Premium.');
+        }
+      })
+      .catch((err: any) => {
+        if (controller.signal.aborted || err?.name === 'AbortError') return;
+        setPreviewError(err?.message || 'Nepodařilo se načíst náhled materiálu.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setPreviewLoading(false);
+      });
+
+    return () => {
+      controller.abort();
+    };
+  }, [selectedMaterial?.id, selectedMaterial?.locked]);
+
+  const effectiveWatermark = useMemo(() => {
+    if (isTeacher) return null;
+    if (previewWatermark) return previewWatermark;
+    return buildFallbackWatermark(user?.email, user?.uid);
+  }, [isTeacher, previewWatermark, user?.email, user?.uid]);
+
+  const openPaywall = (customDesc?: string) => {
+    setPaywallDescription(customDesc);
+    setIsPaywallOpen(true);
+  };
+
+  const handleToggleType = (typeKey: MaterialType) => {
+    setSelectedTypes((prev) => ({ ...prev, [typeKey]: !prev[typeKey] }));
+  };
+
+  const handleSelectRow = (mat: ExistingMaterialItem) => {
+    setSelectedMaterialId(mat.id);
+    trackSectionClick('material_select', `/learning`, {
+      materialId: mat.id,
+      title: mat.title,
+      locked: Boolean(mat.locked),
+    });
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
+      setIsMobileDetailOpen(true);
+    }
+  };
+
+  const handlePrimaryAction = (mat: ExistingMaterialItem) => {
+    if (mat.locked) {
+      openPaywall(
+        'Odemkni neomezené online čtení všech pracovních listů, shrnutí a taháků plus 8 stažení / tisků každé období.'
+      );
+      return;
+    }
+    if (mat.linkedSubtopic) {
+      trackSectionClick('material_study_click', `/study/${mat.linkedSubtopic.id}`, {
+        materialId: mat.id,
+        subtopicId: mat.linkedSubtopic.id,
+      });
+      navigate(`/study/${mat.linkedSubtopic.id}`);
+      return;
+    }
+    setIsReaderOpen(true);
+  };
+
+  const handleDownloadPdf = async (mat: ExistingMaterialItem) => {
+    if (mat.locked || !hasMaterialsAccess || mat.canDownload === false) {
+      openPaywall(
+        'Stahování PDF a tisk jsou součástí ProEducator Premium (8 unikátních listů každé předplatné období).'
+      );
+      return;
+    }
+    if (isDownloading || isPrinting) return;
+
+    trackSectionClick('material_download_click', `/learning`, {
+      materialId: mat.id,
+      title: mat.title,
+      subject: mat.subject,
+    });
+    setIsDownloading(true);
+    try {
+      const res = await exportProtectedMaterialAsPdf({
+        materialId: mat.id,
+        title: mat.title,
+        downloadUrl: mat.downloadUrl,
+        pdfUrl: mat.pdfUrl,
+        fileUrl: mat.fileUrl,
+        svgUrl: mat.svgUrl,
+        svgContent: mat.svgContent,
+        fileType: mat.fileType,
+        originalName: mat.originalName,
+        preloadedPages: selectedMaterial?.id === mat.id ? previewPages : undefined,
+        isTeacher,
+      });
+      if (res.quota) {
+        setQuota(res.quota);
+      }
+      toast.success(`Materiál „${mat.title}“ byl stažen.`);
+    } catch (err: any) {
+      if (err?.quota) setQuota(err.quota);
+      toast.error(err?.message || 'Nepodařilo se stáhnout PDF.');
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
+  const handlePrint = async (mat: ExistingMaterialItem) => {
+    if (mat.locked || !hasMaterialsAccess || mat.canDownload === false) {
+      openPaywall(
+        'Tisk a stahování PDF jsou součástí ProEducator Premium.'
+      );
+      return;
+    }
+    if (isPrinting || isDownloading || previewPages.length === 0) return;
+
+    setIsPrinting(true);
+    try {
+      let watermarkForPrint = effectiveWatermark;
+      if (!isTeacher) {
+        const authRes = await authorizeMaterialExport(mat.id);
+        if (authRes.quota) setQuota(authRes.quota);
+        watermarkForPrint = authRes.watermarkText;
+      }
+      await printWatermarkedPages(mat.title, previewPages, watermarkForPrint);
+    } catch (err: any) {
+      if (err?.quota) setQuota(err.quota);
+      toast.error(err?.message || 'Nepodařilo se připravit materiál k tisku.');
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  const activeTopicTitle = useMemo(() => {
+    if (selectedTopicKey === 'all') return 'Všechny materiály';
+    if (selectedTopicKey === '__exam__') return 'Příprava na přijímačky';
+    return topicGroups.find((g) => g.key === selectedTopicKey)?.label || 'Materiály';
+  }, [selectedTopicKey, topicGroups]);
+
+  const renderRightDetailPanel = (mat: ExistingMaterialItem) => {
+    const code = materialCodeMap.get(mat.id) || '1.1';
+    const typeLabel = MATERIAL_TYPE_LABELS[mat.materialType || 'worksheet'];
+    const pageCount = Math.max(
+      1,
+      previewPages.length || measuredPageCounts[mat.id] || mat.pageCount || 1
+    );
+    const stepInfo = getStepProgressForMaterial(mat);
+    const isAlreadyUnlocked = Boolean(quota?.unlockedMaterialIds?.includes(mat.id));
+    const isCourseExempt = Boolean(quota?.courseExemptMaterialIds?.includes(mat.id));
+    const safePreviewPageIdx = Math.min(previewPageIdx, Math.max(0, previewPages.length - 1));
+    const currentPreviewPage = previewPages[safePreviewPageIdx] || null;
+    const totalPreviewPages = previewPages.length || pageCount;
+
+    const statusBadge = (() => {
+      if (mat.locked) {
+        return (
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-600">
+            <Lock size={12} /> Premium
+          </span>
+        );
+      }
+      if (!hasMaterialsAccess && mat.isFreeSample) {
+        return (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+            Ukázka zdarma
+          </span>
+        );
+      }
+      if (stepInfo.isCompleted) {
+        return (
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/70">
+            <Check size={12} strokeWidth={2.75} /> Splněno
+          </span>
+        );
+      }
+      if (stepInfo.isInProgress) {
+        return (
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#92400E]">
+            Rozpracováno
+          </span>
+        );
+      }
+      return (
+        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#EEF4FF] text-[#2563EB]">
+          Nové
+        </span>
+      );
+    })();
+
+    const primaryButtonLabel = (() => {
+      if (mat.locked) return 'Odemknout Premium';
+      if (mat.linkedSubtopic) {
+        return stepInfo.isInProgress ? 'Pokračovat ve studiu' : 'Začít studovat';
+      }
+      return 'Otevřít čtečku';
+    })();
+
+    const quotaFooterText = (() => {
+      if (mat.locked) {
+        return 'Odemkni neomezené online čtení a 8 stažení měsíčně';
+      }
+      if (!hasMaterialsAccess || mat.canDownload === false) {
+        return 'Ukázka zdarma k online čtení · Stažení PDF s Premium';
+      }
+      if (quota?.unlimited) {
+        return 'Učitelský přístup · Neomezené stažení a tisk';
+      }
+      if (isCourseExempt) {
+        return 'Součást tvého kurzu · Bez odečtu z limitu';
+      }
+      if (isAlreadyUnlocked) {
+        return 'Tento list už máš odemčený · Další stažení bez odečtu';
+      }
+      if (quota && quota.limit > 0) {
+        const endFormatted = formatShortCzechDate(quota.periodEndsAt);
+        return endFormatted
+          ? `Zbývá ${quota.remaining} z ${quota.limit} stažení do ${endFormatted}`
+          : `Zbývá ${quota.remaining} z ${quota.limit} stažení toto období`;
+      }
+      return 'Otevřením čtečky si můžeš materiál zvětšit nebo vytisknout';
+    })();
+
+    return (
+      <div className="space-y-4">
+        {/* Preview Frame */}
+        {mat.locked ? (
+          <LockedSheetIllustration onUnlock={() => handlePrimaryAction(mat)} />
+        ) : previewLoading ? (
+          <div className="w-full aspect-[4/3] rounded-2xl bg-[#EEF3F9] border border-slate-200/70 flex flex-col items-center justify-center gap-2.5">
+            <div className="w-8 h-8 border-3 border-[#1D4ED8] border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-bold text-gray-500">Připravuji zabezpečený náhled...</span>
           </div>
-
-          <div className="w-full sm:w-44 text-left">
-            <Select value={selectedSubject} onValueChange={(val: any) => setSelectedSubject(val)}>
-              <SelectTrigger className="h-12 rounded-2xl border-none bg-white shadow-md font-bold text-gray-700 px-4 text-xs">
-                <div className="flex items-center gap-2">
-                  <CapIcon size={17} />
-                  <SelectValue placeholder="Předmět" />
-                </div>
-              </SelectTrigger>
-              <SelectContent className="rounded-2xl">
-                <SelectItem value="Vše" className="font-bold">Všechny předměty</SelectItem>
-                <SelectItem value="Matematika" className="font-bold">Matematika</SelectItem>
-                <SelectItem value="Čeština" className="font-bold">Čeština</SelectItem>
-              </SelectContent>
-            </Select>
+        ) : previewError ? (
+          <div className="w-full aspect-[4/3] rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center p-5 text-center">
+            <p className="text-sm font-bold text-rose-800">{previewError}</p>
           </div>
-
-          <div className="w-full sm:w-48 text-left">
-            <Select value={selectedTopic} onValueChange={(val: any) => setSelectedTopic(val)}>
-              <SelectTrigger className="h-12 rounded-2xl border-none bg-white shadow-md font-bold text-gray-700 px-4 text-xs">
-                <div className="flex items-center gap-2">
-                  <Filter size={16} className="text-amber-600" />
-                  <SelectValue placeholder="Téma" />
-                </div>
-              </SelectTrigger>
-              <SelectContent className="rounded-2xl">
-                <SelectItem value="Vše" className="font-bold">Všechna témata</SelectItem>
-                {topicsList.map(t => (
-                  <SelectItem key={t} value={t} className="font-bold">{t}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </motion.div>
-      </section>
-
-      {/* Main Content Area */}
-      <div className="relative max-w-6xl mx-auto">
-        {!hasMaterialsAccess ? (
-          <div className="bg-white rounded-[2.5rem] p-8 sm:p-12 text-center border border-gray-200/80 shadow-sm space-y-5 max-w-2xl mx-auto">
-            <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-xs">
-              <Lock size={28} />
+        ) : currentPreviewPage ? (
+          <div
+            onClick={() => setIsReaderOpen(true)}
+            onContextMenu={(e) => e.preventDefault()}
+            title="Kliknutím otevřete čtečku na celou obrazovku"
+            className="relative w-full rounded-2xl bg-[#EEF3F9] border border-slate-200/70 p-3.5 pt-10 overflow-hidden cursor-zoom-in group"
+          >
+            {/* Floating Page Badge */}
+            <div className="absolute top-2.5 right-3 z-10 bg-white/95 backdrop-blur-xs text-[#0F1E36] text-xs font-bold px-3 py-0.5 rounded-full shadow-xs border border-gray-200/70 select-none">
+              Strana {safePreviewPageIdx + 1} / {totalPreviewPages}
             </div>
-            <h3 className="text-2xl font-display font-black text-[#1E1B18]">
-              Výukové materiály jsou součástí ProEducator Premium
-            </h3>
-            <p className="text-gray-600 text-sm sm:text-base font-medium max-w-md mx-auto">
-              Po aktivaci Premium nebo zápisu do kurzu získáš neomezený přístup ke všem přehledným listům, tahákům a stažení do PDF.
-            </p>
-            {libraryMaterials.length > 0 && (
-              <p className="text-xs font-bold text-gray-400">
-                V knihovně je pro tebe připraveno {libraryMaterials.length} výukových materiálů.
-              </p>
-            )}
-            <div className="flex flex-wrap justify-center gap-3 pt-2">
-              {!user ? (
-                <Button
-                  onClick={openAuthModal}
-                  className="rounded-xl bg-[#1E1B18] text-white font-black px-6 h-11 cursor-pointer"
-                >
-                  Přihlásit se / Registrovat
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => setIsPaywallDismissed(false)}
-                  className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-6 h-11 cursor-pointer"
-                >
-                  Odemknout Premium
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={() => navigate('/practice')}
-                className="rounded-xl font-bold h-11 px-5 cursor-pointer"
+
+            <div className="max-w-[330px] xl:max-w-[380px] mx-auto rounded-xl shadow-sm bg-white overflow-hidden">
+              <ProtectedMaterialCanvas
+                page={currentPreviewPage}
+                watermarkText={effectiveWatermark}
+                maxCssWidth={380}
+              />
+            </div>
+
+            {/* Subtle page flipping controls when multi-page */}
+            {previewPages.length > 1 && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="mt-2.5 flex items-center justify-between gap-2"
               >
-                Zpět na procvičování
-              </Button>
-            </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPreviewPageIdx((p) => Math.max(0, p - 1))}
+                    disabled={safePreviewPageIdx === 0}
+                    aria-label="Předchozí strana"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
+                  >
+                    <ChevronLeft size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPreviewPageIdx((p) => Math.min(previewPages.length - 1, p + 1))
+                    }
+                    disabled={safePreviewPageIdx === previewPages.length - 1}
+                    aria-label="Další strana"
+                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
+                  >
+                    <ChevronRight size={15} />
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setIsReaderOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1D4ED8] hover:underline cursor-pointer"
+                >
+                  <Maximize2 size={13} />
+                  <span>Celá obrazovka</span>
+                </button>
+              </div>
+            )}
           </div>
         ) : (
-          <div>
-            {loading ? (
-              <div className="text-center py-24 bg-white/60 rounded-[2.5rem]">
-                <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-                <p className="text-gray-500 font-bold text-sm">Načítání výukových listů...</p>
-              </div>
-            ) : filteredMaterials.length === 0 ? (
-              <div className="text-center py-24 bg-white/60 rounded-[2.5rem] border-2 border-dashed border-gray-200">
-                <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto mb-4 text-amber-600">
-                  <BookCyanIcon size={34} />
-                </div>
-                <h3 className="text-xl font-display font-bold text-gray-900 mb-1">Žádné materiály nenalezeny</h3>
-                <p className="text-gray-400 text-sm font-medium">
-                  {search ? 'Zkuste upravit vyhledávací dotaz.' : 'Pro zvolený filtr zatím nejsou k dispozici studijní materiály.'}
-                </p>
-              </div>
+          <div className="w-full rounded-2xl bg-[#EEF3F9] border border-slate-200/70 p-5 space-y-2">
+            <span className="text-xs font-black uppercase tracking-wider text-[#1D4ED8]">
+              Teoretický výklad
+            </span>
+            <p className="text-sm text-gray-700 leading-relaxed line-clamp-6">
+              {mat.studyTheory || 'Tento materiál obsahuje doprovodný studijní přehled.'}
+            </p>
+          </div>
+        )}
+
+        {/* Badges */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-3 py-1 rounded-full text-xs font-black bg-[#1D4ED8] text-white">
+            {code}
+          </span>
+          <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#EEF4FF] text-[#1D4ED8]">
+            {typeLabel}
+          </span>
+          {statusBadge}
+        </div>
+
+        {/* Title & Meta */}
+        <div className="space-y-1.5">
+          <h3 className="text-2xl sm:text-[26px] font-display font-black text-[#0F1E36] leading-tight">
+            {mat.title}
+          </h3>
+          <p className="text-sm font-medium text-gray-500">
+            {mat.linkedSubtopic ? (
+              <>
+                {formatPagesLabel(pageCount)} · {formatStepsLabel(mat.linkedSubtopic.stepsCount)} ·{' '}
+                {formatQuestionsLabel(mat.linkedSubtopic.questionCount)}
+              </>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredMaterials.map((mat, index) => {
-                  const hasFile = !mat.locked && Boolean(mat.fileUrl || mat.svgUrl || mat.pdfUrl || mat.svgContent);
-                  const hasTheoryText = !mat.locked && Boolean(mat.studyTheory && !mat.studyTheory.includes('<svg'));
+              <>
+                {formatPagesLabel(pageCount)} · {typeLabel}
+              </>
+            )}
+          </p>
+        </div>
 
+        {/* Study Progress Bar (when linked to subtopic with steps) */}
+        {stepInfo.totalSteps > 0 && !mat.locked && (
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-2.5 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-[#1D4ED8] rounded-full transition-all duration-300"
+                style={{
+                  width: `${Math.round((stepInfo.completedCount / stepInfo.totalSteps) * 100)}%`,
+                }}
+              />
+            </div>
+            <span className="text-sm font-bold text-gray-500 shrink-0">
+              Krok {stepInfo.completedCount} ze {stepInfo.totalSteps}
+            </span>
+          </div>
+        )}
+
+        {/* Action Buttons: linked materials show Začít studovat + Otevřít čtečku + icon download; standalone keeps full-width Stáhnout PDF */}
+        {mat.locked ? (
+          <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-1">
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="flex-1 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
+            >
+              <Lock size={16} />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadPdf(mat)}
+              disabled={isDownloading || isPrinting}
+              className="flex-1 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download size={16} />
+              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
+            </Button>
+          </div>
+        ) : mat.linkedSubtopic ? (
+          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 pt-1">
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="flex-1 min-w-[130px] sm:min-w-0 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-1.5 shadow-xs border border-amber-300/60 cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.01]"
+            >
+              <BookOpen size={16} className="shrink-0" />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsReaderOpen(true)}
+              className="flex-1 min-w-[130px] sm:min-w-0 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+            >
+              <Maximize2 size={16} className="shrink-0" />
+              <span>Otevřít čtečku</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={() => handleDownloadPdf(mat)}
+              disabled={isDownloading || isPrinting}
+              title={isDownloading ? 'Stahuji PDF...' : 'Stáhnout PDF'}
+              aria-label="Stáhnout PDF"
+              className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 shrink-0 cursor-pointer"
+            >
+              {isDownloading ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-1">
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="flex-1 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
+            >
+              <Maximize2 size={16} />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadPdf(mat)}
+              disabled={isDownloading || isPrinting}
+              className="flex-1 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download size={16} />
+              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
+            </Button>
+          </div>
+        )}
+
+        {/* Centered Quota Line */}
+        <p className="text-xs font-medium text-gray-500 text-center pt-0.5">
+          {quotaFooterText}
+        </p>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6 md:space-y-8">
+      {/* Centered Page Header matching Practice.tsx */}
+      <section className="text-center space-y-3 max-w-3xl mx-auto">
+        <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight">
+          Výukové materiály
+        </h1>
+        <p className="text-base sm:text-lg text-gray-500 font-medium leading-relaxed">
+          {subjectGradeMaterials.length} {formatListNoun(subjectGradeMaterials.length)}, shrnutí a taháků. Vyber téma, list a podívej se na náhled.
+        </p>
+      </section>
+
+      {/* Toolbar Row: Subjects LEFT (styled like Practice.tsx) + Search RIGHT (+ hidden Ročník behind feature flag) */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        {/* Left Controls: Subject Switcher (+ optional Ročník) */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="inline-flex items-center gap-1.5 bg-white border border-[#E6DFD3] rounded-full p-1.5 shadow-xs shrink-0 max-w-full">
+            <button
+              type="button"
+              onClick={() => setActiveSubject('Matematika')}
+              className={cn(
+                'px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
+                activeSubject === 'Matematika'
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-teal-900/10'
+                  : 'text-gray-700 hover:text-emerald-700 hover:bg-emerald-50/70'
+              )}
+            >
+              {activeSubject === 'Matematika' ? (
+                <BrainWhiteIcon className="w-6 h-6 shrink-0" />
+              ) : (
+                <BrainPinkIcon className="w-6 h-6 shrink-0" />
+              )}
+              <span>Matematika</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSubject('Čeština')}
+              className={cn(
+                'px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
+                activeSubject === 'Čeština'
+                  ? 'bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-md shadow-rose-900/10'
+                  : 'text-gray-700 hover:text-rose-700 hover:bg-rose-50/70'
+              )}
+            >
+              {activeSubject === 'Čeština' ? (
+                <BookWhiteIcon className="w-6 h-6 shrink-0" />
+              ) : (
+                <BookCyanIcon className="w-6 h-6 shrink-0" />
+              )}
+              <span>Český jazyk</span>
+            </button>
+          </div>
+
+          {SHOW_GRADE_FILTER_UI && (
+            <Select value={gradeFilter} onValueChange={(v: GradeFilter) => setGradeFilter(v)}>
+              <SelectTrigger className="h-12 rounded-full bg-white border border-[#E6DFD3] shadow-2xs px-4 text-sm font-bold text-[#0F1E36] w-auto min-w-[124px] gap-1.5 cursor-pointer shrink-0">
+                <span className="text-gray-400 font-semibold">Ročník</span>
+                <span>{GRADE_LABELS[gradeFilter]}</span>
+              </SelectTrigger>
+              <SelectContent className="rounded-2xl">
+                <SelectItem value="all" className="font-bold text-sm">
+                  Vše
+                </SelectItem>
+                <SelectItem value="9" className="font-bold text-sm">
+                  9.
+                </SelectItem>
+                <SelectItem value="7" className="font-bold text-sm">
+                  7.
+                </SelectItem>
+                <SelectItem value="5" className="font-bold text-sm">
+                  5.
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+        </div>
+
+        {/* Right Controls: Search */}
+        <div className="relative w-full sm:w-72 md:w-80 shrink-0">
+          <Search
+            size={18}
+            className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none"
+          />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={
+              subjectGradeMaterials.length >= 2
+                ? `Hledat mezi ${subjectGradeMaterials.length} listy...`
+                : 'Hledat v materiálech...'
+            }
+            className="pl-11 h-12 rounded-full bg-white border border-[#E6DFD3] shadow-2xs text-sm font-medium placeholder:text-gray-400 focus-visible:ring-2 focus-visible:ring-[#1D4ED8]/20"
+          />
+        </div>
+      </div>
+
+      {/* Main 3-Column Workspace Card */}
+      {loading ? (
+        <div className="bg-white rounded-[2rem] border border-[#EAE4D7] shadow-sm py-24 text-center space-y-3">
+          <div className="w-10 h-10 border-4 border-[#0F1E36] border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-base font-bold text-gray-500">Načítám výukové materiály...</p>
+        </div>
+      ) : (
+        <div className="bg-white rounded-[2rem] border border-[#EAE4D7] shadow-sm overflow-hidden grid grid-cols-1 lg:grid-cols-[235px_minmax(0,1fr)_390px] xl:grid-cols-[255px_minmax(0,1fr)_420px] 2xl:grid-cols-[275px_minmax(0,1fr)_490px] divide-y lg:divide-y-0 lg:divide-x divide-[#EFEAE0]">
+          {/* COLUMN 1: TÉMATA & TYP */}
+          <aside className="p-4 sm:p-5 flex flex-col justify-between gap-6 bg-white">
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-400 px-3.5">
+                Témata
+              </p>
+
+              {/* Desktop vertical topic list + Mobile horizontal scroll */}
+              <div className="flex lg:flex-col gap-1.5 overflow-x-auto lg:overflow-x-visible pb-1 lg:pb-0">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTopicKey('all')}
+                  className={cn(
+                    'flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-colors shrink-0 cursor-pointer text-left',
+                    selectedTopicKey === 'all'
+                      ? 'bg-[#FEF3C7] text-[#1E1B18]'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  )}
+                >
+                  <span className="truncate">Všechny materiály</span>
+                  <span className="text-sm font-bold text-gray-500 shrink-0">
+                    {subjectGradeMaterials.length}
+                  </span>
+                </button>
+
+                {topicGroups.map((group) => {
+                  const active = selectedTopicKey === group.key;
                   return (
-                    <motion.div
-                      key={mat.id}
-                      initial={{ opacity: 0, y: 15 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      whileHover={{ y: -4 }}
-                      className="bg-white rounded-[2.5rem] p-5 sm:p-6 border border-gray-200/80 shadow-sm hover:shadow-xl transition-all duration-300 flex flex-col justify-between gap-4 group"
+                    <button
+                      key={group.key}
+                      type="button"
+                      onClick={() => setSelectedTopicKey(group.key)}
+                      className={cn(
+                        'flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-colors shrink-0 cursor-pointer text-left',
+                        active
+                          ? 'bg-[#FEF3C7] text-[#1E1B18]'
+                          : 'text-gray-700 hover:bg-gray-50'
+                      )}
                     >
-                      <div className="space-y-3.5">
-                        {/* Vizuální obrázkový náhled první strany listu */}
-                        <div
-                          onClick={() => {
-                            if (hasFile) {
-                              trackSectionClick('material_thumbnail_click', `/study/${mat.id}`, {
-                                materialId: mat.id,
-                                title: mat.title,
-                                subject: mat.subject
-                              });
-                              setZoomLevel(1);
-                              setPreviewMaterial(mat);
-                            }
-                          }}
-                          className={cn(
-                            "w-full h-44 sm:h-48 rounded-2xl overflow-hidden bg-slate-50 border border-gray-100 relative flex items-center justify-center transition-all duration-300 shadow-2xs group-hover:shadow-sm",
-                            hasFile ? "cursor-pointer" : "cursor-default"
-                          )}
-                        >
-                          <ProtectedMaterialThumbnail material={mat} hasAccess={hasMaterialsAccess} />
-
-                          {/* Hover Overlay s ikonou oka pro zvětšení náhledu */}
-                          {hasFile && (
-                            <div className="absolute inset-0 bg-black/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                              <span className="bg-white/95 text-gray-900 px-3 py-1.5 rounded-xl text-xs font-black shadow-md flex items-center gap-1.5 backdrop-blur-xs">
-                                <Eye size={13} /> Zvětšit náhled
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="space-y-1.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-md ${
-                              mat.subject === 'Matematika'
-                                ? 'bg-teal-50 text-teal-800 border border-teal-100'
-                                : 'bg-rose-50 text-rose-800 border border-rose-100'
-                            }`}>
-                              {mat.subject}
-                            </span>
-                            {mat.topic && (
-                              <span className="text-[11px] text-gray-400 font-bold truncate max-w-[150px]">
-                                {mat.topic}
-                              </span>
-                            )}
-                          </div>
-
-                          <h4 className="font-display font-black text-base sm:text-lg text-[#1E1B18] line-clamp-2">
-                            {mat.title}
-                          </h4>
-
-                          {hasTheoryText && (
-                            <p className="text-xs text-gray-600 font-medium line-clamp-2 bg-gray-50/80 p-2.5 rounded-xl leading-relaxed">
-                              {mat.studyTheory}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-2 pt-3 border-t border-gray-100">
-                        {hasFile && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              trackSectionClick('material_preview_click', `/study/${mat.id}`, {
-                                materialId: mat.id,
-                                title: mat.title,
-                                subject: mat.subject
-                              });
-                              setZoomLevel(1);
-                              setPreviewMaterial(mat);
-                            }}
-                            className="flex-1 rounded-xl h-10 text-xs font-bold border-gray-200 hover:border-black flex items-center justify-center gap-1.5 cursor-pointer bg-white transition-all"
-                          >
-                            <Eye size={14} />
-                            <span>Náhled</span>
-                          </Button>
-                        )}
-
-                        <Button
-                          size="sm"
-                          onClick={() => handleDownload(mat)}
-                          disabled={downloadingId === mat.id}
-                          className="flex-1 rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-4 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
-                        >
-                          <Download size={14} className="text-[#0F2942]" />
-                          <span>{downloadingId === mat.id ? 'Stahuji...' : 'Stáhnout'}</span>
-                        </Button>
-                      </div>
-                    </motion.div>
+                      <span className="flex items-center gap-2.5 min-w-0">
+                        <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', group.dotColor)} />
+                        <span className="truncate">{group.label}</span>
+                      </span>
+                      <span className="text-sm font-bold text-gray-400 shrink-0">
+                        {group.count}
+                      </span>
+                    </button>
                   );
                 })}
               </div>
-            )}
-          </div>
-        )}
-      </div>
 
-      {/* Universal Preview Modal with authenticated PDF/Image/SVG and Zoom */}
-      {previewMaterial && hasMaterialsAccess && (() => {
-        const isPdf = isPdfResource(previewMaterial);
-        const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
-
-        return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-3xl max-w-5xl w-full max-h-[92vh] flex flex-col overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <MaterialYellowIcon size={22} className="shrink-0" />
-                  <div className="min-w-0">
-                    <h4 className="font-bold text-gray-900 text-base truncate">
-                      {previewMaterial.title}
-                    </h4>
-                    <p className="text-[11px] text-gray-400 font-medium">
-                      {previewMaterial.subject} {previewMaterial.topic ? `• ${previewMaterial.topic}` : ''}
-                    </p>
-                  </div>
-                </div>
+              {/* Exam Prep Filter */}
+              <div className="pt-2 mt-2 border-t border-[#EFEAE0]">
                 <button
-                  onClick={() => setPreviewMaterial(null)}
-                  className="p-1.5 rounded-xl text-gray-400 hover:text-black hover:bg-gray-100 transition-colors cursor-pointer"
+                  type="button"
+                  onClick={() => setSelectedTopicKey('__exam__')}
+                  className={cn(
+                    'w-full flex items-center justify-between gap-2.5 px-3.5 py-2.5 rounded-xl text-sm font-bold transition-colors cursor-pointer text-left',
+                    selectedTopicKey === '__exam__'
+                      ? 'bg-[#FEF3C7] text-[#1E1B18]'
+                      : 'text-gray-700 hover:bg-gray-50'
+                  )}
                 >
-                  <X size={20} />
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Star
+                      size={16}
+                      className={cn(
+                        'shrink-0',
+                        examPrepCount > 0 ? 'text-amber-500 fill-amber-400' : 'text-gray-400'
+                      )}
+                    />
+                    <span className="truncate">Příprava na přijímačky</span>
+                  </span>
+                  <span className="text-sm font-bold text-gray-400 shrink-0">
+                    {examPrepCount}
+                  </span>
                 </button>
               </div>
+            </div>
 
-              <div className="flex-1 overflow-auto p-4 sm:p-6 bg-slate-100 flex items-center justify-center min-h-[350px]">
-                {previewResource.loading ? (
-                  <div className="flex flex-col items-center justify-center gap-3 py-16">
-                    <div className="w-10 h-10 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
-                    <p className="text-sm font-bold text-gray-600">Načítání náhledu materiálu...</p>
-                  </div>
-                ) : previewResource.error ? (
-                  <div className="p-6 bg-rose-50 border border-rose-200 rounded-2xl text-center max-w-md">
-                    <p className="font-bold text-rose-800 text-sm">{previewResource.error}</p>
-                  </div>
-                ) : previewResource.svgMarkup ? (
-                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
-                    <div
-                      style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
-                      className="max-w-full bg-white shadow-md rounded-xl overflow-hidden p-2"
-                      dangerouslySetInnerHTML={{ __html: previewResource.svgMarkup }}
-                    />
-                  </div>
-                ) : isPdf && previewResource.blobUrl ? (
-                  <iframe
-                    src={`${previewResource.blobUrl}#toolbar=1`}
-                    className="w-full h-[70vh] border-0 rounded-2xl bg-white shadow-inner"
-                    title={previewMaterial.title}
-                  />
-                ) : previewResource.blobUrl ? (
-                  <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
-                    <img
-                      src={previewResource.blobUrl}
-                      alt={previewMaterial.title || "Náhled"}
-                      style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
-                      className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2"
-                    />
-                  </div>
-                ) : null}
-              </div>
-
-              <div className="px-6 py-3.5 bg-white border-t border-gray-100 flex flex-wrap items-center justify-between gap-3">
-                {/* Zoom controls for non-PDF image/SVG */}
-                {!isPdf && (fileSrc || previewResource.svgMarkup) && (
-                  <div className="flex items-center gap-1 bg-gray-100 p-1 rounded-xl">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setZoomLevel(z => Math.max(0.5, z - 0.25))}
-                      className="h-8 w-8 p-0 rounded-lg cursor-pointer"
-                      title="Zmenšit"
+            {/* TYP Checkboxes */}
+            <div className="pt-4 border-t border-[#EFEAE0] space-y-2.5">
+              <p className="text-xs font-black uppercase tracking-wider text-gray-400 px-1.5">
+                Typ
+              </p>
+              <div className="flex flex-wrap lg:flex-col gap-2.5 px-1.5">
+                {MATERIAL_TYPE_FILTER_LABELS.map(({ key, label }) => {
+                  const checked = selectedTypes[key];
+                  return (
+                    <label
+                      key={key}
+                      className="inline-flex items-center gap-2.5 text-sm font-bold text-gray-700 cursor-pointer select-none"
                     >
-                      <ZoomOut size={14} />
-                    </Button>
-                    <span className="text-[11px] font-bold px-2 text-gray-700 min-w-[50px] text-center">
-                      {Math.round(zoomLevel * 100)}%
-                    </span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setZoomLevel(z => Math.min(3, z + 0.25))}
-                      className="h-8 w-8 p-0 rounded-lg cursor-pointer"
-                      title="Zvětšit"
-                    >
-                      <ZoomIn size={14} />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setZoomLevel(1)}
-                      className="h-8 px-2 text-[10px] font-bold rounded-lg cursor-pointer text-gray-600"
-                      title="Obnovit 100%"
-                    >
-                      100%
-                    </Button>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2 ml-auto">
-                  <Button
-                    onClick={() => handleDownload(previewMaterial)}
-                    disabled={downloadingId === previewMaterial.id}
-                    className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-10 px-5 flex items-center justify-center gap-1.5 shadow-xs border border-blue-200/80 hover:scale-105 transition-transform cursor-pointer"
-                  >
-                    <Download size={14} className="text-[#0F2942]" />
-                    <span>{downloadingId === previewMaterial.id ? 'Stahuji...' : 'Stáhnout'}</span>
-                  </Button>
-
-                  {previewResource.blobUrl && (
-                    <a
-                      href={previewResource.blobUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-xl border border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-10 px-4 flex items-center justify-center gap-1.5 cursor-pointer bg-white"
-                    >
-                      <ExternalLink size={14} />
-                      <span>Otevřít v novém okně</span>
-                    </a>
-                  )}
-
-                  <Button
-                    variant="outline"
-                    onClick={() => setPreviewMaterial(null)}
-                    className="rounded-xl font-bold text-xs h-10 px-4 cursor-pointer"
-                  >
-                    Zavřít
-                  </Button>
-                </div>
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => handleToggleType(key)}
+                        className={cn(
+                          'w-[18px] h-[18px] rounded-md flex items-center justify-center transition-colors border cursor-pointer shrink-0',
+                          checked
+                            ? 'bg-[#1D4ED8] border-[#1D4ED8] text-white'
+                            : 'bg-white border-gray-300 text-transparent hover:border-gray-400'
+                        )}
+                      >
+                        <Check size={12} strokeWidth={3} />
+                      </button>
+                      <span onClick={() => handleToggleType(key)}>{label}</span>
+                    </label>
+                  );
+                })}
               </div>
             </div>
-          </div>
-        );
-      })()}
+          </aside>
 
-      {/* Sjednocený Paywall modal se zešedlým pozadím pro uživatele bez Premium */}
+          {/* COLUMN 2: SHEET LIST */}
+          <section className="p-4 sm:p-5 flex flex-col justify-between gap-4 min-w-0 bg-white">
+            <div className="space-y-4">
+              {/* List Header */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="text-xl sm:text-2xl font-display font-black text-[#0F1E36] leading-snug">
+                    {activeTopicTitle}
+                  </h2>
+                  <p className="text-sm font-medium text-gray-500">
+                    {filteredMaterials.length} {formatListNoun(filteredMaterials.length)} ·{' '}
+                    {formatCompletedLabel(completedInViewCount)}
+                  </p>
+                </div>
+
+                <Select value={sortBy} onValueChange={(v: SortOption) => setSortBy(v)}>
+                  <SelectTrigger className="h-9 border-none shadow-none bg-transparent hover:bg-gray-50 px-2.5 rounded-lg text-sm font-bold text-[#0F1E36] w-auto gap-1 cursor-pointer shrink-0">
+                    <span>{SORT_LABELS[sortBy]}</span>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-xl">
+                    <SelectItem value="number" className="text-sm font-bold">
+                      Podle čísla
+                    </SelectItem>
+                    <SelectItem value="newest" className="text-sm font-bold">
+                      Od nejnovějších
+                    </SelectItem>
+                    <SelectItem value="title" className="text-sm font-bold">
+                      Podle názvu
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Material Rows */}
+              {filteredMaterials.length === 0 ? (
+                <div className="py-16 px-4 text-center rounded-2xl border border-dashed border-gray-200 bg-[#FAF8F4] space-y-3">
+                  <Sparkles size={28} className="mx-auto text-amber-500" />
+                  <div className="space-y-1">
+                    <p className="text-base font-bold text-[#0F1E36]">
+                      Žádné materiály neodpovídají filtru
+                    </p>
+                    <p className="text-sm text-gray-500">
+                      Zkuste upravit hledaný výraz nebo zapnout více typů materiálů.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setSearch('');
+                      setSelectedTopicKey('all');
+                      setGradeFilter('all');
+                      setSelectedTypes({ worksheet: true, summary: true, cheatsheet: true });
+                    }}
+                    className="rounded-full text-sm font-bold px-4 h-10 cursor-pointer"
+                  >
+                    Obnovit filtry
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {filteredMaterials.slice(0, visibleLimit).map((mat) => {
+                    const isSelected = mat.id === selectedMaterial?.id;
+                    const code = materialCodeMap.get(mat.id) || '1.1';
+                    const pageCount = Math.max(
+                      1,
+                      measuredPageCounts[mat.id] || mat.pageCount || 1
+                    );
+                    const fileBadge = getMaterialFileBadge(mat);
+                    const stepInfo = getStepProgressForMaterial(mat);
+
+                    return (
+                      <button
+                        key={mat.id}
+                        type="button"
+                        onClick={() => handleSelectRow(mat)}
+                        className={cn(
+                          'w-full flex items-center justify-between gap-2.5 px-3.5 py-3 rounded-2xl transition-all text-left cursor-pointer border',
+                          isSelected
+                            ? 'bg-[#F4F8FF] border-[#BFD8FE] shadow-2xs'
+                            : 'bg-white border-transparent hover:bg-gray-50/90 hover:border-gray-100'
+                        )}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <span
+                            className={cn(
+                              'w-10 h-8 rounded-xl text-xs font-black flex items-center justify-center shrink-0 transition-colors',
+                              isSelected
+                                ? 'bg-[#1D4ED8] text-white'
+                                : 'bg-[#EEF2F7] text-[#0F2942]'
+                            )}
+                          >
+                            {code}
+                          </span>
+
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm sm:text-[15px] font-bold text-[#0F1E36] truncate">
+                              {mat.title}
+                            </p>
+                            <p className="text-xs sm:text-[13px] font-medium text-gray-500 truncate">
+                              {formatPagesLabel(pageCount)} · {fileBadge}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Right status pill */}
+                        <div className="shrink-0">
+                          {mat.locked ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-gray-100 text-gray-500 border border-gray-200/70">
+                              <Lock size={11} />
+                              <span>Premium</span>
+                            </span>
+                          ) : stepInfo.isCompleted ? (
+                            <span
+                              className="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 inline-flex items-center justify-center"
+                              title="Splněno"
+                            >
+                              <Check size={14} strokeWidth={3} />
+                            </span>
+                          ) : stepInfo.isInProgress ? (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#92400E]">
+                              {stepInfo.completedCount} / {stepInfo.totalSteps}
+                            </span>
+                          ) : !hasMaterialsAccess && mat.isFreeSample ? (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200/80">
+                              Zdarma
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#EEF4FF] text-[#2563EB]">
+                              Nové
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {filteredMaterials.length > visibleLimit && (
+              <div className="pt-2 border-t border-gray-100 text-center">
+                <button
+                  type="button"
+                  onClick={() => setVisibleLimit((prev) => prev + 12)}
+                  className="text-sm font-bold text-[#1D4ED8] hover:underline py-1.5 px-4 cursor-pointer"
+                >
+                  Zobrazit dalších {filteredMaterials.length - visibleLimit}{' '}
+                  {formatListNoun(filteredMaterials.length - visibleLimit)}
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* COLUMN 3: PREVIEW & ACTIONS (Desktop) */}
+          <aside className="hidden lg:block p-5 sm:p-6 bg-white">
+            {selectedMaterial ? (
+              renderRightDetailPanel(selectedMaterial)
+            ) : (
+              <div className="h-full min-h-[360px] flex flex-col items-center justify-center text-center p-6 text-gray-400 space-y-2">
+                <BookOpen size={30} className="text-gray-300" />
+                <p className="text-base font-bold text-gray-500">Vyber výukový list ze seznamu</p>
+                <p className="text-sm text-gray-400">
+                  Zde uvidíš náhled stran, postup studia i možnosti stažení.
+                </p>
+              </div>
+            )}
+          </aside>
+        </div>
+      )}
+
+      {/* Mobile Detail Sheet Modal (< lg) */}
+      <Dialog open={isMobileDetailOpen} onOpenChange={setIsMobileDetailOpen}>
+        <DialogContent className="lg:hidden max-w-lg w-[94vw] max-h-[90vh] overflow-y-auto rounded-3xl p-5 bg-white">
+          <DialogTitle className="sr-only">
+            {selectedMaterial?.title || 'Detail materiálu'}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Náhled a akce vybraného výukového materiálu
+          </DialogDescription>
+          {selectedMaterial && renderRightDetailPanel(selectedMaterial)}
+        </DialogContent>
+      </Dialog>
+
+      {/* Fullscreen Protected Reader Modal (Zoom + Print + PDF Export) */}
+      {selectedMaterial && !selectedMaterial.locked && (
+        <FullscreenMaterialReaderModal
+          isOpen={isReaderOpen}
+          onClose={() => setIsReaderOpen(false)}
+          title={selectedMaterial.title}
+          subtitle={`${selectedMaterial.subject} • ${selectedMaterial.topic || 'Výukový list'}`}
+          pages={previewPages}
+          currentPageIdx={previewPageIdx}
+          onPageChange={setPreviewPageIdx}
+          watermarkText={effectiveWatermark}
+          canExport={hasMaterialsAccess && selectedMaterial.canDownload !== false}
+          isAlreadyUnlocked={Boolean(quota?.unlockedMaterialIds?.includes(selectedMaterial.id))}
+          isCourseExempt={Boolean(quota?.courseExemptMaterialIds?.includes(selectedMaterial.id))}
+          quota={quota}
+          onDownloadPdf={() => handleDownloadPdf(selectedMaterial)}
+          onPrint={() => handlePrint(selectedMaterial)}
+          onRequestUpgrade={() => {
+            setIsReaderOpen(false);
+            openPaywall(
+              'Stažení PDF a tisk jsou součástí ProEducator Premium.'
+            );
+          }}
+          isDownloading={isDownloading}
+          isPrinting={isPrinting}
+          studyTheory={selectedMaterial.studyTheory}
+        />
+      )}
+
+      {/* Unified Paywall Modal (opened only on demand for locked actions) */}
       <UnifiedPaywallModal
-        isOpen={!hasMaterialsAccess && !isPaywallDismissed}
-        onClose={() => {
-          setIsPaywallDismissed(true);
-          navigate('/practice');
-        }}
+        isOpen={isPaywallOpen}
+        onClose={() => setIsPaywallOpen(false)}
         type="premium"
-        description="Staň se jedním z prvních podporovatelů platformy, zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků."
+        description={
+          paywallDescription ||
+          'Staň se podporovatelem ProEducator, zafixuj si cenu 99 Kč/měsíc a získej neomezené online čtení všech materiálů plus 8 stažení / tisků každé období.'
+        }
       />
     </div>
   );

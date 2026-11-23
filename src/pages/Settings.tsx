@@ -4,8 +4,8 @@ import { saveCredentialToBrowser } from '../lib/credentialHelper';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Camera, Lock, AlertCircle, User, CreditCard } from 'lucide-react';
-import { CapIcon, CorrectCyanIcon } from '../components/common/CustomIcon';
+import { Camera, Lock } from 'lucide-react';
+import { CapIcon, CorrectCyanIcon, AccountIcon, CardGrayIcon, InfoPinkIcon } from '../components/common/CustomIcon';
 import SubscriptionManager from '../components/SubscriptionManager';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
@@ -202,7 +202,7 @@ export default function Settings() {
                 : 'text-gray-500 hover:text-gray-900'
             )}
           >
-            <User size={16} />
+            <AccountIcon size={20} />
             <span>Osobní profil</span>
           </button>
 
@@ -216,7 +216,7 @@ export default function Settings() {
                 : 'text-gray-500 hover:text-gray-900'
             )}
           >
-            <CreditCard size={16} />
+            <CardGrayIcon size={20} />
             <span>Správa předplatného</span>
           </button>
         </div>
@@ -375,7 +375,7 @@ export default function Settings() {
               className="rounded-2xl h-12 bg-gray-100 border-none font-bold px-4 cursor-not-allowed"
             />
             <p className="text-[10px] text-gray-400 font-bold flex items-center gap-1 px-1">
-              <AlertCircle size={10} /> Email je tvůj unikátní identifikátor.
+              <InfoPinkIcon size={13} /> Email je tvůj unikátní identifikátor.
             </p>
           </div>
 

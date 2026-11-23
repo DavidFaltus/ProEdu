@@ -35,6 +35,7 @@ const routes = [
   { path: '/contact', changefreq: 'monthly', priority: '0.70' },
   { path: '/login', changefreq: 'monthly', priority: '0.50' },
   { path: '/terms', changefreq: 'monthly', priority: '0.40' },
+  { path: '/doprava-a-platba', changefreq: 'monthly', priority: '0.40' },
   { path: '/privacy', changefreq: 'monthly', priority: '0.40' },
 ];
 
@@ -75,6 +76,7 @@ Allow: ${prefix}/learning
 Allow: ${prefix}/contact
 Allow: ${prefix}/login
 Allow: ${prefix}/terms
+Allow: ${prefix}/doprava-a-platba
 Allow: ${prefix}/privacy
 
 # Disallow private & authenticated student / teacher routes

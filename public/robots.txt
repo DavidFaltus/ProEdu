@@ -1,25 +1,36 @@
-# ProEdu robots.txt
+# ProEdu robots.txt (https://www.proeducator.eu)
 User-agent: *
 Allow: /
 Allow: /practice
 Allow: /courses
-Allow: /courses/*
+Allow: /courses/
 Allow: /learning
 Allow: /contact
-Allow: /login
 Allow: /terms
+Allow: /doprava-a-platba
 Allow: /privacy
+Allow: /api/practice/catalog
+Allow: /api/courses
 
-# Disallow private & authenticated student / teacher routes
+# Zákaz procházení privátních, autentizačních a interních sekcí (prevence Soft 404 a chyb přesměrování v GSC)
 Disallow: /teacher
 Disallow: /teacher/
 Disallow: /garden
 Disallow: /todo
 Disallow: /settings
+Disallow: /statistics
+Disallow: /statistiky
+Disallow: /login
+Disallow: /reset-password
+Disallow: /student
+Disallow: /dashboard
 Disallow: /test/
 Disallow: /review/
 Disallow: /study/
 Disallow: /practice/session/
 
-# Sitemap location
-Sitemap: https://proeducator.eu/sitemap.xml
+# Sitemapy pro Google Search Console
+Sitemap: https://www.proeducator.eu/sitemap.xml
+Sitemap: https://www.proeducator.eu/sitemap-pages.xml
+Sitemap: https://www.proeducator.eu/sitemap-courses.xml
+Sitemap: https://www.proeducator.eu/sitemap-legal.xml

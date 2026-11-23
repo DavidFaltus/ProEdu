@@ -107,7 +107,7 @@ Každý uživatel, komponenta a operace mají mít jen minimální nutná opráv
 17. Logika oprávnění nesmí být jen v UI.
 Skrytí tlačítka nestačí. I když UI něco nezobrazuje, backend/rules to musí samostatně blokovat.
 
-18. Každá nová feature musí projít bezpečnostním checklistem.
+18. Každá nová feature musí projít bezpečnostním a produkčním checklistem.
 Před dokončením nové feature agent ověří:
 - kdo data čte
 - kdo data zapisuje
@@ -115,6 +115,7 @@ Před dokončením nové feature agent ověří:
 - zda nejdou měnit privilegovaná pole
 - zda rules odpovídají chování UI
 - zda existují Storage rules, pokud se nahrávají soubory
+- zda změna funguje i na live serveru (Cloud Functions + Firebase Hosting), nejen na localhostu
 
 19. Nepovoluj fallback řešení, která obcházejí bezpečnost.
 Zakázané vzory:
@@ -142,6 +143,21 @@ Technické zásady pro Firebase v tomto projektu:
 Aplikaci spouští vždy na portu 3005  toto použij při debugování
 
 Pro debug učitele využívej účet ucitel@ucitel.cz s heslem ucitel123 a pro debug žáka využívej účet student@student.cz s heslem student123
+
+---
+
+### Produkční prostředí a parita s localhostem (Live server)
+
+Aplikace běží ve dvou rozdílných prostředích — každá změna musí fungovat v obou:
+- **Localhost (`npm run dev`, port `3005`):** čte kořenový `.env`, běží mimo `NODE_ENV=production` a používá lokální `FIREBASE_SERVICE_ACCOUNT_JSON`.
+- **Live server (`https://www.proeducator.eu`):** frontend běží na Firebase Hosting (`dist/`), backend `/api/**` jako Firebase Cloud Functions 2nd Gen (`europe-west1`, zdroj `server/`, runtime SA `772809169754-compute@developer.gserviceaccount.com`), vždy s `NODE_ENV=production` a proměnnými výhradně ze `server/.env`.
+
+Povinné kontroly při každé úpravě backendu, auth, e-mailů, úložiště nebo integrací:
+1. **Proměnné prostředí (`server/.env` vs. `.env`):** Každou novou serverovou proměnnou přidej jako placeholder do `.env.example` a ověř, že je nastavená i v `server/.env` (ne jen v kořenovém `.env`). Zkontroluj všechny větve podmíněné `NODE_ENV === 'production'` (fail-closed sekrety jako `REGISTRATION_ENCRYPTION_SECRET`, `GUEST_DEMO_SECRET`, `VIDEO_TOKEN_SECRET`, SMTP režim), aby nepadaly po nasazení na chybějící konfiguraci.
+2. **Firebase Admin SDK a IAM oprávnění:** V produkci běží Admin SDK přes Application Default Credentials (`applicationDefault()`), bez lokálního JSON klíče. Operace podepisující tokeny nebo URL (`auth.createCustomToken`, Storage `getSignedUrl`) vyžadují zapnuté `iamcredentials.googleapis.com` a roli `roles/iam.serviceAccountTokenCreator` na runtime service accountu funkce.
+3. **Stateless běh Cloud Functions:** Nikdy nespoléhej na lokální filesystem (např. `public/uploads`) ani na dlouhodobý stav v paměti procesu — Cloud Functions se škálují a restartují. Trvalý i sdílený dočasný stav (pending registrace, soubory, metadata) ukládej do Firestore nebo Firebase Storage.
+4. **URL, CORS a CSP:** V e-mailech, redirectech a odkazech používej produkční URL (`https://www.proeducator.eu` / `APP_URL`), nikdy nehardcoduj `localhost`. Při přidání nové externí domény (API, iframe, platby, auth) aktualizuj současně `PROD_CORS_ORIGINS` v `server/index.js` i `Content-Security-Policy` v `firebase.json`.
+5. **Nasazení a ověření na live:** Před `firebase deploy` zkontroluj aktivní git větev (na live nasazuj jen požadovanou větev, typicky `main`, bez rozpracovaných feature větví) a nasaď všechny dotčené části (`functions`, `hosting`, `firestore:rules`, `storage`). Po nasazení ověř chování na ostré URL a zkontroluj produkční logy (`firebase functions:log --only api`).
 
 ---
 
@@ -182,3 +198,12 @@ Pro debug učitele využívej účet ucitel@ucitel.cz s heslem ucitel123 a pro d
      - Obdobná integrace přes REST API do serverové vrstvy v `server/index.js`.
    - **Varianta C (Interní generování PDF faktur):**
      - Generování číslované PDF faktury přímo v Node.js (např. přes knihovnu `pdfkit` nebo HTML template) a odeslání přes Nodemailer / SendGrid.
+
+---
+
+### Vizuální standardy stránek (UI konvence)
+
+- **Hlavní nadpis stránky (`<h1>`):** Vždy používej jednotný hravý styl aplikace `font-playful text-gray-700 tracking-tight`:
+  - Na levě zarovnaných hlavičkách (např. `StudentDashboard`, `LearningSheets`): `text-3xl sm:text-4xl md:text-5xl font-playful text-gray-700 tracking-tight leading-tight`.
+  - Na vycentrovaných hlavičkách (např. `Practice`, `Courses`, `Statistics`): `text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight`.
+- **Šířka hlavních stránek:** `App.tsx` již obaluje všechny stránky kontejnerem `max-w-[1600px] w-full mx-auto p-3.5 sm:p-5 md:p-8 lg:p-10`. Hlavní pracovní stránky (`StudentDashboard`, `LearningSheets` apod.) proto mají používat plnou šířku rodičovského kontejneru (`space-y-6 md:space-y-8`) bez dalšího zužujícího `max-w-7xl` a bez zdvojeného horizontálního paddingu.

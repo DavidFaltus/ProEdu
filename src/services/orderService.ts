@@ -19,6 +19,7 @@ export interface CreateOrderParams {
 
 export interface CreateOrderResult {
   success: boolean;
+  reusedExistingOrder?: boolean;
   orderId: string;
   order: Order;
   bankDetails?: {
@@ -119,6 +120,7 @@ export async function createOrder(params: CreateOrderParams): Promise<CreateOrde
 
   return {
     success: true,
+    reusedExistingOrder: Boolean(data.reusedExistingOrder),
     orderId,
     order: { ...serverOrder, id: orderId },
     ...(data.bankDetails ? { bankDetails: data.bankDetails } : {}),
@@ -189,6 +191,86 @@ export function buildOrderResultFromOrder(order: Order): CreateOrderResult {
         ? 'Dokonči platbu bezpečně přes platební bránu Comgate.'
         : 'Testovací platební brána'
     }
+  };
+}
+
+/**
+ * Ověří stav Comgate platby přes backend (GET /v2.0/payment/transId/{transId}.json)
+ * a při statusu PAID atomicky aktivuje předplatné i v případě, že webhook ještě nedorazil.
+ */
+export async function verifyComgatePayment(
+  orderId: string,
+  options?: { markCancelledIfPending?: boolean }
+): Promise<{ success: boolean; status: string; verifiedViaComgate?: boolean }> {
+  if (!orderId) {
+    return { success: false, status: 'pending' };
+  }
+
+  const token = await getAuthToken();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  let response: Response;
+  try {
+    response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/verify-payment`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        markCancelledIfPending: Boolean(options?.markCancelledIfPending)
+      }),
+      signal: controller.signal
+    });
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    throw new Error(
+      err?.name === 'AbortError'
+        ? 'Vypršel časový limit při ověřování platby.'
+        : 'Nepodařilo se ověřit stav platby na serveru.'
+    );
+  }
+  clearTimeout(timeoutId);
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data?.error || 'Ověření stavu platby selhalo.');
+  }
+
+  return {
+    success: Boolean(data?.success),
+    status: String(data?.status || 'pending'),
+    verifiedViaComgate: Boolean(data?.verifiedViaComgate)
+  };
+}
+
+/**
+ * Zruší čekající (neuhrazenou) objednávku uživatele nebo učitele.
+ */
+export async function cancelPendingOrder(orderId: string): Promise<{ success: boolean; status: string; message?: string }> {
+  if (!orderId) {
+    throw new Error('Chybí ID objednávky.');
+  }
+
+  const token = await getAuthToken();
+  const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}/cancel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.success) {
+    throw new Error(data?.error || 'Nepodařilo se zrušit objednávku.');
+  }
+
+  return {
+    success: true,
+    status: String(data?.status || 'cancelled'),
+    message: data?.message
   };
 }
 
@@ -643,9 +725,7 @@ export function openIuctoInvoicePreview(order: Order) {
   const planTitle = escapeHtml(
     order.planId === 'premium-monthly' ? 'Předplatné ProEducator Premium (měsíční tarif)' : order.planId
   );
-  const paymentLabel = escapeHtml(
-    order.paymentMethod === 'comgate' ? 'Platební brána Comgate (online karta)' : 'Bankovní převod (QR platba)'
-  );
+  const paymentLabel = escapeHtml('Platební brána Comgate (online karta)');
   const safeVarSym = escapeHtml(order.variableSymbol || '-');
   const safeClientName = escapeHtml(order.clientName || 'Zákazník');
   const safeStreet = escapeHtml(order.billingAddress?.street || '');

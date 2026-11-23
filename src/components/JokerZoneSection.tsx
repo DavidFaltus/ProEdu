@@ -2,11 +2,14 @@ import React, { useState } from 'react';
 import {
   Play,
   Lock,
-  Flame,
-  Users,
-  ClipboardList,
   Check
 } from 'lucide-react';
+import {
+  StreakYellowIcon,
+  FriendsYellowIcon,
+  SurveyBlueIcon,
+  JokerBlueIcon
+} from './common/CustomIcon';
 import { useAuth } from '../context/AuthContext';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from './ui/dialog';
 import { toast } from 'sonner';
@@ -19,6 +22,7 @@ import {
   MAX_REFERRALS
 } from '../services/jokerService';
 import { cn } from '../lib/utils';
+import { trackReferralShare } from '../services/analyticsService';
 
 const SURVEY_OPTIONS = [
   'Od spolužáka / kamaráda',
@@ -54,7 +58,11 @@ function getRemainingVideosLabel(remaining: number): string {
   return `Dnes zbývají ${remaining} zhlédnutí`;
 }
 
-export default function JokerZoneSection() {
+interface JokerZoneSectionProps {
+  className?: string;
+}
+
+export default function JokerZoneSection({ className }: JokerZoneSectionProps = {}) {
   const {
     user,
     profile,
@@ -107,6 +115,7 @@ export default function JokerZoneSection() {
     if (!referralUrl) return;
     try {
       await navigator.clipboard.writeText(referralUrl);
+      trackReferralShare('copy_link');
       setIsCopied(true);
       toast.success('Odkaz pro doporučení byl zkopírován do schránky!');
       setTimeout(() => setIsCopied(false), 2500);
@@ -175,7 +184,12 @@ export default function JokerZoneSection() {
   const daysToMaxLimit = Math.max(0, MAX_STREAK_DAYS - streak);
 
   return (
-    <section className="bg-white rounded-[2rem] border border-gray-200/80 shadow-sm p-5 sm:p-7 space-y-5 relative overflow-hidden">
+    <section
+      className={cn(
+        'bg-white rounded-[2rem] border border-gray-200/80 shadow-sm p-5 sm:p-7 space-y-5 relative overflow-hidden',
+        className
+      )}
+    >
       {/* HEADER SECTION */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="space-y-0.5">
@@ -191,7 +205,8 @@ export default function JokerZoneSection() {
 
         {/* Joker status box on top right */}
         {isGuest ? (
-          <div className="self-start sm:self-center bg-[#FCF9F1] border border-[#EFEAD8] px-4 py-2 rounded-full flex items-center gap-3">
+          <div className="self-start sm:self-center bg-[#FCF9F1] border border-[#EFEAD8] px-4 py-2 rounded-full flex items-center gap-2.5">
+            <JokerBlueIcon size={18} />
             <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
               TVOJE ŽOLÍKY
             </span>
@@ -201,9 +216,10 @@ export default function JokerZoneSection() {
           </div>
         ) : (
           <div className="self-start sm:self-center bg-[#FCF9F1] border border-[#EFEAD8] px-4 py-2.5 rounded-2xl min-w-[168px] space-y-1.5">
-            <div className="flex items-baseline justify-between gap-4">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
-                TVOJE ŽOLÍKY
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500 flex items-center gap-1.5">
+                <JokerBlueIcon size={16} />
+                <span>TVOJE ŽOLÍKY</span>
               </span>
               <div>
                 <span className="text-lg font-black text-[#0F2942] leading-none">{jokers}</span>
@@ -317,7 +333,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#FDE68A]/70 text-[#92400E] flex items-center justify-center shrink-0">
-                  <Flame size={19} />
+                  <StreakYellowIcon size={24} />
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
@@ -378,7 +394,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#DCFCE7] text-[#166534] flex items-center justify-center shrink-0">
-                  <Users size={18} />
+                  <FriendsYellowIcon size={24} />
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
@@ -451,7 +467,7 @@ export default function JokerZoneSection() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
-                  <ClipboardList size={18} />
+                  <SurveyBlueIcon size={24} />
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-black text-sm sm:text-base text-[#0F2942] leading-snug">
@@ -545,7 +561,7 @@ export default function JokerZoneSection() {
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
-                <ClipboardList size={20} />
+                <SurveyBlueIcon size={24} />
               </div>
               <div>
                 <DialogTitle className="font-black text-lg text-[#0F2942]">

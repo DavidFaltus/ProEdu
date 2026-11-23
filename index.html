@@ -1,8 +1,56 @@
 <!doctype html>
-<html lang="en">
+<html lang="cs">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ProEdu | Příprava na přijímací zkoušky CERMAT z matematiky a češtiny</title>
+    <meta name="description" content="Interaktivní online příprava na přijímací zkoušky CERMAT na střední školy a víceletá gymnázia. Procvičování z matematiky a českého jazyka, studijní materiály, vysvětlení krok za krokem a živé kurzy." />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://www.proeducator.eu/" />
+
+    <!-- Open Graph / Social -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="ProEdu" />
+    <meta property="og:locale" content="cs_CZ" />
+    <meta property="og:url" content="https://www.proeducator.eu/" />
+    <meta property="og:title" content="ProEdu | Příprava na přijímací zkoušky CERMAT z matematiky a češtiny" />
+    <meta property="og:description" content="Interaktivní online příprava na přijímací zkoušky CERMAT na SŠ a gymnázia. Procvičování, studijní taháky a živé přípravné kurzy." />
+
+    <!-- Strukturovaná data JSON-LD pro Google Search Console -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "EducationalOrganization",
+            "@id": "https://www.proeducator.eu/#organization",
+            "name": "ProEdu, s.r.o.",
+            "alternateName": "ProEducator",
+            "url": "https://www.proeducator.eu/",
+            "email": "info@pro-edu.eu",
+            "taxID": "24466883",
+            "address": {
+              "@type": "PostalAddress",
+              "streetAddress": "Uralská 689/7, Bubeneč",
+              "addressLocality": "Praha 6",
+              "postalCode": "160 00",
+              "addressCountry": "CZ"
+            }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://www.proeducator.eu/#website",
+            "url": "https://www.proeducator.eu/",
+            "name": "ProEdu",
+            "inLanguage": "cs-CZ",
+            "publisher": {
+              "@id": "https://www.proeducator.eu/#organization"
+            }
+          }
+        ]
+      }
+    </script>
+
     <!-- Google tag (gtag.js) -->
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-5Y9V7DHPXW"></script>
     <script>
@@ -10,13 +58,13 @@
       function gtag(){dataLayer.push(arguments);}
       gtag('js', new Date());
 
-      gtag('config', 'G-5Y9V7DHPXW');
+      // send_page_view: false zabrání duplicitnímu prvnímu page_view (SPA router v App.tsx posílá page_view s přesným názvem stránky)
+      gtag('config', 'G-5Y9V7DHPXW', { send_page_view: false });
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Lexend:wght@300;400;500;600&family=PT+Sans:wght@400;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <title>ProEdu</title>
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   </head>
   <body>

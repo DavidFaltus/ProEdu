@@ -14,6 +14,7 @@ import {
   BulbYellowIcon,
   DialogCyanIcon,
   BubbleYellowIcon,
+  JokerBlueIcon,
 } from '../components/common/CustomIcon';
 import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
@@ -48,7 +49,13 @@ import {
 import { 
   trackPracticeStart, 
   trackPracticeAnswer, 
-  trackPracticeComplete 
+  trackPracticeComplete,
+  trackPracticeHintUsed,
+  trackPracticeSolutionRevealed,
+  trackPracticeAbandon,
+  trackQuestionInquirySubmit,
+  setDynamicPageSeo,
+  startPerfTrace
 } from '../services/analyticsService';
 
 interface QuestionAnswerState {
@@ -169,12 +176,17 @@ export default function PracticeSession() {
       setBookmarkedSet(new Set());
       setCurrentIndex(0);
 
+      const perfTrace = startPerfTrace('practice_questions_load', {
+        subtopic_id: subtopicId,
+      });
+
       try {
         const catalog = await fetchPracticeCatalog({ includeHidden: isTeacher });
         const subData = catalog.subtopics.find(s => s.id === subtopicId) || null;
         setSubtopic(subData);
 
         if (!user && (!catalog.firstDemoSubtopicId || subtopicId !== catalog.firstDemoSubtopicId)) {
+          perfTrace.stop({ status: 'guest_demo_blocked' });
           setIsGuestDemoBlocked(true);
           setQuestions([]);
           return;
@@ -184,6 +196,15 @@ export default function PracticeSession() {
           fetchSubtopicQuestions(subtopicId),
           getActivePracticeSession(subtopicId, user?.uid || 'guest')
         ]);
+        perfTrace.stop(
+          {
+            status: 'ok',
+            subject: subData?.subjectId || 'unknown',
+          },
+          {
+            questions_loaded: Array.isArray(qRes.questions) ? qRes.questions.length : 0,
+          }
+        );
 
         if (typeof qRes.guestRemaining === 'number') {
           setGuestRemaining(qRes.guestRemaining);
@@ -228,6 +249,11 @@ export default function PracticeSession() {
         sessionStartTimeRef.current = Date.now();
 
         if (subData) {
+          setDynamicPageSeo({
+            pagePath: `/practice/session/${subData.id}`,
+            pageTitle: `Procvičování: ${subData.title} (${subData.subjectId}) | ProEdu`,
+            indexable: false,
+          });
           trackPracticeStart({
             subtopicId: subData.id,
             subtopicTitle: subData.title,
@@ -236,6 +262,7 @@ export default function PracticeSession() {
           });
         }
       } catch (err: any) {
+        perfTrace.stop({ status: 'error', error_code: String(err?.code || err?.status || 'unknown') });
         if (err?.code === 'GUEST_LIMIT_REACHED' || err?.status === 429) {
           setIsGuestLimitReached(true);
         } else if (err?.code === 'DEMO_RESTRICTED' || err?.status === 401 || err?.status === 403) {
@@ -755,6 +782,11 @@ export default function PracticeSession() {
       };
       setAnswersMap(nextAnswers);
       persistSession(nextAnswers, openInputs, showHintMap, bookmarkedSet, currentIndex);
+      trackPracticeSolutionRevealed({
+        subtopicId: subtopic?.id || subtopicId || '',
+        questionId: currentQuestion?.id,
+        questionIndex: currentIndex,
+      });
 
       if (!hasUnlimitedAccess && user) {
         await refreshProfile?.();
@@ -813,8 +845,59 @@ export default function PracticeSession() {
   // Toggle hint
 
   const handleToggleHint = () => {
-    setShowHintMap(prev => ({ ...prev, [currentIndex]: !prev[currentIndex] }));
+    const willOpen = !showHintMap[currentIndex];
+    if (willOpen) {
+      trackPracticeHintUsed({
+        subtopicId: subtopic?.id || subtopicId || '',
+        questionId: currentQuestion?.id,
+        questionIndex: currentIndex,
+      });
+    }
+    setShowHintMap(prev => ({ ...prev, [currentIndex]: willOpen }));
   };
+
+  // Sledování předčasného opuštění procvičování (practice_session_abandon)
+  const abandonStateRef = useRef({
+    isCompleted: false,
+    subtopicId: '',
+    subtopicTitle: '',
+    subject: '',
+    answeredCount: 0,
+    totalQuestions: 0,
+    currentIndex: 0,
+  });
+  useEffect(() => {
+    const answeredCount = Object.values(answersMap).filter(a => a?.isSubmitted).length;
+    abandonStateRef.current = {
+      isCompleted,
+      subtopicId: subtopic?.id || subtopicId || '',
+      subtopicTitle: subtopic?.title || '',
+      subject: subtopic?.subjectId || '',
+      answeredCount,
+      totalQuestions: questions.length,
+      currentIndex,
+    };
+  }, [isCompleted, subtopic, subtopicId, answersMap, questions.length, currentIndex]);
+
+  useEffect(() => {
+    return () => {
+      const st = abandonStateRef.current;
+      if (!st.isCompleted && st.totalQuestions > 0 && st.answeredCount < st.totalQuestions) {
+        const durationSeconds = Math.max(0, Math.round((Date.now() - sessionStartTimeRef.current) / 1000));
+        if (durationSeconds >= 3 || st.answeredCount > 0) {
+          trackPracticeAbandon({
+            subtopicId: st.subtopicId,
+            subtopicTitle: st.subtopicTitle,
+            subject: st.subject,
+            answeredCount: st.answeredCount,
+            totalQuestions: st.totalQuestions,
+            currentQuestionIndex: st.currentIndex,
+            durationSeconds,
+          });
+        }
+      }
+    };
+  }, []);
 
   // Slider scroll navigation buttons
   const scrollSlider = (direction: 'left' | 'right') => {
@@ -957,6 +1040,11 @@ export default function PracticeSession() {
         topic: subtopic?.title || 'Procvičování',
         comment,
         senderRole: isTeacher ? 'teacher' : 'student',
+      });
+      trackQuestionInquirySubmit({
+        subtopicTitle: subtopic?.title || 'Procvičování',
+        questionId: currentQuestion?.id || 'question',
+        source: 'practice',
       });
 
       toast.success('Tvůj dotaz byl úspěšně odeslán lektorovi!');
@@ -1265,7 +1353,7 @@ export default function PracticeSession() {
               className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-950 border border-amber-300/80 rounded-xl text-xs font-bold shadow-2xs select-none"
               title="Zbývající žolíky pro dnešní den"
             >
-              <span className="text-sm">🃏</span>
+              <JokerBlueIcon size={16} />
               <span className="font-mono font-black">{jokers}</span>
               <span className="text-[11px] text-amber-800 font-semibold hidden sm:inline">žolíků</span>
             </div>

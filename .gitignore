@@ -9,6 +9,7 @@ coverage/
 foto/
 .firebase/
 scratch/
+.idea/
 
 # Secrets & Android builds
 *google-services.json

@@ -16,7 +16,8 @@ import {
   StarPinkIcon, 
   StarYellowIcon, 
   TeamBlueIcon,
-  CorrectCyanIcon
+  CorrectCyanIcon,
+  JokerBlueIcon
 } from './common/CustomIcon';
 import { cn } from '../lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
@@ -296,7 +297,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                       Základní plán
                     </Link>
                     <span className="text-[10px] font-bold text-gray-700 bg-white px-2 py-0.5 rounded-lg border border-gray-200/70 flex items-center gap-1.5 shadow-2xs">
-                      <span>🃏</span>
+                      <JokerBlueIcon size={14} />
                       <span className="font-mono font-black text-gray-900">{jokers}</span>
                       <span className="text-gray-500 font-semibold">žolíků</span>
                     </span>

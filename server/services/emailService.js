@@ -9,6 +9,7 @@ const SMTP_USER = (process.env.SMTP_USER || '').trim();
 // Odstranění mezer z Google App Password (např. "omaq wevr ocqz dkhx" -> "omaqwevrocqzdkhx")
 const SMTP_PASS = (process.env.SMTP_PASS || '').replace(/\s+/g, '');
 const SMTP_FROM = (process.env.SMTP_FROM || 'ProEdu <info@pro-edu.eu>').trim();
+const ADMIN_ORDER_NOTIFICATION_EMAIL = (process.env.ADMIN_ORDER_NOTIFICATION_EMAIL || 'info@pro-edu.eu').trim();
 const APP_URL = process.env.APP_URL || 'https://proeducator.eu';
 const SAFE_APP_URL = sanitizeHttpUrl(APP_URL) || 'https://proeducator.eu';
 
@@ -25,6 +26,14 @@ function isEmailSimulationAllowed() {
 }
 
 let transporter = null;
+
+export function setTransporterForTesting(customTransporter) {
+  transporter = customTransporter;
+}
+
+export function resetTransporterForTesting() {
+  transporter = null;
+}
 
 function getTransporter() {
   if (transporter) return transporter;
@@ -57,10 +66,12 @@ function getTransporter() {
  * Pokud nejsou nastaveny SMTP proměnné, v produkci selže (fail-closed)
  * a v dev/emulator režimu simuluje odeslání bez logování citlivých OTP kódů.
  */
-export async function sendEmail({ to, subject, html, text, replyTo, attachments = [], logDetails = {} }) {
+export async function sendEmail({ to, subject, html, text, replyTo, bcc, cc, attachments = [], logDetails = {} }) {
   const safeTo = sanitizeHeaderValue(to);
   const safeSubject = sanitizeHeaderValue(subject);
   const safeReplyTo = replyTo ? sanitizeHeaderValue(replyTo) : undefined;
+  const safeBcc = bcc ? sanitizeHeaderValue(bcc) : undefined;
+  const safeCc = cc ? sanitizeHeaderValue(cc) : undefined;
   const mailClient = getTransporter();
 
   if (!mailClient) {
@@ -76,6 +87,12 @@ export async function sendEmail({ to, subject, html, text, replyTo, attachments 
     console.log('\n┌────────────────────────────────────────────────────────────────────────┐');
     console.log('│ 📧 [PROEDU EMAIL SIMULÁTOR / DEV LOG]');
     console.log(`│ Komu:     ${safeTo}`);
+    if (safeBcc) {
+      console.log(`│ Bcc:      ${safeBcc}`);
+    }
+    if (safeCc) {
+      console.log(`│ Cc:       ${safeCc}`);
+    }
     if (safeReplyTo) {
       console.log(`│ Reply-To: ${safeReplyTo}`);
     }
@@ -108,6 +125,13 @@ export async function sendEmail({ to, subject, html, text, replyTo, attachments 
       text: text || html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       html
     };
+
+    if (safeBcc) {
+      mailOptions.bcc = safeBcc;
+    }
+    if (safeCc) {
+      mailOptions.cc = safeCc;
+    }
 
     if (Array.isArray(attachments) && attachments.length > 0) {
       mailOptions.attachments = attachments;
@@ -338,7 +362,10 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**
@@ -391,7 +418,10 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html, attachments, logDetails: { orderId, amount } });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
 }
 
 /**
@@ -412,15 +442,18 @@ export async function sendRecurringChargeFailedEmail({ to, name, amount, reason 
     <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
     <p>při pokusu o automatické obnovení vašeho předplatného <strong>ProEducator Premium</strong> (${safeAmount} Kč) došlo k chybě: <em>${safeReason}</em>.</p>
     
-    <p>Aby vaše prémiové funkce a přístup k výukovým materiálům zůstaly zachovány, zkontrolujte prosím stav platební karty nebo obnovte předplatné v aplikaci:</p>
+    <p>Aby vaše prémiové funkce a přístup k výukovým materiálům zůstaly zachovány, běží nyní <strong>3denní ochranná lhůta (Grace Period)</strong>, během které se pokusíme platbu zopakovat. Kartu můžete také kdykoliv okamžitě aktualizovat v nastavení předplatného:</p>
 
     <div style="text-align: center; margin: 24px 0;">
-      <a href="${escapeHtml(SAFE_APP_URL)}/settings" class="btn">Aktualizovat předplatné</a>
+      <a href="${escapeHtml(SAFE_APP_URL)}/settings?tab=subscription" class="btn">Aktualizovat platební kartu</a>
     </div>
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({ to, bcc, subject, html });
 }
 
 /**
@@ -450,6 +483,29 @@ export async function sendBugReportEmail({
   const safePageUrlDisplay = escapeHtml(pageUrl || 'Neuvedeno');
   const safeScreenshotUrl = sanitizeHttpUrl(screenshotUrl, { allowDataImage: true });
   const mailtoUrl = sanitizeHttpUrl(`mailto:${studentEmail || ''}`, { allowMailto: true });
+
+  const attachments = [];
+  let inlineScreenshotSrc = safeScreenshotUrl;
+  let isInlineAttachment = false;
+
+  if (safeScreenshotUrl && safeScreenshotUrl.startsWith('data:image/')) {
+    const match = safeScreenshotUrl.match(/^data:(image\/(png|jpe?g|webp));base64,([A-Za-z0-9+/=]+)$/i);
+    if (match) {
+      const mimeType = match[1].toLowerCase();
+      const rawExt = match[2].toLowerCase();
+      const ext = rawExt === 'jpeg' ? 'jpg' : rawExt;
+      const base64Data = match[3];
+      const cid = `bug-screenshot-${reportId || Date.now()}@proedu`;
+      attachments.push({
+        filename: `screenshot-${reportId || Date.now()}.${ext}`,
+        content: Buffer.from(base64Data, 'base64'),
+        contentType: mimeType,
+        cid
+      });
+      inlineScreenshotSrc = `cid:${cid}`;
+      isInlineAttachment = true;
+    }
+  }
 
   const subject = `🐞 [Chyba ProEdu] ${sanitizeHeaderValue(displayCategory)}: ${sanitizeHeaderValue(studentName || studentEmail)}`;
   const headline = 'Nové hlášení chyby od studenta';
@@ -503,10 +559,10 @@ export async function sendBugReportEmail({
     ${safeScreenshotUrl ? `
       <div style="margin: 24px 0; text-align: center;">
         <p style="font-weight: 700; color: #1E1B18; margin-bottom: 10px;">Přiložený snímek obrazovky:</p>
-        <a href="${escapeHtml(safeScreenshotUrl)}" target="_blank" rel="noopener noreferrer" style="display:inline-block; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; max-width: 100%;">
-          <img src="${escapeHtml(safeScreenshotUrl)}" alt="Screenshot chyby" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;" />
-        </a>
-        <p style="margin-top: 6px; font-size: 12px;"><a href="${escapeHtml(safeScreenshotUrl)}" target="_blank" rel="noopener noreferrer" style="color: #2563EB;">Otevřít obrázek v plné velikosti ↗</a></p>
+        <div style="display:inline-block; border: 1px solid #E2E8F0; border-radius: 12px; overflow: hidden; max-width: 100%;">
+          <img src="${escapeHtml(inlineScreenshotSrc)}" alt="Screenshot chyby" style="max-width: 100%; max-height: 400px; display: block; margin: 0 auto;" />
+        </div>
+        ${!isInlineAttachment ? `<p style="margin-top: 6px; font-size: 12px;"><a href="${escapeHtml(safeScreenshotUrl)}" target="_blank" rel="noopener noreferrer" style="color: #2563EB;">Otevřít obrázek v plné velikosti ↗</a></p>` : `<p style="margin-top: 6px; font-size: 12px; color: #64748B;">Snímek obrazovky je přiložen také jako soubor v příloze tohoto e-mailu.</p>`}
       </div>
     ` : ''}
 
@@ -529,6 +585,7 @@ export async function sendBugReportEmail({
     replyTo: studentEmail,
     subject,
     html,
+    attachments,
     logDetails: { reportId, category }
   });
 }
@@ -565,4 +622,53 @@ export async function sendPasswordResetEmailTemplate({ to, name, resetLink }) {
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
   return sendEmail({ to, subject, html, logDetails: { resetLink } });
+}
+
+/**
+ * 8. Šablona: Potvrzení o zrušení předplatného a opakovaných plateb
+ */
+export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, immediate = false }) {
+  const safeName = escapeHtml(name || 'zákazníku');
+  const formattedEndDate = periodEnd
+    ? new Date(periodEnd).toLocaleDateString('cs-CZ', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+      })
+    : null;
+
+  const subject = 'Potvrzení o zrušení předplatného – ProEducator';
+  const headline = 'Automatické platby byly zrušeny';
+  const subheadline = formattedEndDate
+    ? `Výhody Premium jsou aktivní do ${escapeHtml(formattedEndDate)}`
+    : 'Opakované strhávání z karty bylo vypnuto';
+  const previewText = 'Potvrzení o zrušení předplatného ProEducator. Další platba z karty již neproběhne.';
+
+  const bodyHtml = `
+    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
+    <p>potvrzujeme, že Vaše předplatné <strong>ProEducator Premium</strong> a související <strong>opakované strhávání plateb přes platební bránu Comgate bylo úspěšně zrušeno</strong>.</p>
+    
+    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
+      <p style="margin: 0; color: #166534; font-weight: 600;">✓ Žádná další platba z Vaší platební karty již neproběhne.</p>
+    </div>
+
+    ${formattedEndDate
+      ? `<p>Všechny výhody tarifu Premium můžete plně využívat až do konce stávajícího zaplaceného období, tedy do <strong>${escapeHtml(formattedEndDate)}</strong>. Po tomto datu bude Váš účet automaticky přepnut na bezplatný tarif bez jakéhokoliv dalšího poplatku.</p>`
+      : `<p>Váš účet byl bezpečně odhlášen z automatického obnovování.</p>`
+    }
+
+    <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Pokud se kdykoliv v budoucnu rozhodnete k Premium vrátit, můžete si tarif znovu jednoduše aktivovat ve svém profilu.</p>
+  `;
+
+  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+    ? ADMIN_ORDER_NOTIFICATION_EMAIL
+    : undefined;
+  return sendEmail({
+    to,
+    bcc,
+    subject,
+    html,
+    text: `Dobrý den, ${name || 'zákazníku'}, potvrzujeme zrušení předplatného ProEducator a zastavení opakovaných plateb. Další platba z karty již neproběhne.`
+  });
 }

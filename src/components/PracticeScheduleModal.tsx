@@ -48,6 +48,7 @@ import {
 import UnifiedPaywallModal from './common/UnifiedPaywallModal';
 import { cn } from '../lib/utils';
 import { toast } from 'sonner';
+import { trackPracticeScheduleSave } from '../services/analyticsService';
 
 export interface PracticeScheduleModalProps {
   isOpen: boolean;
@@ -344,6 +345,12 @@ export default function PracticeScheduleModal({
         user.uid,
         generatedItems
       );
+      trackPracticeScheduleSave({
+        itemsCount: count,
+        daysCount: groupedPreviewDays.length,
+        intervalMode,
+        subject: catalogSubject,
+      });
       toast.success(
         `Rozvrh uložen! Do kalendáře bylo přidáno ${count} ${
           count === 1 ? 'cvičení' : count < 5 ? 'cvičení' : 'cvičení'

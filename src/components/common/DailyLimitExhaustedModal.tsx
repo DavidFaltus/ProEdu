@@ -1,5 +1,6 @@
 import React from 'react';
-import { Moon, Sparkles, Home, Crown, ZapOff } from 'lucide-react';
+import { Sparkles, Home, Crown, ZapOff } from 'lucide-react';
+import { JokerBlueIcon } from './CustomIcon';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
 
@@ -43,7 +44,7 @@ export default function DailyLimitExhaustedModal({
           {/* Badge & Icon */}
           <div className="space-y-3">
             <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 border-2 border-amber-200/80 flex items-center justify-center text-amber-600 shadow-inner">
-              <Moon className="w-8 h-8 text-amber-600" />
+              <JokerBlueIcon size={36} />
             </div>
 
             <div className="space-y-1">

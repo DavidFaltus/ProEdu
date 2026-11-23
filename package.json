@@ -17,7 +17,8 @@
     "cap:sync": "npm run build && npx cap sync android",
     "cap:open": "npx cap open android",
     "cap:apk": "npm run cap:sync && cd android && gradlew assembleDebug",
-    "sitemap": "node scripts/generate-sitemap.mjs"
+    "sitemap": "node scripts/generate-sitemap.mjs",
+    "simulate:order": "node scripts/simulate-order-flow.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.0",

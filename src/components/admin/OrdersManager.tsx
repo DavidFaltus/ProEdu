@@ -14,13 +14,10 @@ import { Card } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { 
-  CreditCard, 
-  QrCode, 
   CheckCircle2, 
   Clock, 
   Search, 
   RefreshCw, 
-  User, 
   Mail, 
   MapPin, 
   Calendar,
@@ -29,15 +26,16 @@ import {
   Loader2,
   FileText,
   RotateCcw,
-  Receipt
+  XCircle
 } from 'lucide-react';
+import { AccountIcon, CardGrayIcon, PaymentPinkIcon } from '../common/CustomIcon';
 import { toast } from 'sonner';
 
 export default function OrdersManager() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'paid' | 'refunded'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'paid' | 'cancelled' | 'refunded'>('all');
   const [confirmingOrderId, setConfirmingOrderId] = useState<string | null>(null);
   const [deletingOrderId, setDeletingOrderId] = useState<string | null>(null);
   const [orderToDelete, setOrderToDelete] = useState<Order | null>(null);
@@ -191,7 +189,7 @@ export default function OrdersManager() {
           }`}
         >
           <div className="flex items-center gap-2 font-bold">
-            <Receipt size={15} />
+            <PaymentPinkIcon size={18} />
             {iuctoStatus.connected ? (
               <span>
                 iÚčto API připojeno ({iuctoStatus.companyName || 'Firma'} • {iuctoStatus.isVatPayer ? 'Plátce DPH' : 'Neplátce DPH'})
@@ -253,6 +251,15 @@ export default function OrdersManager() {
           </button>
           <button
             type="button"
+            onClick={() => setStatusFilter('cancelled')}
+            className={`px-3 py-1.5 rounded-lg transition-all ${
+              statusFilter === 'cancelled' ? 'bg-white text-red-900 shadow-xs' : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            Zrušené ({orders.filter(o => o.status === 'cancelled').length})
+          </button>
+          <button
+            type="button"
             onClick={() => setStatusFilter('refunded')}
             className={`px-3 py-1.5 rounded-lg transition-all ${
               statusFilter === 'refunded' ? 'bg-white text-purple-900 shadow-xs' : 'text-gray-500 hover:text-gray-900'
@@ -282,8 +289,8 @@ export default function OrdersManager() {
             const currentOrderId = (order as any).orderId || order.id;
             const isPending = order.status === 'pending';
             const isPaid = order.status === 'paid';
+            const isCancelled = order.status === 'cancelled';
             const isRefunded = order.status === 'refunded';
-            const isQr = order.paymentMethod === 'qr_bank_transfer';
 
             return (
               <Card
@@ -307,6 +314,11 @@ export default function OrdersManager() {
                         <RotateCcw size={12} />
                         <span>Refundováno</span>
                       </span>
+                    ) : isCancelled ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-red-700 bg-red-50 border border-red-200 px-2.5 py-0.5 rounded-full">
+                        <XCircle size={12} />
+                        <span>Zrušeno</span>
+                      </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full">
                         <Clock size={12} />
@@ -315,8 +327,8 @@ export default function OrdersManager() {
                     )}
 
                     <span className="inline-flex items-center gap-1 text-[11px] font-bold text-gray-600 bg-[#FAF7F0] border border-gray-200 px-2 py-0.5 rounded-md">
-                      {isQr ? <QrCode size={12} /> : <CreditCard size={12} />}
-                      <span>{isQr ? 'QR Převod' : 'Comgate'}</span>
+                      <CardGrayIcon size={14} />
+                      <span>Comgate (Karta)</span>
                     </span>
 
                     {order.iuctoInvoiceNumber && (
@@ -355,7 +367,7 @@ export default function OrdersManager() {
 
                   <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs pt-1">
                     <div className="flex items-center gap-1.5 text-gray-800 font-bold truncate">
-                      <User size={13} className="text-gray-400 shrink-0" />
+                      <AccountIcon size={15} />
                       <span className="truncate">{order.clientName}</span>
                     </div>
 

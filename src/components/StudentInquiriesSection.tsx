@@ -3,15 +3,15 @@ import {
   Clock, 
   ChevronDown, 
   ChevronUp, 
-  ExternalLink,
-  Info
+  ExternalLink
 } from 'lucide-react';
 import { 
   BubbleYellowIcon, 
   DialogCyanIcon, 
   CorrectCyanIcon, 
   BulbYellowIcon, 
-  StarYellowIcon 
+  StarYellowIcon,
+  InfoPinkIcon
 } from './common/CustomIcon';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -281,7 +281,7 @@ export default function StudentInquiriesSection({
                   {/* Explanation */}
                   {qDetails.explanation && (
                     <div className="flex items-start gap-2 text-blue-950 bg-blue-50/70 p-2.5 rounded-lg border border-blue-200/60">
-                      <Info size={14} className="shrink-0 mt-0.5 text-blue-600" />
+                      <InfoPinkIcon size={16} className="shrink-0 mt-0.5" />
                       <div>
                         <span className="font-bold block text-[10px] uppercase tracking-wider text-blue-800">Vysvětlení úlohy:</span>
                         <span>{qDetails.explanation}</span>

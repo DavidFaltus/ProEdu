@@ -7,9 +7,10 @@ import { db, auth, storage } from '../lib/firebase';
 import { cacheManager } from '../lib/cacheManager';
 import { 
   PracticeTopic, PracticeSubtopic, PracticeQuestion, PracticeAttempt, QuestionType, StudyStep, PracticeConfig,
-  ExistingMaterialItem, MaterialStatus, ActivePracticeSession, ActivePracticeAnswerItem 
+  ExistingMaterialItem, MaterialStatus, MaterialType, MaterialGrade, MaterialQuotaSummary,
+  ActivePracticeSession, ActivePracticeAnswerItem 
 } from '../types';
-export type { ExistingMaterialItem, MaterialStatus };
+export type { ExistingMaterialItem, MaterialStatus, MaterialType, MaterialGrade, MaterialQuotaSummary };
 import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
 import { sanitizeSvg } from '../utils/svgUtils';
 
@@ -276,7 +277,7 @@ export async function finishPracticeSessionApi(payload: {
 
 export async function fetchMaterialsCatalog(options?: {
   includeHidden?: boolean;
-}): Promise<{ materials: ExistingMaterialItem[]; locked: boolean }> {
+}): Promise<{ materials: ExistingMaterialItem[]; locked: boolean; quota?: MaterialQuotaSummary | null }> {
   const params = new URLSearchParams();
   if (options?.includeHidden) params.set('includeHidden', '1');
   const qs = params.toString();
@@ -297,13 +298,72 @@ export async function fetchMaterialsCatalog(options?: {
   const rawList: any[] = Array.isArray(data) ? data : (Array.isArray(data.materials) ? data.materials : []);
   const materials: ExistingMaterialItem[] = rawList.map(item => ({
     ...item,
-    locked: Boolean(item.locked || data.locked),
+    locked: Boolean(item.locked),
+    canDownload: typeof item.canDownload === 'boolean' ? item.canDownload : !Boolean(item.locked || data.locked),
     hasStudyMaterial: item.hasStudyMaterial ?? true,
   }));
   return {
     materials,
     locked: Boolean(data.locked),
+    quota: data.quota || null,
   };
+}
+
+export async function fetchMaterialQuota(): Promise<{
+  quota: MaterialQuotaSummary;
+  watermarkText: string | null;
+}> {
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  if (!token) {
+    throw createApiError('Pro načtení kvóty je nutné přihlášení.', 401, 'AUTH_REQUIRED');
+  }
+  const res = await fetch('/api/materials/quota', {
+    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se načíst stav kvóty materiálů.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return data;
+}
+
+export interface ExportAuthorizationResult {
+  allowed: boolean;
+  alreadyUnlocked: boolean;
+  courseExempt: boolean;
+  watermarkText: string | null;
+  quota: MaterialQuotaSummary;
+}
+
+export async function authorizeMaterialExport(materialId: string): Promise<ExportAuthorizationResult> {
+  const token = await auth.currentUser?.getIdToken().catch(() => null);
+  if (!token) {
+    throw createApiError('Pro stažení nebo tisk materiálu je nutné přihlášení.', 401, 'AUTH_REQUIRED');
+  }
+  const res = await fetch(`/api/materials/${encodeURIComponent(materialId)}/export-authorize`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw createApiError(
+      data.error || 'Nepodařilo se ověřit oprávnění ke stažení materiálu.',
+      res.status,
+      data.code,
+      data
+    );
+  }
+  return data;
 }
 
 export async function fetchProtectedMaterialResource(url: string): Promise<{
@@ -715,6 +775,10 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     : [];
   const sampleProblem = subtopicData.sampleProblem || null;
   const media = normalizeSubtopicMedia(subtopicData);
+  const pairedMaterialId =
+    typeof subtopicData.pairedMaterialId === 'string' && subtopicData.pairedMaterialId.trim()
+      ? subtopicData.pairedMaterialId.trim()
+      : null;
   const hasStudyMaterial = !!(
     media.materialId ||
     media.fileUrl ||
@@ -736,6 +800,7 @@ export function normalizeSubtopicPayload(subtopicData: Partial<PracticeSubtopic>
     isHidden,
     hasStudyMaterial,
     ...media,
+    pairedMaterialId,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -775,6 +840,10 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     sampleProblem
   );
   const practiceConfig = data.practiceConfig ? cleanPracticeConfig(data.practiceConfig) : undefined;
+  const pairedMaterialId =
+    typeof data.pairedMaterialId === 'string' && data.pairedMaterialId.trim()
+      ? data.pairedMaterialId.trim()
+      : null;
 
   return {
     id: d.id,
@@ -786,6 +855,7 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
     isHidden: Boolean(data.isHidden),
     hasStudyMaterial: hasStudyMaterial,
     materialId: data.materialId || null,
+    pairedMaterialId,
     fileUrl: fileUrl,
     pdfUrl: pdfUrl,
     downloadUrl: data.downloadUrl || null,
@@ -871,6 +941,12 @@ export function buildSubtopicUpdatePayload(
     svgUrl: updates.svgUrl !== undefined ? updates.svgUrl : existing.svgUrl,
     svgContent: updates.svgContent !== undefined ? updates.svgContent : existing.svgContent
   });
+  const pairedMaterialId =
+    updates.pairedMaterialId !== undefined
+      ? (typeof updates.pairedMaterialId === 'string' && updates.pairedMaterialId.trim()
+          ? updates.pairedMaterialId.trim()
+          : null)
+      : (existing.pairedMaterialId ?? null);
 
   const hasStudyMaterial = updates.hasStudyMaterial !== undefined
     ? updates.hasStudyMaterial
@@ -903,6 +979,7 @@ export function buildSubtopicUpdatePayload(
     isHidden,
     hasStudyMaterial,
     ...media,
+    pairedMaterialId,
     studyTheory,
     studySteps,
     sampleProblem,
@@ -940,6 +1017,9 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
     const sanitizedUpdateFields = removeUndefinedFields(updateFields);
     await updateDoc(docRef, sanitizedUpdateFields);
     cacheManager.invalidate('subtopics');
+    if (subtopicData.pairedMaterialId !== undefined) {
+      cacheManager.invalidate('materials');
+    }
     return subtopicData.id;
   } else {
     const normalized = normalizeSubtopicPayload(subtopicData);
@@ -950,8 +1030,30 @@ export async function saveSubtopic(subtopicData: Partial<PracticeSubtopic>, user
     });
     const newDoc = await addDoc(collRef, sanitizedDoc);
     cacheManager.invalidate('subtopics');
+    if (subtopicData.pairedMaterialId !== undefined) {
+      cacheManager.invalidate('materials');
+    }
     return newDoc.id;
   }
+}
+
+/** Ensures 1:1 pairing between Study subtopics and library materials by clearing older pairings. */
+export async function clearDuplicatePairedMaterial(
+  targetSubtopicId: string,
+  pairedMaterialId: string,
+  userId?: string
+): Promise<string[]> {
+  const cleanMatId = typeof pairedMaterialId === 'string' ? pairedMaterialId.trim() : '';
+  if (!cleanMatId) return [];
+
+  const allSubtopics = await getSubtopics();
+  const conflicting = allSubtopics.filter(
+    (s) => s.id !== targetSubtopicId && s.pairedMaterialId === cleanMatId
+  );
+  for (const s of conflicting) {
+    await saveSubtopic({ id: s.id, pairedMaterialId: null }, userId);
+  }
+  return conflicting.map((s) => s.id);
 }
 
 /**
@@ -992,6 +1094,14 @@ export interface MaterialInput {
   title: string;
   subject?: string;
   topic?: string;
+  topicId?: string | null;
+  subtopicId?: string | null;
+  materialType?: MaterialType;
+  grade?: MaterialGrade | null;
+  order?: number | null;
+  pageCount?: number | null;
+  isFreeSample?: boolean;
+  isExamPrep?: boolean;
   studyTheory?: string;
   hiddenFromLibrary?: boolean;
   svgContent?: string | null;
@@ -1017,6 +1127,7 @@ export interface MaterialApiResponse {
   downloadUrl?: string | null;
   fileType?: string | null;
   originalName?: string | null;
+  pageCount?: number | null;
   message?: string;
 }
 
@@ -1028,6 +1139,14 @@ export async function uploadMaterial(payload: {
   title: string;
   subject?: string;
   topic?: string;
+  topicId?: string | null;
+  subtopicId?: string | null;
+  materialType?: MaterialType;
+  grade?: MaterialGrade | null;
+  order?: number | null;
+  pageCount?: number | null;
+  isFreeSample?: boolean;
+  isExamPrep?: boolean;
   studyTheory?: string;
   hiddenFromLibrary?: boolean;
   fileData?: string;
@@ -1064,6 +1183,14 @@ export async function updateMaterialViaApi(
     title?: string;
     subject?: string;
     topic?: string;
+    topicId?: string | null;
+    subtopicId?: string | null;
+    materialType?: MaterialType;
+    grade?: MaterialGrade | null;
+    order?: number | null;
+    pageCount?: number | null;
+    isFreeSample?: boolean;
+    isExamPrep?: boolean;
     studyTheory?: string;
     hiddenFromLibrary?: boolean;
     fileData?: string;
@@ -1225,6 +1352,14 @@ export function normalizeMaterialPayload(input: MaterialInput) {
     title,
     subject,
     topic,
+    ...(input.topicId ? { topicId: input.topicId } : {}),
+    ...(input.subtopicId ? { subtopicId: input.subtopicId } : {}),
+    ...(input.materialType ? { materialType: input.materialType } : {}),
+    ...(input.grade ? { grade: input.grade } : {}),
+    ...(typeof input.order === 'number' && Number.isFinite(input.order) ? { order: input.order } : {}),
+    ...(typeof input.pageCount === 'number' && Number.isFinite(input.pageCount) ? { pageCount: input.pageCount } : {}),
+    ...(typeof input.isFreeSample === 'boolean' ? { isFreeSample: input.isFreeSample } : {}),
+    ...(typeof input.isExamPrep === 'boolean' ? { isExamPrep: input.isExamPrep } : {}),
     fileUrl,
     pdfUrl,
     svgUrl,
@@ -1256,6 +1391,14 @@ export async function saveMaterial(materialData: MaterialInput, userId?: string)
       title: materialData.title,
       subject: materialData.subject || 'Matematika',
       topic: materialData.topic || 'Obecné',
+      topicId: materialData.topicId ?? null,
+      subtopicId: materialData.subtopicId ?? null,
+      materialType: materialData.materialType || 'worksheet',
+      grade: materialData.grade ?? null,
+      order: materialData.order ?? null,
+      pageCount: materialData.pageCount ?? null,
+      isFreeSample: Boolean(materialData.isFreeSample),
+      isExamPrep: Boolean(materialData.isExamPrep),
       studyTheory: materialData.studyTheory || '',
       hiddenFromLibrary: materialData.hiddenFromLibrary,
       fileData,
@@ -1354,11 +1497,33 @@ export function mapDocToMaterial(id: string, data: Record<string, any>): Existin
   const pdfUrl = data.pdfUrl || parsedContent.pdfUrl || (isPdfFile ? resolvedFileUrl : null);
   const svgUrl = data.svgUrl || (!isPdfFile && resolvedFileUrl ? resolvedFileUrl : null);
 
+  const normalizedType: MaterialType =
+    data.materialType === 'summary' || data.materialType === 'cheatsheet'
+      ? data.materialType
+      : 'worksheet';
+  const rawGrade = typeof data.grade === 'string' ? data.grade.trim().toLowerCase() : '';
+  const hasExplicitGrade = rawGrade === '5' || rawGrade === '7' || rawGrade === '9' || rawGrade === 'all';
+  const normalizedGrade: MaterialGrade = hasExplicitGrade ? (rawGrade as MaterialGrade) : '9';
+  const hasNumericOrder =
+    data.order !== null && data.order !== undefined && data.order !== '' && Number.isFinite(Number(data.order));
+  const hasNumericPages =
+    data.pageCount !== null && data.pageCount !== undefined && Number.isFinite(Number(data.pageCount));
+
   return {
     id,
     title: data.title || 'Materiál',
     subject: data.subject || 'Matematika',
     topic: data.topic || '',
+    topicId: data.topicId || null,
+    subtopicId: data.subtopicId || null,
+    materialType: normalizedType,
+    grade: normalizedGrade,
+    hasExplicitGrade,
+    order: hasNumericOrder ? Number(data.order) : null,
+    isFreeSample: Boolean(data.isFreeSample),
+    isExamPrep: Boolean(data.isExamPrep),
+    canDownload: typeof data.canDownload === 'boolean' ? data.canDownload : !Boolean(data.locked),
+    linkedSubtopic: data.linkedSubtopic || null,
     svgUrl,
     thumbnailUrl: resolvedThumbUrl,
     fileUrl: resolvedFileUrl,
@@ -1370,10 +1535,11 @@ export function mapDocToMaterial(id: string, data: Record<string, any>): Existin
     hiddenFromLibrary: Boolean(data.hiddenFromLibrary),
     status: data.status || 'ready',
     errorMessage: data.errorMessage || undefined,
-    pageCount: data.pageCount,
+    pageCount: hasNumericPages ? Number(data.pageCount) : undefined,
     originalName: data.originalName || undefined,
     fileType: data.fileType || undefined,
     fileSize: data.fileSize,
+    locked: Boolean(data.locked),
     createdAt: data.createdAt,
     updatedAt: data.updatedAt
   };
@@ -1949,12 +2115,171 @@ export interface ValidatedPracticeRow {
   question: string;
   hint: string;
   explanation: string;
-  type: 'choice' | 'open';
+  type: 'choice' | 'open' | 'self_check';
   options: string[];
   correctAnswer: string;
   rawType: string;
   imageUrl?: string;
+  solutionImageUrl?: string;
   difficulty: 'Lehká' | 'Střední' | 'Těžká';
+}
+
+export const PRACTICE_EXPORT_HEADERS = [
+  'Předmět',
+  'Téma',
+  'Podtéma',
+  'Typ',
+  'Obtížnost',
+  'Otázka',
+  'Možnost A',
+  'Možnost B',
+  'Možnost C',
+  'Možnost D',
+  'Odpověď (výběr)',
+  'Odpověď (volná)',
+  'Nápověda',
+  'Vysvětlení',
+  'Obrázek',
+  'Obrázek řešení',
+] as const;
+
+export type PracticeExportHeader = (typeof PRACTICE_EXPORT_HEADERS)[number];
+export type PracticeExportRow = Record<PracticeExportHeader, string>;
+
+export function buildPracticeExportRows(params: {
+  topics: PracticeTopic[];
+  subtopics: PracticeSubtopic[];
+  questionsMap: Record<string, PracticeQuestion[]>;
+  selectedSubtopicIds?: Iterable<string> | null;
+}): { rows: PracticeExportRow[]; subtopicCount: number; questionCount: number } {
+  const { topics, subtopics, questionsMap, selectedSubtopicIds } = params;
+  const selectionSet = selectedSubtopicIds ? new Set(selectedSubtopicIds) : null;
+  const filterBySelection = Boolean(selectionSet && selectionSet.size > 0);
+
+  const topicIndexMap = new Map(topics.map((t, idx) => [t.id, idx]));
+  const topicById = new Map(topics.map((t) => [t.id, t]));
+
+  const sortedSubtopics = [...subtopics]
+    .filter((s) => !filterBySelection || selectionSet!.has(s.id))
+    .sort((a, b) => {
+      const tA = topicIndexMap.has(a.topicId) ? topicIndexMap.get(a.topicId)! : Number.MAX_SAFE_INTEGER;
+      const tB = topicIndexMap.has(b.topicId) ? topicIndexMap.get(b.topicId)! : Number.MAX_SAFE_INTEGER;
+      if (tA !== tB) return tA - tB;
+      const oDiff = (a.order ?? 0) - (b.order ?? 0);
+      if (oDiff !== 0) return oDiff;
+      return String(a.title || '').localeCompare(String(b.title || ''), 'cs');
+    });
+
+  const rows: PracticeExportRow[] = [];
+  let exportedSubtopics = 0;
+
+  for (const sub of sortedSubtopics) {
+    const parentTopic = topicById.get(sub.topicId);
+    const questions = [...(questionsMap[sub.id] || [])].sort(
+      (a, b) => (a.order ?? 0) - (b.order ?? 0)
+    );
+    if (questions.length === 0) continue;
+    exportedSubtopics++;
+
+    const subjectLabel = normalizeSubjectName(sub.subjectId || parentTopic?.subjectId);
+    const topicLabel = parentTopic?.title || sub.topicId || 'Obecné téma';
+    const subtopicLabel = sub.title || 'Podtéma';
+
+    for (const q of questions) {
+      const rawType = String(q.type || 'choice');
+      const isSelfCheck = rawType === 'self_check';
+      const isChoice = rawType === 'choice' || rawType === 'multiple_choice';
+
+      const opts = isChoice ? (q.options || []).map((o) => String(o ?? '').trim()) : [];
+      let choiceLetter = '';
+      if (isChoice && q.correctAnswer !== undefined) {
+        const targetAns = String(q.correctAnswer).trim();
+        const matchIdx = opts.findIndex((o) => o === targetAns);
+        if (matchIdx >= 0 && matchIdx < 4) {
+          choiceLetter = ['A', 'B', 'C', 'D'][matchIdx];
+        } else if (['A', 'B', 'C', 'D'].includes(targetAns.toUpperCase())) {
+          choiceLetter = targetAns.toUpperCase();
+        }
+      }
+
+      const openAns = !isChoice
+        ? (isSelfCheck && q.correctAnswer === 'self_check' ? '' : String(q.correctAnswer || ''))
+        : '';
+
+      rows.push({
+        'Předmět': subjectLabel,
+        'Téma': topicLabel,
+        'Podtéma': subtopicLabel,
+        'Typ': isSelfCheck ? 'sebehodnocení' : isChoice ? 'výběr' : 'volná',
+        'Obtížnost': q.difficulty ? normalizeDifficulty(q.difficulty) : 'Střední',
+        'Otázka': q.question || '',
+        'Možnost A': opts[0] || '',
+        'Možnost B': opts[1] || '',
+        'Možnost C': opts[2] || '',
+        'Možnost D': opts[3] || '',
+        'Odpověď (výběr)': choiceLetter,
+        'Odpověď (volná)': openAns,
+        'Nápověda': q.hint || '',
+        'Vysvětlení': q.explanation || '',
+        'Obrázek': q.imageUrl || '',
+        'Obrázek řešení': q.solutionImageUrl || '',
+      });
+    }
+  }
+
+  return {
+    rows,
+    subtopicCount: exportedSubtopics,
+    questionCount: rows.length,
+  };
+}
+
+export async function exportPracticeQuestionsToExcel(params: {
+  subject: string;
+  topics: PracticeTopic[];
+  subtopics: PracticeSubtopic[];
+  questionsMap: Record<string, PracticeQuestion[]>;
+  selectedSubtopicIds?: Iterable<string> | null;
+}): Promise<{ subtopicCount: number; questionCount: number; fileName: string }> {
+  const { rows, subtopicCount, questionCount } = buildPracticeExportRows(params);
+  if (rows.length === 0) {
+    throw new Error('Ve vybraném rozsahu nejsou žádné otázky k exportu.');
+  }
+
+  const XLSX = await import('xlsx');
+  const worksheet = XLSX.utils.json_to_sheet(rows, {
+    header: [...PRACTICE_EXPORT_HEADERS],
+  });
+  worksheet['!cols'] = [
+    { wch: 14 }, // Předmět
+    { wch: 24 }, // Téma
+    { wch: 28 }, // Podtéma
+    { wch: 15 }, // Typ
+    { wch: 12 }, // Obtížnost
+    { wch: 48 }, // Otázka
+    { wch: 22 }, // Možnost A
+    { wch: 22 }, // Možnost B
+    { wch: 22 }, // Možnost C
+    { wch: 22 }, // Možnost D
+    { wch: 16 }, // Odpověď (výběr)
+    { wch: 24 }, // Odpověď (volná)
+    { wch: 30 }, // Nápověda
+    { wch: 40 }, // Vysvětlení
+    { wch: 28 }, // Obrázek
+    { wch: 28 }, // Obrázek řešení
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Procvičování');
+
+  const subjectSlug = normalizeSubjectName(params.subject) === 'Čeština' ? 'cestina' : 'matematika';
+  const scopeSlug =
+    params.selectedSubtopicIds && Array.from(params.selectedSubtopicIds).length > 0 ? 'vybrane' : 'vse';
+  const dateStr = new Date().toISOString().slice(0, 10);
+  const fileName = `procvicovani-${subjectSlug}-${scopeSlug}-${dateStr}.xlsx`;
+
+  XLSX.writeFile(workbook, fileName);
+  return { subtopicCount, questionCount, fileName };
 }
 
 export function normalizeDifficulty(val?: string): 'Lehká' | 'Střední' | 'Těžká' {
@@ -2095,6 +2420,7 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
     }
 
     const imageUrl = findColValue(row, 'Obrázek', 'Obrazek', 'Image', 'ImageUrl', 'Obrázek URL', 'Obrazek URL');
+    const solutionImageUrl = findColValue(row, 'Obrázek řešení', 'Obrazek reseni', 'SolutionImageUrl', 'Obrázek řešení URL', 'Obrazek reseni URL');
     const typeLower = rawType.toLowerCase();
 
     if (typeLower.includes('výběr') || typeLower.includes('vyber') || typeLower.includes('choice')) {
@@ -2186,8 +2512,47 @@ export async function parsePracticeQuestionsExcelFile(file: File): Promise<Pract
       });
       topicsSet.add(topic);
       subtopicsSet.add(subtopic);
+    } else if (typeLower.includes('sebe') || typeLower.includes('self')) {
+      const rawAnsOpen = findColValue(row, 'Odpověď (volná)', 'Odpoved (volna)', 'Odpověď volná', 'Odpoved volna');
+      const ansOpen = rawAnsOpen ? preprocessMathText(rawAnsOpen) : '';
+
+      if (ansOpen) {
+        const ansSyntax = validateLatexSyntax(ansOpen);
+        if (!ansSyntax.isValid) {
+          invalidRows.push({ rowNumber: rowNum, reason: ansSyntax.error!, questionText: question });
+          return;
+        }
+      }
+
+      if (!ansOpen && !explanation && !solutionImageUrl) {
+        invalidRows.push({
+          rowNumber: rowNum,
+          reason: 'Pro úlohu se sebehodnocením vyplňte vzorové řešení v \'Odpověď (volná)\', \'Vysvětlení\' nebo \'Obrázek řešení\'.',
+          questionText: question
+        });
+        return;
+      }
+
+      validRows.push({
+        rowNumber: rowNum,
+        subject,
+        topic,
+        subtopic,
+        question: processedQuestion,
+        hint,
+        explanation,
+        imageUrl: imageUrl || undefined,
+        solutionImageUrl: solutionImageUrl || undefined,
+        type: 'self_check',
+        options: [],
+        correctAnswer: ansOpen,
+        rawType,
+        difficulty
+      });
+      topicsSet.add(topic);
+      subtopicsSet.add(subtopic);
     } else {
-      invalidRows.push({ rowNumber: rowNum, reason: `Neznámý typ úlohy: "${rawType}". Zadejte striktně 'výběr' nebo 'volná'.`, questionText: question });
+      invalidRows.push({ rowNumber: rowNum, reason: `Neznámý typ úlohy: "${rawType}". Zadejte striktně 'výběr', 'volná' nebo 'sebehodnocení'.`, questionText: question });
     }
   });
 
@@ -2418,7 +2783,8 @@ export async function importPracticeQuestionsToFirestore(
         hint: row.hint,
         explanation: row.explanation,
         difficulty: row.difficulty || 'Střední',
-        imageUrl: row.imageUrl || undefined
+        imageUrl: row.imageUrl || undefined,
+        solutionImageUrl: row.solutionImageUrl || undefined
       }, effectiveUserId);
 
       existingSet.add(normalizedCurrent);

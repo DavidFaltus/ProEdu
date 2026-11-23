@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Plus, Upload, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
+  Plus, Upload, Download, Trash2, Edit2, BookOpen, HelpCircle, CheckCircle2, 
   FileText, Sparkles, ChevronDown, ChevronRight, X, AlertCircle, Play, Lightbulb, FileSpreadsheet,
   Image as ImageIcon, Eye, EyeOff, AlertTriangle, Loader2, SlidersHorizontal, MoreVertical,
   GripVertical, ArrowUp, ArrowDown, RotateCcw, Check
@@ -21,13 +21,14 @@ import {
 import { toast } from 'sonner';
 import { 
   getTopics, getSubtopics, getQuestionsForSubtopic, getAllQuestionsGroupedBySubtopic,
+  getAllMaterials, clearDuplicatePairedMaterial, normalizeSubjectName,
   saveTopic, deleteTopic, saveSubtopic, deleteSubtopic, 
   setTopicVisibility, setSubtopicVisibility,
   saveQuestion, deleteQuestion, deleteQuestionsBulk, seedInitialPracticeData, PREDEFINED_SUBJECTS,
   updateTopicsOrder, updateSubtopicsOrder,
   uploadMaterial, fetchMaterialStatus, LEARNING_SHEETS_COLLECTION,
   ExistingMaterialItem, cleanStudyStep,
-  parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore,
+  parsePracticeQuestionsExcelFile, importPracticeQuestionsToFirestore, exportPracticeQuestionsToExcel,
   parseStudyStepsExcelFile, importStudyStepsToFirestore,
   PracticeExcelParseResult, StudyExcelParseResult,
   PracticeImportStats, StudyImportStats
@@ -37,7 +38,6 @@ import { auth, db, storage } from '../../lib/firebase';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import PdfSvgDropzone, { DropzoneFileResult } from './PdfSvgDropzone';
-import MaterialSelectorModal from './MaterialSelectorModal';
 import { convertFileToSvg, svgStringToDataUrl, isPdfResource } from '../../utils/pdfToSvg';
 import { sanitizeSvg, sanitizeSafeUrl } from '../../utils/svgUtils';
 import { MathRenderer } from '../common/MathRenderer';
@@ -56,6 +56,10 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [topics, setTopics] = useState<PracticeTopic[]>([]);
   const [subtopics, setSubtopics] = useState<PracticeSubtopic[]>([]);
   const [questionsMap, setQuestionsMap] = useState<Record<string, PracticeQuestion[]>>({});
+  const [libraryMaterials, setLibraryMaterials] = useState<ExistingMaterialItem[]>([]);
+  const [allSubtopicsForPairing, setAllSubtopicsForPairing] = useState<PracticeSubtopic[]>([]);
+  const [selectedExportSubtopicIds, setSelectedExportSubtopicIds] = useState<Set<string>>(new Set());
+  const [isExportingPractice, setIsExportingPractice] = useState(false);
   const [loading, setLoading] = useState(true);
   const [expandedTopics, setExpandedTopics] = useState<Record<string, boolean>>({});
   const [expandedSubtopics, setExpandedSubtopics] = useState<Record<string, boolean>>({});
@@ -79,7 +83,6 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const [isSubtopicModalOpen, setIsSubtopicModalOpen] = useState(false);
   const [editingSubtopic, setEditingSubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
   const [subtopicParentTopicId, setSubtopicParentTopicId] = useState<string>('');
-  const [isMaterialSelectorOpen, setIsMaterialSelectorOpen] = useState(false);
   const [isStudyContentModalOpen, setIsStudyContentModalOpen] = useState(false);
   const [editingStudySubtopic, setEditingStudySubtopic] = useState<Partial<PracticeSubtopic> | null>(null);
   const [studyDropFile, setStudyDropFile] = useState<DropzoneFileResult | null>(null);
@@ -149,17 +152,27 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Paralelní načtení témat, podtémat a všech otázek jedním dotazem místo desítek sekvenčních dotazů
-      const [tData, sData, allGroupedQuestions] = await Promise.all([
+      // Paralelní načtení témat, podtémat, všech otázek a seznamu materiálů pro párování
+      const [tData, sData, allGroupedQuestions, libMats, allSubs] = await Promise.all([
         getTopics(activeSubject),
         getSubtopics(undefined, activeSubject),
-        getAllQuestionsGroupedBySubtopic()
+        getAllQuestionsGroupedBySubtopic(),
+        getAllMaterials({ includeHidden: false }).catch(() => [] as ExistingMaterialItem[]),
+        getSubtopics().catch(() => [] as PracticeSubtopic[])
       ]);
 
       setTopics(tData);
       setOriginalTopics(tData);
       setHasReorderChanges(false);
       setSubtopics(sData);
+      setLibraryMaterials(libMats);
+      setAllSubtopicsForPairing(allSubs);
+      setSelectedExportSubtopicIds(prev => {
+        if (prev.size === 0) return prev;
+        const validIds = new Set(sData.map(s => s.id));
+        const next = new Set(Array.from(prev).filter(id => validIds.has(id)));
+        return next.size === prev.size ? prev : next;
+      });
 
       const qMap: Record<string, PracticeQuestion[]> = {};
       for (const s of sData) {
@@ -174,6 +187,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   };
 
   useEffect(() => {
+    setSelectedExportSubtopicIds(new Set());
     loadData();
   }, [activeSubject]);
 
@@ -1081,6 +1095,10 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     const subId = subSnapshot.id!;
     const pendingDropFile = studyDropFile;
     const clearedFile = studyFileCleared;
+    const nextPairedMaterialId =
+      typeof subSnapshot.pairedMaterialId === 'string' && subSnapshot.pairedMaterialId.trim()
+        ? subSnapshot.pairedMaterialId.trim()
+        : null;
 
     const cleanSteps: StudyStep[] = (subSnapshot.studySteps || [])
       .filter(s => s.title?.trim() || s.content?.trim() || s.imageUrl || s.svgContent || s.fileUrl || s.pdfUrl || s.materialId)
@@ -1127,10 +1145,15 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             ? pendingDropFile.svgString
             : null;
 
+        if (nextPairedMaterialId) {
+          await clearDuplicatePairedMaterial(subId, nextPairedMaterialId, effectiveUserId);
+        }
+
         await saveSubtopic({
           id: subId,
           hasStudyMaterial: true,
           materialId: uploadRes.materialId,
+          pairedMaterialId: nextPairedMaterialId,
           fileUrl: resolvedFileUrl,
           pdfUrl: resolvedPdfUrl,
           downloadUrl: uploadRes.downloadUrl || `/api/materials/${uploadRes.materialId}/download`,
@@ -1176,9 +1199,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
 
     setIsSavingStudyContent(true);
     try {
+      if (nextPairedMaterialId) {
+        await clearDuplicatePairedMaterial(subId, nextPairedMaterialId, effectiveUserId);
+      }
+
       await saveSubtopic({
         id: subId,
         hasStudyMaterial: true,
+        pairedMaterialId: nextPairedMaterialId,
         ...(clearedFile
           ? {
               materialId: null,
@@ -1281,24 +1309,59 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
     }
   };
 
-  const handleSelectMaterial = (mat: ExistingMaterialItem) => {
-    setStudyDropFile(null);
-    setStudyFileCleared(false);
-    setEditingStudySubtopic(prev => ({
-      ...prev,
-      materialId: mat.id,
-      fileUrl: mat.fileUrl || mat.pdfUrl || mat.svgUrl || null,
-      pdfUrl: mat.pdfUrl || null,
-      downloadUrl: mat.downloadUrl || null,
-      thumbnailUrl: mat.thumbnailUrl || null,
-      fileType: mat.fileType || null,
-      originalName: mat.originalName || mat.title || null,
-      svgContent: mat.svgContent || '',
-      svgUrl: mat.svgUrl || '',
-      hasStudyMaterial: true,
-      studyTheory: prev?.studyTheory || mat.studyTheory || ''
-    }));
-    toast.success(`Materiál "${mat.title}" byl přiřazen k tomuto podtématu.`);
+  // --- PRACTICE EXCEL EXPORT HANDLERS ---
+  const toggleSubtopicExportSelect = (subId: string) => {
+    setSelectedExportSubtopicIds(prev => {
+      const next = new Set(prev);
+      if (next.has(subId)) next.delete(subId);
+      else next.add(subId);
+      return next;
+    });
+  };
+
+  const toggleTopicExportSelect = (topicSubtopics: PracticeSubtopic[]) => {
+    if (topicSubtopics.length === 0) return;
+    const ids = topicSubtopics.map(s => s.id);
+    setSelectedExportSubtopicIds(prev => {
+      const allSelected = ids.every(id => prev.has(id));
+      const next = new Set(prev);
+      if (allSelected) {
+        ids.forEach(id => next.delete(id));
+      } else {
+        ids.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const clearExportSelection = () => {
+    setSelectedExportSubtopicIds(new Set());
+  };
+
+  const handleExportPractice = async (mode: 'selected' | 'all') => {
+    const selectedIds = mode === 'selected' ? Array.from(selectedExportSubtopicIds) : null;
+    if (mode === 'selected' && (!selectedIds || selectedIds.length === 0)) {
+      toast.error('Nejprve označte alespoň jedno procvičování.');
+      return;
+    }
+
+    setIsExportingPractice(true);
+    try {
+      const res = await exportPracticeQuestionsToExcel({
+        subject: activeSubject,
+        topics,
+        subtopics,
+        questionsMap,
+        selectedSubtopicIds: selectedIds
+      });
+      toast.success(
+        `Export dokončen: ${res.questionCount} otázek z ${res.subtopicCount} podtémat (${res.fileName}).`
+      );
+    } catch (err: any) {
+      toast.error(err?.message || 'Nepodařilo se exportovat procvičování.');
+    } finally {
+      setIsExportingPractice(false);
+    }
   };
 
   const addStep = () => {
@@ -2029,6 +2092,60 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             <MaterialYellowIcon size={16} />
             <span>Importovat studium</span>
           </Button>
+
+          {selectedExportSubtopicIds.size === 0 ? (
+            <Button
+              type="button"
+              onClick={() => handleExportPractice('all')}
+              disabled={isExportingPractice || subtopics.length === 0}
+              variant="outline"
+              className="rounded-xl border-gray-200 hover:border-black font-bold h-10 px-3.5 flex items-center gap-2 cursor-pointer text-xs bg-white shadow-xs"
+              title={`Exportovat všechna procvičování z předmětu ${activeSubject} (včetně skrytých) do Excelu`}
+            >
+              {isExportingPractice ? (
+                <Loader2 size={15} className="animate-spin text-emerald-700" />
+              ) : (
+                <Download size={15} className="text-emerald-700" />
+              )}
+              <span>Exportovat vše</span>
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Button
+                type="button"
+                onClick={() => handleExportPractice('selected')}
+                disabled={isExportingPractice}
+                className="rounded-xl bg-emerald-700 hover:bg-emerald-800 text-white font-bold h-10 px-3.5 flex items-center gap-2 cursor-pointer text-xs shadow-sm"
+              >
+                {isExportingPractice ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Download size={15} />
+                )}
+                <span>Exportovat vybrané ({selectedExportSubtopicIds.size})</span>
+              </Button>
+              <Button
+                type="button"
+                onClick={() => handleExportPractice('all')}
+                disabled={isExportingPractice}
+                variant="outline"
+                className="rounded-xl border-gray-200 hover:border-black font-bold h-10 px-3 text-xs bg-white shadow-xs cursor-pointer"
+                title="Exportovat všechna procvičování v tomto předmětu"
+              >
+                Exportovat vše
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={clearExportSelection}
+                disabled={isExportingPractice}
+                className="rounded-xl h-10 px-2.5 text-xs font-bold text-gray-500 hover:text-black cursor-pointer"
+                title="Zrušit výběr pro export"
+              >
+                Zrušit výběr
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2138,6 +2255,11 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             const isExpanded = !!expandedTopics[topic.id];
             const visibleSubtopicsCount = topicSubtopics.filter(s => !s.isHidden).length;
             const isTopicEffectivelyHidden = Boolean(topic.isHidden || visibleSubtopicsCount === 0);
+            const topicSubtopicIds = topicSubtopics.map(s => s.id);
+            const selectedInTopicCount = topicSubtopicIds.filter(id => selectedExportSubtopicIds.has(id)).length;
+            const allTopicSubtopicsSelected =
+              topicSubtopicIds.length > 0 && selectedInTopicCount === topicSubtopicIds.length;
+            const someTopicSubtopicsSelected = selectedInTopicCount > 0 && !allTopicSubtopicsSelected;
 
             return (
               <div 
@@ -2158,6 +2280,25 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer select-none group"
                 >
                   <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    {/* Export Topic Checkbox */}
+                    <input
+                      type="checkbox"
+                      aria-label={`Označit všechna podtémata v tématu ${topic.title} pro export`}
+                      title={
+                        topicSubtopics.length === 0
+                          ? 'Toto téma nemá žádná podtémata'
+                          : 'Označit / odznačit všechna podtémata pro export'
+                      }
+                      disabled={topicSubtopics.length === 0}
+                      checked={allTopicSubtopicsSelected}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someTopicSubtopicsSelected;
+                      }}
+                      onChange={() => toggleTopicExportSelect(topicSubtopics)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded border-gray-300 text-emerald-700 accent-emerald-700 cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+                    />
+
                     {/* Drag Handle */}
                     <div 
                       draggable={true}
@@ -2349,6 +2490,17 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                             <div className="space-y-1 flex-1 min-w-0">
                               <div className="flex items-center gap-2 flex-wrap">
+                                {/* Export Subtopic Checkbox */}
+                                <input
+                                  type="checkbox"
+                                  aria-label={`Označit podtéma ${sub.title} pro export`}
+                                  title="Označit toto procvičování pro export do Excelu"
+                                  checked={selectedExportSubtopicIds.has(sub.id)}
+                                  onChange={() => toggleSubtopicExportSelect(sub.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-4 h-4 rounded border-gray-300 text-emerald-700 accent-emerald-700 cursor-pointer shrink-0"
+                                />
+
                                 {/* Subtopic Drag Handle */}
                                 <div 
                                   draggable={true}
@@ -2403,6 +2555,21 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                                     </span>
                                   </span>
                                 )}
+
+                                {sub.pairedMaterialId && (() => {
+                                  const pairedMat = libraryMaterials.find(m => m.id === sub.pairedMaterialId);
+                                  return (
+                                    <span
+                                      className="text-[11px] font-bold text-amber-900 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-md inline-flex items-center gap-1 shadow-2xs"
+                                      title="Spárovaný materiál v knihovně Materiály (tlačítko Začít studovat)"
+                                    >
+                                      <MaterialYellowIcon size={12} />
+                                      <span className="max-w-[200px] truncate">
+                                        Spárováno: {pairedMat?.title || sub.pairedMaterialId}
+                                      </span>
+                                    </span>
+                                  );
+                                })()}
 
                                 {studyUploadStatusBySubtopic[sub.id] && (
                                   studyUploadStatusBySubtopic[sub.id].status === 'error' ? (
@@ -3059,23 +3226,11 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
             onKeyUpCapture={handleInputTrack}
             onMouseUpCapture={handleInputTrack}
           >
-            {/* Grafický list: Drag & Drop PDF / SVG + Výběr z materiálů */}
+            {/* Grafický list této sekce Studovat (zcela nezávislý na knihovně Materiály) */}
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-bold text-gray-700">
-                  Grafický výukový list (PDF / SVG)
-                </label>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setIsMaterialSelectorOpen(true)}
-                  className="h-7 text-xs font-bold text-amber-700 hover:bg-amber-50 cursor-pointer flex items-center gap-1.5"
-                >
-                  <MaterialYellowIcon size={14} />
-                  <span>Vybrat z existujících materiálů</span>
-                </Button>
-              </div>
+              <label className="text-xs font-bold text-gray-700 block">
+                Grafický výukový list (PDF / SVG)
+              </label>
 
               <PdfSvgDropzone
                 userId={effectiveUserId}
@@ -3129,6 +3284,79 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                   }
                 }}
               />
+            </div>
+
+            {/* Ruční spárování 1:1 s materiálem z knihovny Materiály (pouze pro proklik Začít studovat) */}
+            <div className="rounded-2xl border border-amber-200/80 bg-amber-50/40 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label
+                  htmlFor="study-paired-material-select"
+                  className="text-xs font-black text-amber-950 flex items-center gap-1.5"
+                >
+                  <MaterialYellowIcon size={15} />
+                  <span>Spárovaný studijní materiál (pro proklik z knihovny Materiály)</span>
+                </label>
+                {editingStudySubtopic?.pairedMaterialId && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingStudySubtopic(prev => (prev ? { ...prev, pairedMaterialId: null } : prev))
+                    }
+                    className="text-[11px] font-bold text-amber-800 hover:text-amber-950 underline cursor-pointer"
+                  >
+                    Odpárovat materiál
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-amber-900/80 font-medium leading-relaxed">
+                Nepřepisuje grafický list této sekce Studovat nahraný výše. Slouží výhradně pro zobrazení tlačítka „Začít studovat“ u vybraného materiálu v knihovně (striktní vazba 1:1).
+              </p>
+              {(() => {
+                const targetSubj = normalizeSubjectName(editingStudySubtopic?.subjectId || activeSubject);
+                const subjectMaterials = libraryMaterials.filter(
+                  m => normalizeSubjectName(m.subject) === targetSubj
+                );
+                const pairedElsewhereByMatId = new Map<string, PracticeSubtopic>();
+                for (const s of allSubtopicsForPairing) {
+                  if (s.id !== editingStudySubtopic?.id && s.pairedMaterialId) {
+                    pairedElsewhereByMatId.set(s.pairedMaterialId, s);
+                  }
+                }
+                const selectedMatId = editingStudySubtopic?.pairedMaterialId || '';
+                const conflictSub = selectedMatId ? pairedElsewhereByMatId.get(selectedMatId) : undefined;
+                return (
+                  <div className="space-y-2">
+                    <select
+                      id="study-paired-material-select"
+                      value={selectedMatId}
+                      onChange={(e) => {
+                        const val = e.target.value || null;
+                        setEditingStudySubtopic(prev => (prev ? { ...prev, pairedMaterialId: val } : prev));
+                      }}
+                      className="w-full h-10 px-3 rounded-xl border border-amber-200 text-xs font-semibold bg-white focus:outline-none focus:ring-2 focus:ring-[#1E1B18]"
+                    >
+                      <option value="">-- Nespárováno (bez prokliku z Materiálů) --</option>
+                      {subjectMaterials.map(m => {
+                        const existingOwner = pairedElsewhereByMatId.get(m.id);
+                        const suffix = existingOwner ? ` (již spárováno s: ${existingOwner.title})` : '';
+                        return (
+                          <option key={m.id} value={m.id}>
+                            {m.title}{suffix}
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {conflictSub && (
+                      <p className="text-[11px] font-bold text-amber-900 bg-amber-100/90 border border-amber-300 rounded-xl px-3 py-1.5 flex items-center gap-1.5">
+                        <AlertTriangle size={13} className="shrink-0 text-amber-700" />
+                        <span>
+                          Tento materiál je momentálně spárovaný s podtématem „{conflictSub.title}“. Po uložení se automaticky přepáruje sem (1:1).
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="space-y-2">
@@ -4662,14 +4890,6 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* MODAL 5: SELECT EXISTING MATERIAL */}
-      <MaterialSelectorModal
-        isOpen={isMaterialSelectorOpen}
-        onClose={() => setIsMaterialSelectorOpen(false)}
-        onSelect={handleSelectMaterial}
-        activeSubject={activeSubject}
-      />
 
       {/* MODAL 6: DELETE CONFIRMATION DIALOG */}
       <Dialog 

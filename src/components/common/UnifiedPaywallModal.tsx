@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { X, ArrowLeft, Check, Copy, CreditCard, ShieldCheck, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
+import { X, ArrowLeft, Check, Copy, ShieldCheck, CheckCircle2, AlertCircle, Lock, XCircle } from 'lucide-react';
 import {
   CapIcon,
   StarPinkIcon,
   StarYellowIcon,
   CorrectCyanIcon,
+  PaymentPinkIcon,
+  CardGrayIcon,
 } from './CustomIcon';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { Button } from '../ui/button';
@@ -14,8 +16,22 @@ import { useAuth } from '../../context/AuthContext';
 import { toast } from 'sonner';
 import { db } from '../../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
-import { trackPaywallImpression, trackPaywallCtaClick } from '../../services/analyticsService';
-import { createOrder, simulateComgatePayment, buildOrderResultFromOrder, saveBillingAndPaymentSettings, CreateOrderResult } from '../../services/orderService';
+import {
+  trackPaywallImpression,
+  trackPaywallCtaClick,
+  trackBeginCheckout,
+  trackCheckoutCancelled,
+  startPerfTrace
+} from '../../services/analyticsService';
+import {
+  createOrder,
+  simulateComgatePayment,
+  buildOrderResultFromOrder,
+  saveBillingAndPaymentSettings,
+  getMyOrders,
+  cancelPendingOrder,
+  CreateOrderResult
+} from '../../services/orderService';
 import { Order } from '../../types';
 import { Link, useNavigate } from 'react-router-dom';
 import { PaymentLogosBar } from './PaymentLogos';
@@ -89,6 +105,8 @@ export default function UnifiedPaywallModal({
   const [availableCourses, setAvailableCourses] = useState<CourseOption[]>(DEFAULT_COURSES);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSimulatingPayment, setIsSimulatingPayment] = useState(false);
+  const [isCancellingOrder, setIsCancellingOrder] = useState(false);
+  const [isCheckingExistingPending, setIsCheckingExistingPending] = useState(false);
 
   // Formulářové stavy
   const [clientName, setClientName] = useState('');
@@ -117,6 +135,21 @@ export default function UnifiedPaywallModal({
       } else {
         setCurrentStep('plan_overview');
         setOrderResult(null);
+        // Pokud je přihlášený uživatel a otevírá paywall pro Premium, zkontrolujeme, zda už nemá živou čekající objednávku
+        if (type === 'premium' && user) {
+          setIsCheckingExistingPending(true);
+          getMyOrders()
+            .then((myOrders) => {
+              const activePending = myOrders.find((o) => o.status === 'pending' && !(o as any).isRecurringRenewal);
+              if (activePending) {
+                setOrderResult(buildOrderResultFromOrder(activePending));
+                setCurrentStep('order_result');
+                toast.info('Máš již vytvořenou neuhrazenou objednávku. Přesměrovali jsme tě k jejímu zaplacení.');
+              }
+            })
+            .catch(() => {})
+            .finally(() => setIsCheckingExistingPending(false));
+        }
       }
       setClientName(profile?.billingDetails?.clientName || profile?.name || '');
       setInvoiceEmail(profile?.billingDetails?.invoiceEmail || user?.email || '');
@@ -162,6 +195,7 @@ export default function UnifiedPaywallModal({
   }, [isOpen, type, title]);
 
   const handleGoToOrderForm = () => {
+    trackPaywallCtaClick('proceed_to_billing', 'premium-monthly');
     if (!user) {
       onClose();
       openAuthModal();
@@ -227,6 +261,9 @@ export default function UnifiedPaywallModal({
     }
 
     setIsSubmitting(true);
+    const checkoutTrace = startPerfTrace('comgate_checkout_create', {
+      plan_id: 'premium-monthly',
+    });
     try {
       const cleanIco = isCompanyPurchase ? ico.trim() : '';
       const cleanDic = isCompanyPurchase ? dic.trim() : '';
@@ -248,10 +285,30 @@ export default function UnifiedPaywallModal({
         planId: 'premium-monthly',
         amount: 99
       });
+      checkoutTrace.stop({
+        status: 'ok',
+        reused_existing: result.reusedExistingOrder ? 'true' : 'false',
+      });
 
       // Okamžitě přepneme modal do Kroku 3
       setOrderResult(result);
       setCurrentStep('order_result');
+      const isSandboxOrder = Boolean(
+        result.comgate?.isSandbox ||
+        String(result.comgate?.transId || '').startsWith('SANDBOX_')
+      );
+      trackBeginCheckout({
+        orderId: result.orderId,
+        planId: 'premium-monthly',
+        amount: 99,
+        currency: 'CZK',
+        reusedExisting: Boolean(result.reusedExistingOrder),
+        isSandbox: isSandboxOrder
+      });
+      if (result.reusedExistingOrder) {
+        toast.info('Máš již vytvořenou neuhrazenou objednávku v platební lhůtě. Pokračuj prosím k jejímu zaplacení nebo ji níže zruš.');
+        return;
+      }
       toast.success('Objednávka byla úspěšně vytvořena!');
 
       // Asynchronně uložíme fakturační údaje přes autorizované serverové API
@@ -273,14 +330,15 @@ export default function UnifiedPaywallModal({
           console.warn('[Billing Profile Sync]:', profileErr);
         });
 
-      // Pokud Comgate vrátila bezpečnou přímou URL v živém režimu, okamžitě přesměrovat
+      // Pokud Comgate vrátila bezpečnou přímou URL (produkční i test=true brána), okamžitě přesměrovat
       const safeRedirectUrl = sanitizeSafeUrl(result.comgate?.redirectUrl);
-      if (paymentMethod === 'comgate' && safeRedirectUrl && result.comgate?.isLive) {
-        toast.loading('Přesměrovávám na zabezpečenou platební bránu Comgate...');
+      if (paymentMethod === 'comgate' && safeRedirectUrl) {
+        toast.loading('Přesměrovávám na platební bránu Comgate...');
         window.location.href = safeRedirectUrl;
         return;
       }
     } catch (err: any) {
+      checkoutTrace.stop({ status: 'error' });
       console.error('Chyba při odesílání objednávky:', err);
       toast.error(err.message || 'Nepodařilo se vytvořit objednávku.');
     } finally {
@@ -291,6 +349,24 @@ export default function UnifiedPaywallModal({
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text);
     toast.success(`${label} bylo zkopírováno do schránky.`);
+  };
+
+  const handleCancelCurrentOrder = async () => {
+    const currentOrderId = orderResult?.orderId || (orderResult?.order as any)?.orderId || orderResult?.order?.id;
+    if (!currentOrderId) return;
+    setIsCancellingOrder(true);
+    try {
+      await cancelPendingOrder(currentOrderId);
+      trackCheckoutCancelled({ orderId: currentOrderId, source: 'user_manual' });
+      toast.success('Čekající objednávka byla zrušena. Nyní můžeš vytvořit novou.');
+      setOrderResult(null);
+      setCurrentStep('order_form');
+      if (onSuccess) onSuccess();
+    } catch (err: any) {
+      toast.error(err?.message || 'Nepodařilo se zrušit objednávku.');
+    } finally {
+      setIsCancellingOrder(false);
+    }
   };
 
   const handleSandboxSimulate = async () => {
@@ -524,7 +600,7 @@ export default function UnifiedPaywallModal({
                 </>
               ) : (
                 <>
-                  <CreditCard size={20} />
+                  <PaymentPinkIcon size={22} />
                   <span>Přejít k objednávce za 99 Kč</span>
                 </>
               )}
@@ -686,7 +762,7 @@ export default function UnifiedPaywallModal({
                   <Label className="text-xs sm:text-sm font-bold text-gray-700">Způsob platby</Label>
                   <div className="h-11 px-4 rounded-xl border-2 border-[#2B44B8] bg-blue-50/70 text-[#0F2942] flex items-center justify-between shadow-2xs">
                     <div className="flex items-center gap-2.5">
-                      <CreditCard size={18} className="text-[#2B44B8]" />
+                      <CardGrayIcon size={20} />
                       <span className="text-xs sm:text-sm font-bold">Platební brána (karta online, Apple Pay, Google Pay)</span>
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/90 border border-emerald-200 px-2 py-0.5 rounded">
@@ -780,7 +856,11 @@ export default function UnifiedPaywallModal({
                     <span className="text-xs text-gray-700 font-bold uppercase tracking-wider">Platební brána Comgate</span>
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-blue-100 text-blue-900">
-                    {orderResult.comgate?.isLive ? 'Zabezpečená platba' : 'Testovací režim'}
+                    {orderResult.comgate?.isLive
+                      ? 'Zabezpečená platba'
+                      : sanitizeSafeUrl(orderResult.comgate?.redirectUrl)
+                        ? 'Testovací brána Comgate'
+                        : 'Testovací režim'}
                   </span>
                 </div>
 
@@ -803,8 +883,8 @@ export default function UnifiedPaywallModal({
                   </div>
                 </div>
 
-                {/* Předvyplněná testovací karta v dummy bráně (pouze v lokálním vývojovém režimu) */}
-                {import.meta.env.DEV && !orderResult.comgate?.isLive && (
+                {/* Předvyplněná testovací karta v dummy bráně (pouze pokud server nevrátil reálnou Comgate redirectUrl) */}
+                {import.meta.env.DEV && !sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && (
                   <div className="bg-white p-4 rounded-2xl border-2 border-blue-200 space-y-2.5">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Testovací platební karta</span>
@@ -813,7 +893,7 @@ export default function UnifiedPaywallModal({
                     <div className="grid grid-cols-12 gap-2.5 text-xs">
                       <div className="col-span-7 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 flex items-center justify-between">
                         <span>4242 •••• •••• 4242</span>
-                        <CreditCard size={15} className="text-blue-600 shrink-0" />
+                        <CardGrayIcon size={17} />
                       </div>
                       <div className="col-span-3 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 text-center">
                         12/28
@@ -833,8 +913,10 @@ export default function UnifiedPaywallModal({
                 </div>
 
                 <div className="text-xs text-gray-600 leading-relaxed">
-                  {sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && orderResult.comgate?.isLive
-                    ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                  {sanitizeSafeUrl(orderResult.comgate?.redirectUrl)
+                    ? orderResult.comgate?.isLive
+                      ? 'Pro dokončení platby a aktivaci předplatného budete přesměrováni do zabezpečeného rozhraní platební brány Comgate.'
+                      : 'Testovací režim Comgate: Kliknutím na tlačítko níže přejdete na testovací platební bránu Comgate k autorizaci platby.'
                     : import.meta.env.DEV
                       ? 'Testovací režim: Kliknutím na tlačítko níže otestuješ okamžité schválení platby na platební bráně a přepnutí účtu na ProEducator Premium.'
                       : 'Online platební brána se připravuje nebo vyžaduje dokončení konfigurace na serveru.'}
@@ -845,15 +927,13 @@ export default function UnifiedPaywallModal({
               <div className="flex flex-col sm:flex-row gap-3">
                 {(() => {
                   const safeComgateUrl = sanitizeSafeUrl(orderResult.comgate?.redirectUrl);
-                  if (safeComgateUrl && orderResult.comgate?.isLive) {
+                  if (safeComgateUrl) {
                     return (
                       <a
                         href={safeComgateUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
                       >
-                        <CreditCard size={18} />
+                        <CardGrayIcon size={20} />
                         <span>Přejít na bránu Comgate k autorizaci</span>
                       </a>
                     );
@@ -880,9 +960,20 @@ export default function UnifiedPaywallModal({
 
                 <Button
                   type="button"
+                  onClick={handleCancelCurrentOrder}
+                  disabled={isCancellingOrder || isSimulatingPayment}
+                  variant="outline"
+                  className="h-12 px-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs sm:text-sm rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  <XCircle size={16} />
+                  <span>{isCancellingOrder ? 'Ruším...' : 'Zrušit objednávku'}</span>
+                </Button>
+
+                <Button
+                  type="button"
                   onClick={onClose}
                   variant="outline"
-                  className="sm:w-32 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
+                  className="sm:w-28 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
                 >
                   Zavřít
                 </Button>

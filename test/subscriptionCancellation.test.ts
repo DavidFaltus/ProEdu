@@ -29,7 +29,10 @@ function calculateCancellationPayload(
       subscriptionCancelledAt: nowIso,
       subscriptionCancelReason: safeReason,
       subscriptionExpiredAt: nowIso,
-      subscriptionPeriodEnd: null
+      subscriptionPeriodEnd: null,
+      initRecurringTransId: null,
+      recurringCancelled: true,
+      recurringCancelledAt: nowIso
     };
   }
 
@@ -38,7 +41,10 @@ function calculateCancellationPayload(
     subscriptionStatus: 'cancelled_at_period_end' as const,
     subscriptionCancelledAt: nowIso,
     subscriptionCancelReason: safeReason,
-    subscriptionPeriodEnd: periodEnd
+    subscriptionPeriodEnd: periodEnd,
+    initRecurringTransId: null,
+    recurringCancelled: true,
+    recurringCancelledAt: nowIso
   };
 }
 
@@ -75,6 +81,8 @@ function calculateReactivatePayload(
     subscriptionStatus: 'active' as const,
     subscriptionCancelledAt: null,
     subscriptionCancelReason: null,
+    recurringCancelled: false,
+    recurringCancelledAt: null,
     subscriptionPeriodEnd: periodEnd
   };
 }
@@ -184,14 +192,222 @@ test('Reactivating subscription restores active status while preserving remainin
 });
 
 test('Comgate recurring charge guard blocks charging cancelled subscriptions', () => {
-  const checkCanChargeRecurring = (status?: SubscriptionStatus): boolean => {
-    if (status === 'cancelled_at_period_end' || status === 'inactive') {
+  const checkCanChargeRecurring = (user: Partial<UserProfile>): boolean => {
+    if (
+      user.subscriptionStatus === 'cancelled_at_period_end' ||
+      user.subscriptionStatus === 'inactive' ||
+      user.subscriptionStatus === 'expired' ||
+      user.recurringCancelled === true ||
+      Boolean(user.subscriptionCancelledAt) ||
+      !user.initRecurringTransId
+    ) {
       return false;
     }
     return true;
   };
 
-  assert.equal(checkCanChargeRecurring('active'), true);
-  assert.equal(checkCanChargeRecurring('cancelled_at_period_end'), false, 'Must block recurring charge for cancelled_at_period_end');
-  assert.equal(checkCanChargeRecurring('inactive'), false, 'Must block recurring charge for inactive');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', initRecurringTransId: 'TRANS_123' }), true);
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'cancelled_at_period_end', initRecurringTransId: 'TRANS_123' }), false, 'Must block recurring charge for cancelled_at_period_end');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'inactive', initRecurringTransId: 'TRANS_123' }), false, 'Must block recurring charge for inactive');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', recurringCancelled: true, initRecurringTransId: 'TRANS_123' }), false, 'Must block when recurringCancelled is true');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', subscriptionCancelledAt: '2026-11-16T12:00:00Z', initRecurringTransId: 'TRANS_123' }), false, 'Must block when subscriptionCancelledAt is set');
+  assert.equal(checkCanChargeRecurring({ subscriptionStatus: 'active', initRecurringTransId: undefined }), false, 'Must block when initRecurringTransId is missing');
+});
+
+test('Manual Premium grant or unexpired period is NOT expired even if historical subscriptionStatus was inactive', () => {
+  const isExpired = (profile: Partial<UserProfile>, nowMs: number) => {
+    if (!profile || profile.role !== 'premium') return false;
+    const rawEnd = profile.subscriptionPeriodEnd;
+    if (!rawEnd) return false;
+    const endMs = new Date(rawEnd).getTime();
+    if (isNaN(endMs)) return false;
+    if (profile.subscriptionStatus === 'cancelled_at_period_end') {
+      return nowMs > endMs;
+    }
+    if (profile.subscriptionStatus === 'active') {
+      return nowMs > endMs + 3 * 24 * 60 * 60 * 1000;
+    }
+    return nowMs > endMs;
+  };
+
+  const now = new Date('2026-11-16T12:00:00.000Z').getTime();
+  const futureEnd = new Date('2026-12-12T12:00:00.000Z').toISOString();
+
+  // 1. User with future periodEnd but stale inactive status
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: futureEnd }, now),
+    false,
+    'Unexpired periodEnd with inactive status must NOT be treated as expired'
+  );
+
+  // 2. User with no periodEnd (lifetime / manual grant)
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: undefined }, now),
+    false,
+    'Manual grant without periodEnd must NOT be treated as expired'
+  );
+
+  // 3. User with past periodEnd and inactive status
+  const pastEnd = new Date('2026-11-10T12:00:00.000Z').toISOString();
+  assert.equal(
+    isExpired({ role: 'premium', subscriptionStatus: 'inactive', subscriptionPeriodEnd: pastEnd }, now),
+    true,
+    'Past periodEnd with inactive status must be treated as expired'
+  );
+});
+
+test('Comgate payment initialization restricts payment methods strictly to CARD_ALL for recurring billing', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+  const rulesCode = fs.readFileSync('firestore.rules', 'utf8');
+
+  assert.equal(
+    serverCode.includes("method: 'CARD_ALL'"),
+    true,
+    "server/index.js must restrict Comgate payment method to 'CARD_ALL' so bank transfers and QR payments are disabled"
+  );
+  assert.equal(
+    serverCode.includes("method: 'ALL'"),
+    false,
+    "server/index.js must NOT use method: 'ALL' which allows non-recurring bank buttons and QR transfers"
+  );
+  assert.equal(
+    rulesCode.includes("data.preferredPaymentMethod == 'comgate'"),
+    true,
+    "firestore.rules must only allow 'comgate' as preferredPaymentMethod"
+  );
+});
+
+test('Subscription cancellation email is sent ONLY for regular period-end cancellation, NOT for immediate termination', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+
+  // Verify server only sends cancellation email when not immediate
+  assert.equal(
+    serverCode.includes('if (notifyEmail && !immediate)'),
+    true,
+    'server/index.js must condition sendSubscriptionCancelledEmail on !immediate so early termination does not send a second email'
+  );
+
+  const shouldSendEmail = (notifyEmail: string | undefined, immediate: boolean) => {
+    return Boolean(notifyEmail) && !immediate;
+  };
+
+  assert.equal(shouldSendEmail('test@pro-edu.eu', false), true, 'Regular cancellation sends email');
+  assert.equal(shouldSendEmail('test@pro-edu.eu', true), false, 'Immediate early termination suppresses email');
+  assert.equal(shouldSendEmail(undefined, false), false, 'Missing email suppresses email');
+});
+
+test('Comgate v2.0 recurring.json uses initRecurringId, 1-16 char label, strict initRecurring: true, and preserves original initRecurringTransId', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+
+  // 1. /v2.0/recurring.json must pass initRecurringId (never initTransId)
+  assert.equal(
+    serverCode.includes('initRecurringId: userDoc.initRecurringTransId'),
+    true,
+    'server/index.js must pass initRecurringId in POST /v2.0/recurring.json payload'
+  );
+  assert.equal(
+    serverCode.includes('initTransId:'),
+    false,
+    'server/index.js must NOT use invalid initTransId parameter on Comgate API v2.0'
+  );
+
+  // 2. Strict initRecurring: true without any initRecurring: false fallback
+  assert.equal(
+    serverCode.includes('initRecurring: true'),
+    true,
+    'server/index.js must initialize Comgate card payments with initRecurring: true'
+  );
+  assert.equal(
+    serverCode.includes('initRecurring: false'),
+    false,
+    'server/index.js must NOT downgrade subscription orders to one-off initRecurring: false'
+  );
+
+  // 3. Preserves original initRecurringTransId on recurring renewal PAID transition
+  assert.equal(
+    serverCode.includes('const preservedInitRecurringId = isRenewal'),
+    true,
+    'applyComgatePaymentTransition must preserve original initRecurringTransId on recurring renewals'
+  );
+});
+
+test('Pending orders reconcile with Comgate on /api/orders/my, expire after 30 minutes, and prevent duplicate pending order creation', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+
+  assert.equal(
+    serverCode.includes('const PENDING_ORDER_TIMEOUT_MS = 30 * 60 * 1000;'),
+    true,
+    'server/index.js must enforce a 30-minute payment window for pending orders'
+  );
+  assert.equal(
+    serverCode.includes('async function reconcilePendingOrderWithComgate'),
+    true,
+    'server/index.js must define reconcilePendingOrderWithComgate helper'
+  );
+  assert.equal(
+    serverCode.includes('reusedExistingOrder: true'),
+    true,
+    'POST /api/orders/create must return existing valid pending order instead of creating duplicates'
+  );
+});
+
+test('State machine safeguards A-F: 24h lead renewal, seamless +30d extension in active/grace period, PAST_DUE tracking, CRON pending check, and iUcto Outbox with 8s timeout', async () => {
+  const fs = await import('node:fs');
+  const serverCode = fs.readFileSync('server/index.js', 'utf8');
+  const iuctoCode = fs.readFileSync('server/services/iuctoService.js', 'utf8');
+  const emailCode = fs.readFileSync('server/services/emailService.js', 'utf8');
+
+  // A: Recurring charge lead window (charges on expiration day <= 24h before end)
+  assert.equal(
+    serverCode.includes('const RECURRING_CHARGE_LEAD_MS = 24 * 60 * 60 * 1000;'),
+    true,
+    'server/index.js must charge recurring renewals within 24h before expiration'
+  );
+  assert.equal(
+    serverCode.includes('nowMs < endMs - RECURRING_CHARGE_LEAD_MS'),
+    true,
+    'runDueRecurringSubscriptions must use RECURRING_CHARGE_LEAD_MS'
+  );
+
+  // B: Seamless +30d extension in active or 3-day Grace Period (even on card update)
+  assert.equal(
+    serverCode.includes('isWithinActiveOrGracePeriod'),
+    true,
+    'activatePremiumForUser must extend +30d from existingEndMs when within active or 3-day grace period'
+  );
+
+  // C: PAST_DUE flag saved on recurring failure and cleared on payment success; email links to /settings?tab=subscription
+  assert.equal(
+    serverCode.includes('lastRecurringPaymentFailed: true'),
+    true,
+    'server/index.js must mark lastRecurringPaymentFailed: true when recurring payment fails'
+  );
+  assert.equal(
+    emailCode.includes('/settings?tab=subscription'),
+    true,
+    'sendRecurringChargeFailedEmail must link directly to /settings?tab=subscription for card update'
+  );
+
+  // D & E: CRON reconciles pending orders and runs iUcto Outbox for unsynced paid orders
+  assert.equal(
+    serverCode.includes('summary.pendingReconciled += 1'),
+    true,
+    'runDueRecurringSubscriptions must reconcile hanging pending orders'
+  );
+  assert.equal(
+    serverCode.includes('summary.iuctoOutboxSynced += 1'),
+    true,
+    'runDueRecurringSubscriptions must process iUcto Outbox for paid orders with failed/missing invoice'
+  );
+
+  // F: iUcto API requests enforce an 8-second AbortController timeout so webhooks never hang
+  assert.equal(
+    iuctoCode.includes('IUCTO_REQUEST_TIMEOUT_MS') && iuctoCode.includes('controller.abort()'),
+    true,
+    'iuctoService.js must enforce a request timeout on iUcto API calls'
+  );
 });

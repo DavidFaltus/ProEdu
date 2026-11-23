@@ -40,14 +40,20 @@ export interface UserProfile {
   subscriptionPeriodEnd?: string; // ISO datum konce aktuálního fakturačního období
   subscriptionCancelledAt?: string | null; // ISO datum žádosti o zrušení
   subscriptionCancelReason?: string | null; // Důvod zrušení předplatného
-  preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate' | 'qr_bank_transfer')
+  preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate')
   billingDetails?: BillingDetails; // Uložené fakturační údaje pro iÚčto
   emailVerified?: boolean; // Zda byl e-mail ověřen 6místným kódem
   initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
+  recurringCancelled?: boolean; // Zda byla zrušena opakovaná platba
+  recurringCancelledAt?: string | null; // ISO datum zrušení opakované platby
   premiumSince?: string;
   subscriptionExpiredAt?: string | null;
   iuctoCustomerId?: number | null; // ID odběratele v iÚčtu (spravuje pouze server)
   lastRecurringAttemptDate?: string; // YYYY-MM-DD posledního automatického stržení
+  lastRecurringOrderId?: string | null; // ID poslední založené opakované objednávky
+  lastRecurringPaymentFailed?: boolean; // Příznak PAST_DUE při selhání opakovaného stržení z karty
+  lastRecurringFailureReason?: string | null; // Důvod zamítnutí opakované platby
+  lastRecurringFailedAt?: string | null; // ISO datum posledního neúspěšného pokusu o stržení
   subscriptionGraceUntil?: string; // ISO datum konce 3denní ochranné lhůty při expiraci
   subscriptionExpiresAt?: string | null; // Legacy alias konce předplatného
 }
@@ -121,6 +127,7 @@ export interface PracticeSubtopic {
   svgUrl?: string | null; // např. '/materials/cz-shoda.svg' nebo externí link
   svgContent?: string | null; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
   materialId?: string | null;
+  pairedMaterialId?: string | null;
   fileUrl?: string | null;
   pdfUrl?: string | null;
   downloadUrl?: string | null;
@@ -264,7 +271,7 @@ export interface Course {
   updatedAt?: any;
 }
 
-export type PaymentMethod = 'qr_bank_transfer' | 'comgate';
+export type PaymentMethod = 'comgate';
 export type OrderStatus = 'pending' | 'paid' | 'cancelled' | 'refunded';
 export type SubscriptionStatus = 'active' | 'cancelled_at_period_end' | 'inactive' | 'expired';
 export type IuctoSyncStatus = 'pending' | 'synced' | 'failed' | 'skipped_sandbox' | 'refunded';
@@ -303,6 +310,9 @@ export interface Order {
   spaydString?: string;
   comgateTransId?: string;
   comgateRedirectUrl?: string;
+  initRecurringTransId?: string | null;
+  isInitialRecurring?: boolean;
+  isRecurringRenewal?: boolean;
   isSandbox?: boolean;
   iuctoInvoiceId?: string;
   iuctoInvoiceNumber?: string;
@@ -386,11 +396,53 @@ export interface GeneratedScheduleItem {
 
 export type MaterialStatus = 'processing' | 'ready' | 'error';
 
+export type MaterialType = 'worksheet' | 'summary' | 'cheatsheet';
+
+export type MaterialGrade = '5' | '7' | '9' | 'all';
+
+export interface LinkedSubtopicSummary {
+  id: string;
+  title: string;
+  topicId: string;
+  subjectId: string;
+  stepsCount: number;
+  questionCount: number;
+}
+
+export interface MaterialQuotaSummary {
+  limit: number;
+  used: number;
+  remaining: number;
+  unlockedMaterialIds: string[];
+  courseExemptMaterialIds: string[];
+  periodKey: string;
+  periodEndsAt: string | null;
+  unlimited: boolean;
+}
+
+export interface StudyProgressRecord {
+  subtopicId: string;
+  completedSteps: number[];
+  verifiedAnswers: Record<number, string>;
+  totalSteps?: number;
+  updatedAt?: any;
+}
+
 export interface ExistingMaterialItem {
   id: string;
   title: string;
   subject: string;
   topic: string;
+  topicId?: string | null;
+  materialType?: MaterialType;
+  grade?: MaterialGrade;
+  hasExplicitGrade?: boolean;
+  order?: number | null;
+  isFreeSample?: boolean;
+  isExamPrep?: boolean;
+  canDownload?: boolean;
+  linkedSubtopic?: LinkedSubtopicSummary | null;
+  subtopicId?: string | null;
   svgUrl?: string | null;
   thumbnailUrl?: string | null;
   fileUrl?: string | null;

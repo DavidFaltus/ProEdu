@@ -13,14 +13,14 @@ import PdfSvgDropzone from './PdfSvgDropzone';
 import { 
   getAllMaterials, saveMaterial, deleteMaterial, getMaterialById,
   updateMaterialViaApi, fetchMaterialStatus, mapDocToMaterial,
-  fetchProtectedMaterialResource,
+  fetchProtectedMaterialResource, getTopics, getSubtopics,
   ExistingMaterialItem, PREDEFINED_SUBJECTS, LEARNING_SHEETS_COLLECTION 
 } from '../../services/practiceService';
 import { sanitizeSvg } from '../../utils/svgUtils';
 import { downloadMaterialAsPdf, isPdfResource } from '../../utils/pdfToSvg';
 import { auth, db } from '../../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { StudyStep } from '../../types';
+import { StudyStep, PracticeTopic, PracticeSubtopic, MaterialType, MaterialGrade } from '../../types';
 import { BookCyanIcon, MaterialYellowIcon, CorrectCyanIcon, BulbYellowIcon } from '../common/CustomIcon';
 
 function ProtectedAdminThumbnail({ material }: { material: ExistingMaterialItem }) {
@@ -110,6 +110,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const effectiveUserId = userId || auth.currentUser?.uid || '';
 
   const [materials, setMaterials] = useState<ExistingMaterialItem[]>([]);
+  const [topicsCatalog, setTopicsCatalog] = useState<PracticeTopic[]>([]);
+  const [subtopicsCatalog, setSubtopicsCatalog] = useState<PracticeSubtopic[]>([]);
   const [pendingUploads, setPendingUploads] = useState<Array<ExistingMaterialItem & { resolvedId?: string }>>([]);
   const [pendingEdits, setPendingEdits] = useState<Record<string, Partial<ExistingMaterialItem>>>({});
   const [loading, setLoading] = useState(true);
@@ -121,6 +123,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [newTitle, setNewTitle] = useState('');
   const [newSubject, setNewSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [newTopic, setNewTopic] = useState('');
+  const [newTopicId, setNewTopicId] = useState<string>('');
+  const [newMaterialType, setNewMaterialType] = useState<MaterialType>('worksheet');
+  const [newGrade, setNewGrade] = useState<MaterialGrade>('9');
+  const [newOrder, setNewOrder] = useState<string>('');
+  const [newPageCount, setNewPageCount] = useState<number | undefined>(undefined);
+  const [newIsFreeSample, setNewIsFreeSample] = useState(false);
+  const [newIsExamPrep, setNewIsExamPrep] = useState(false);
   const [newTheory, setNewTheory] = useState('');
   const [uploadedFileData, setUploadedFileData] = useState<string>('');
   const [uploadedFileType, setUploadedFileType] = useState<string>('');
@@ -138,6 +147,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
   const [editTitle, setEditTitle] = useState('');
   const [editSubject, setEditSubject] = useState<'Matematika' | 'Čeština'>('Matematika');
   const [editTopic, setEditTopic] = useState('');
+  const [editTopicId, setEditTopicId] = useState<string>('');
+  const [editMaterialType, setEditMaterialType] = useState<MaterialType>('worksheet');
+  const [editGrade, setEditGrade] = useState<MaterialGrade>('9');
+  const [editOrder, setEditOrder] = useState<string>('');
+  const [editPageCount, setEditPageCount] = useState<number | undefined>(undefined);
+  const [editIsFreeSample, setEditIsFreeSample] = useState(false);
+  const [editIsExamPrep, setEditIsExamPrep] = useState(false);
   const [editTheory, setEditTheory] = useState('');
   const [editFileData, setEditFileData] = useState<string>('');
   const [editFileType, setEditFileType] = useState<string>('');
@@ -224,6 +240,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     }
   };
 
+  useEffect(() => {
+    Promise.all([
+      getTopics().catch(() => []),
+      getSubtopics().catch(() => []),
+    ]).then(([topics, subtopics]) => {
+      setTopicsCatalog(topics);
+      setSubtopicsCatalog(subtopics);
+    });
+  }, []);
+
   // Real-time snapshot listener pro automatické sledování stavu nahrávání a zpracování
   useEffect(() => {
     setLoading(true);
@@ -304,6 +330,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     setNewTitle('');
     setNewSubject('Matematika');
     setNewTopic('');
+    setNewTopicId('');
+    setNewMaterialType('worksheet');
+    setNewGrade('9');
+    setNewOrder('');
+    setNewPageCount(undefined);
+    setNewIsFreeSample(false);
+    setNewIsExamPrep(false);
     setNewTheory('');
     setUploadedFileData('');
     setUploadedFileType('');
@@ -330,6 +363,14 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
     const titleCopy = newTitle.trim();
     const subjectCopy = newSubject;
     const topicCopy = newTopic.trim() || 'Obecné';
+    const topicIdCopy = newTopicId && newTopicId !== '__custom__' ? newTopicId : null;
+    const materialTypeCopy = newMaterialType;
+    const gradeCopy = newGrade;
+    const parsedNewOrder = newOrder.trim() !== '' ? Number(newOrder) : NaN;
+    const orderCopy = Number.isFinite(parsedNewOrder) ? parsedNewOrder : null;
+    const pageCountCopy = newPageCount;
+    const isFreeSampleCopy = newIsFreeSample;
+    const isExamPrepCopy = newIsExamPrep;
     const theoryCopy = newTheory.trim();
     const fileDataCopy = uploadedFileData || undefined;
     const fileTypeCopy =
@@ -347,6 +388,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       title: titleCopy,
       subject: subjectCopy,
       topic: topicCopy,
+      topicId: topicIdCopy,
+      materialType: materialTypeCopy,
+      grade: gradeCopy,
+      order: orderCopy,
+      pageCount: pageCountCopy,
+      isFreeSample: isFreeSampleCopy,
+      isExamPrep: isExamPrepCopy,
       studyTheory: theoryCopy,
       hasStudyMaterial: true,
       status: 'processing',
@@ -369,6 +417,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         title: titleCopy,
         subject: subjectCopy,
         topic: topicCopy,
+        topicId: topicIdCopy,
+        materialType: materialTypeCopy,
+        grade: gradeCopy,
+        order: orderCopy,
+        pageCount: pageCountCopy,
+        isFreeSample: isFreeSampleCopy,
+        isExamPrep: isExamPrepCopy,
         studyTheory: theoryCopy,
         fileData: fileDataCopy,
         fileType: fileTypeCopy,
@@ -407,8 +462,22 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       if (full) {
         setEditFullSubtopic(full);
         setEditTitle(full.title);
-        setEditSubject((full.subject as 'Matematika' | 'Čeština') || 'Matematika');
+        const subj = (full.subject as 'Matematika' | 'Čeština') || 'Matematika';
+        setEditSubject(subj);
+        const matchedTopic = topicsCatalog.find(
+          (t) =>
+            (t.subjectId || 'Matematika') === subj &&
+            ((full.topicId && t.id === full.topicId) ||
+              (full.topic && t.title.trim().toLowerCase() === full.topic.trim().toLowerCase()))
+        );
+        setEditTopicId(matchedTopic ? matchedTopic.id : (full.topic ? '__custom__' : ''));
         setEditTopic(full.topic || '');
+        setEditMaterialType(full.materialType || 'worksheet');
+        setEditGrade(full.grade || '9');
+        setEditOrder(typeof full.order === 'number' && Number.isFinite(full.order) ? String(full.order) : '');
+        setEditPageCount(full.pageCount);
+        setEditIsFreeSample(Boolean(full.isFreeSample));
+        setEditIsExamPrep(Boolean(full.isExamPrep));
         setEditTheory(full.studyTheory || '');
         setEditFileData('');
         setEditFileType(full.fileType || '');
@@ -442,11 +511,21 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
     const materialId = editMaterial.id;
     const replacingFile = Boolean(editFileData || (editSvgString && editSvgString !== (editFullSubtopic?.svgContent || '')));
+    const parsedEditOrder = editOrder.trim() !== '' ? Number(editOrder) : NaN;
+    const resolvedEditOrder = Number.isFinite(parsedEditOrder) ? parsedEditOrder : null;
+    const resolvedEditTopicId = editTopicId && editTopicId !== '__custom__' ? editTopicId : null;
 
     const payload = {
       title: editTitle.trim(),
       subject: editSubject,
       topic: editTopic.trim() || 'Obecné',
+      topicId: resolvedEditTopicId,
+      materialType: editMaterialType,
+      grade: editGrade,
+      order: resolvedEditOrder,
+      ...(typeof editPageCount === 'number' && editPageCount > 0 ? { pageCount: editPageCount } : {}),
+      isFreeSample: editIsFreeSample,
+      isExamPrep: editIsExamPrep,
       studyTheory: editTheory.trim(),
       ...(editFileData ? {
         fileData: editFileData,
@@ -576,6 +655,13 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       (m.topic && m.topic.toLowerCase().includes(q));
     return matchesSubject && matchesSearch;
   });
+
+  const pairedSubtopicByMaterialId = new Map<string, PracticeSubtopic>();
+  for (const s of subtopicsCatalog) {
+    if (s.pairedMaterialId && !pairedSubtopicByMaterialId.has(s.pairedMaterialId)) {
+      pairedSubtopicByMaterialId.set(s.pairedMaterialId, s);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -745,11 +831,44 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     <h4 className="font-bold text-base text-gray-900 group-hover:text-amber-950 transition-colors line-clamp-1">
                       {mat.title}
                     </h4>
-                    {mat.topic && (
-                      <p className="text-xs text-gray-400 font-medium mt-0.5">
-                        Téma: {mat.topic}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                      {mat.topic && (
+                        <span className="text-[11px] text-gray-500 font-medium">
+                          {mat.topic}
+                        </span>
+                      )}
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-50 text-blue-800">
+                        {mat.materialType === 'summary'
+                          ? 'Shrnutí'
+                          : mat.materialType === 'cheatsheet'
+                            ? 'Tahák'
+                            : 'Pracovní list'}
+                      </span>
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-gray-100 text-gray-600">
+                        {mat.grade === 'all' ? 'Všechny roč.' : `${mat.grade || '9'}. roč.`}
+                      </span>
+                      {mat.isFreeSample && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          Ukázka zdarma
+                        </span>
+                      )}
+                      {mat.isExamPrep && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200">
+                          ★ Přijímačky
+                        </span>
+                      )}
+                      {(() => {
+                        const pairedSub = pairedSubtopicByMaterialId.get(mat.id);
+                        return pairedSub ? (
+                          <span
+                            title="Párování se nastavuje v administraci Procvičování → Upravit Studium"
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-800 border border-indigo-200 inline-flex items-center gap-1"
+                          >
+                            <BookOpen size={10} /> Studovat: {pairedSub.title}
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
                   </div>
 
                   {mat.studyTheory && (
@@ -828,12 +947,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700">Předmět</label>
                 <select
                   value={newSubject}
-                  onChange={e => setNewSubject(e.target.value as any)}
+                  onChange={e => {
+                    const subj = e.target.value as 'Matematika' | 'Čeština';
+                    setNewSubject(subj);
+                    setNewTopicId('');
+                  }}
                   className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-black"
                 >
                   <option value="Matematika">Matematika</option>
@@ -843,13 +966,110 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
               <div className="space-y-1.5">
                 <label className="text-xs font-bold text-gray-700">Téma</label>
+                {(() => {
+                  const subjTopics = topicsCatalog.filter(
+                    (t) => (t.subjectId || 'Matematika') === newSubject
+                  );
+                  return (
+                    <div className="space-y-2">
+                      <select
+                        value={newTopicId || (subjTopics.length === 0 ? '__custom__' : '')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setNewTopicId(val);
+                          if (val && val !== '__custom__') {
+                            const found = subjTopics.find((t) => t.id === val);
+                            if (found) setNewTopic(found.title);
+                          } else if (val === '__custom__') {
+                            setNewTopic('');
+                          }
+                        }}
+                        className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                      >
+                        {subjTopics.length > 0 && (
+                          <option value="">-- Vyberte téma ze seznamu --</option>
+                        )}
+                        {subjTopics.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.title}
+                          </option>
+                        ))}
+                        <option value="__custom__">Vlastní název tématu…</option>
+                      </select>
+                      {(newTopicId === '__custom__' || subjTopics.length === 0) && (
+                        <Input
+                          value={newTopic}
+                          onChange={e => setNewTopic(e.target.value)}
+                          placeholder="např. Geometrie"
+                          className="h-10 rounded-xl text-sm"
+                        />
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700">Typ materiálu</label>
+                <select
+                  value={newMaterialType}
+                  onChange={(e) => setNewMaterialType(e.target.value as MaterialType)}
+                  className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                >
+                  <option value="worksheet">Pracovní list</option>
+                  <option value="summary">Shrnutí</option>
+                  <option value="cheatsheet">Tahák</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700">Ročník</label>
+                <select
+                  value={newGrade}
+                  onChange={(e) => setNewGrade(e.target.value as MaterialGrade)}
+                  className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                >
+                  <option value="9">9. ročník</option>
+                  <option value="7">7. ročník</option>
+                  <option value="5">5. ročník</option>
+                  <option value="all">Všechny ročníky</option>
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-gray-700">Pořadí (volitelné)</label>
                 <Input
-                  value={newTopic}
-                  onChange={e => setNewTopic(e.target.value)}
-                  placeholder="např. Geometrie"
-                  className="h-11 rounded-xl text-sm"
+                  type="number"
+                  value={newOrder}
+                  onChange={(e) => setNewOrder(e.target.value)}
+                  placeholder="např. 1"
+                  className="h-10 rounded-xl text-xs"
                 />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-gray-50/80 p-3 rounded-2xl border border-gray-100">
+              <label className="flex items-center gap-2.5 text-xs font-bold text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newIsFreeSample}
+                  onChange={(e) => setNewIsFreeSample(e.target.checked)}
+                  className="w-4 h-4 rounded accent-[#1D4ED8] cursor-pointer"
+                />
+                <span>Ukázka zdarma (čtení bez stažení PDF)</span>
+              </label>
+
+              <label className="flex items-center gap-2.5 text-xs font-bold text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newIsExamPrep}
+                  onChange={(e) => setNewIsExamPrep(e.target.checked)}
+                  className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
+                />
+                <span>★ Zařadit do Přípravy na přijímačky</span>
+              </label>
             </div>
 
             {/* Drag & Drop PDF / SVG */}
@@ -874,6 +1094,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     setUploadedPdfUrl(res.pdfUrl || '');
                     setUploadedThumbnailUrl(res.thumbnail || res.thumbnailDataUrl || '');
                     setUploadedFileName(res.fileName);
+                    setNewPageCount(res.pageCount);
                     if (!newTitle) {
                       setNewTitle(res.fileName.replace(/\.(pdf|svg|png|jpg|jpeg|webp)$/i, ''));
                     }
@@ -885,6 +1106,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     setUploadedPdfUrl('');
                     setUploadedThumbnailUrl('');
                     setUploadedFileName('');
+                    setNewPageCount(undefined);
                   }
                 }}
               />
@@ -938,6 +1160,14 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                 Upravujete: <span className="font-bold text-gray-700">{editMaterial.title}</span>
               </p>
             )}
+            {editMaterial && pairedSubtopicByMaterialId.get(editMaterial.id) && (
+              <p className="text-[11px] font-bold text-indigo-800 bg-indigo-50 border border-indigo-200 rounded-xl px-3 py-1.5 mt-1 inline-flex items-center gap-1.5">
+                <BookOpen size={12} />
+                <span>
+                  Spárováno se sekcí Studovat: {pairedSubtopicByMaterialId.get(editMaterial.id)!.title} (párování se upravuje v administraci Procvičování → Upravit Studium)
+                </span>
+              </p>
+            )}
           </DialogHeader>
 
           {editLoading ? (
@@ -961,12 +1191,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-gray-700">Předmět</label>
                     <select
                       value={editSubject}
-                      onChange={e => setEditSubject(e.target.value as any)}
+                      onChange={e => {
+                        const subj = e.target.value as 'Matematika' | 'Čeština';
+                        setEditSubject(subj);
+                        setEditTopicId('');
+                      }}
                       className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-black"
                     >
                       <option value="Matematika">Matematika</option>
@@ -976,12 +1210,107 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
 
                   <div className="space-y-1.5">
                     <label className="text-xs font-bold text-gray-700">Téma</label>
+                    {(() => {
+                      const subjTopics = topicsCatalog.filter(
+                        (t) => (t.subjectId || 'Matematika') === editSubject
+                      );
+                      return (
+                        <div className="space-y-2">
+                          <select
+                            value={editTopicId || (subjTopics.length === 0 ? '__custom__' : '')}
+                            onChange={(e) => {
+                              const val = e.target.value;
+                              setEditTopicId(val);
+                              if (val && val !== '__custom__') {
+                                const found = subjTopics.find((t) => t.id === val);
+                                if (found) setEditTopic(found.title);
+                              }
+                            }}
+                            className="w-full h-11 px-3 rounded-xl border border-gray-200 text-sm font-medium bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                          >
+                            {subjTopics.length > 0 && (
+                              <option value="">-- Vyberte téma ze seznamu --</option>
+                            )}
+                            {subjTopics.map((t) => (
+                              <option key={t.id} value={t.id}>
+                                {t.title}
+                              </option>
+                            ))}
+                            <option value="__custom__">Vlastní název tématu…</option>
+                          </select>
+                          {(editTopicId === '__custom__' || subjTopics.length === 0) && (
+                            <Input
+                              value={editTopic}
+                              onChange={e => setEditTopic(e.target.value)}
+                              className="h-10 rounded-xl text-sm"
+                            />
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700">Typ materiálu</label>
+                    <select
+                      value={editMaterialType}
+                      onChange={(e) => setEditMaterialType(e.target.value as MaterialType)}
+                      className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                    >
+                      <option value="worksheet">Pracovní list</option>
+                      <option value="summary">Shrnutí</option>
+                      <option value="cheatsheet">Tahák</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700">Ročník</label>
+                    <select
+                      value={editGrade}
+                      onChange={(e) => setEditGrade(e.target.value as MaterialGrade)}
+                      className="w-full h-10 px-3 rounded-xl border border-gray-200 text-xs font-bold bg-white focus:outline-none focus:ring-2 focus:ring-black"
+                    >
+                      <option value="9">9. ročník</option>
+                      <option value="7">7. ročník</option>
+                      <option value="5">5. ročník</option>
+                      <option value="all">Všechny ročníky</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-gray-700">Pořadí (volitelné)</label>
                     <Input
-                      value={editTopic}
-                      onChange={e => setEditTopic(e.target.value)}
-                      className="h-11 rounded-xl text-sm"
+                      type="number"
+                      value={editOrder}
+                      onChange={(e) => setEditOrder(e.target.value)}
+                      placeholder="např. 1"
+                      className="h-10 rounded-xl text-xs"
                     />
                   </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-gray-50/80 p-3 rounded-2xl border border-gray-100">
+                  <label className="flex items-center gap-2.5 text-xs font-bold text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editIsFreeSample}
+                      onChange={(e) => setEditIsFreeSample(e.target.checked)}
+                      className="w-4 h-4 rounded accent-[#1D4ED8] cursor-pointer"
+                    />
+                    <span>Ukázka zdarma (čtení bez stažení PDF)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2.5 text-xs font-bold text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={editIsExamPrep}
+                      onChange={(e) => setEditIsExamPrep(e.target.checked)}
+                      className="w-4 h-4 rounded accent-amber-500 cursor-pointer"
+                    />
+                    <span>★ Zařadit do Přípravy na přijímačky</span>
+                  </label>
                 </div>
 
                 <div className="space-y-1.5">
@@ -1018,6 +1347,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                         setEditPdfUrl(res.pdfUrl || '');
                         setEditThumbnailUrl(res.thumbnail || res.thumbnailDataUrl || '');
                         setEditFileName(res.fileName);
+                        setEditPageCount(res.pageCount);
                       } else {
                         setEditFileData('');
                         setEditFileType('');
@@ -1028,6 +1358,7 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                         setEditPdfUrl('');
                         setEditThumbnailUrl('');
                         setEditFileName('');
+                        setEditPageCount(0);
                       }
                     }}
                   />

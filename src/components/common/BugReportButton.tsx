@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useTimer } from '../../context/TimerContext';
 import BugReportModal from './BugReportModal';
-import { Bug } from 'lucide-react';
+import { BugBlueIcon } from './CustomIcon';
 
 export default function BugReportButton() {
   const { user } = useAuth();
@@ -40,9 +40,9 @@ export default function BugReportButton() {
           aria-label="Nahlásit chybu"
         >
           <div className="w-5 h-5 flex items-center justify-center shrink-0">
-            <Bug 
-              size={18} 
-              className="text-rose-500 group-hover:scale-110 group-hover:rotate-12 transition-transform duration-300" 
+            <BugBlueIcon 
+              size={20} 
+              className="group-hover:scale-110 group-hover:rotate-12 transition-transform duration-300" 
             />
           </div>
           <span className="max-w-0 overflow-hidden whitespace-nowrap opacity-0 group-hover:max-w-[120px] group-hover:opacity-100 transition-all duration-300 ease-in-out text-xs font-bold text-gray-800">

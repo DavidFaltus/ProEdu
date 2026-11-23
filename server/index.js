@@ -18,12 +18,22 @@ import {
   sendPaymentConfirmedEmail,
   sendRecurringChargeSuccessEmail,
   sendRecurringChargeFailedEmail,
+  sendSubscriptionCancelledEmail,
   sendBugReportEmail,
   sendPasswordResetEmailTemplate
 } from './services/emailService.js';
 import { iuctoService, formatPragueDate } from './services/iuctoService.js';
 import { evaluateStudentAnswer } from './utils/mathEvaluator.js';
 import { sanitizeSvg, escapeHtml, sanitizeHttpUrl } from './utils/svgSanitizer.js';
+import {
+  MATERIAL_EXPORT_MONTHLY_LIMIT,
+  computeMaterialQuotaPeriod,
+  canUserViewMaterial,
+  buildWatermarkText,
+  detectSvgPageCount,
+  normalizeMaterialType,
+  normalizeMaterialGrade,
+} from './utils/materialQuota.js';
 
 console.log('--- SERVER STARTING ---');
 
@@ -319,7 +329,10 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
         role: fallbackRole,
         subscriptionStatus: 'inactive',
         subscriptionPeriodEnd: periodEndIso,
-        subscriptionExpiredAt: new Date(nowMs).toISOString()
+        subscriptionExpiredAt: new Date(nowMs).toISOString(),
+        initRecurringTransId: FieldValue.delete(),
+        recurringCancelled: true,
+        recurringCancelledAt: userDoc?.subscriptionCancelledAt || new Date(nowMs).toISOString()
       };
     } else if (rawStatus === 'active') {
       const graceUntilMs = periodEndMs + SUBSCRIPTION_GRACE_MS;
@@ -334,7 +347,10 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
           subscriptionStatus: 'inactive',
           subscriptionPeriodEnd: periodEndIso,
           subscriptionGraceUntil: FieldValue.delete(),
-          subscriptionExpiredAt: new Date(nowMs).toISOString()
+          subscriptionExpiredAt: new Date(nowMs).toISOString(),
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: new Date(nowMs).toISOString()
         };
       } else {
         subscriptionGraceUntil = graceUntilIso;
@@ -346,6 +362,15 @@ function computeEffectiveUserState(userDoc, nowMs = Date.now()) {
         }
       }
     }
+  } else if (rawRole === 'premium' && (periodEndMs === null || nowMs <= periodEndMs) && (rawStatus === 'inactive' || rawStatus === 'expired')) {
+    // Pokud má uživatel v databázi roli 'premium' a datum expirace v budoucnu nebo neomezené,
+    // ale status je chybně/historicky 'inactive' nebo 'expired', napravíme stav na aktivní.
+    subscriptionStatus = userDoc?.subscriptionCancelledAt && periodEndMs !== null ? 'cancelled_at_period_end' : 'active';
+    updates = {
+      ...(updates || {}),
+      subscriptionStatus,
+      subscriptionExpiredAt: FieldValue.delete()
+    };
   }
 
   if (role === 'course' && enrolledCourseIds.length === 0) {
@@ -450,6 +475,7 @@ function setupExpressApp() {
         res.setHeader('Access-Control-Allow-Credentials', 'true');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Expose-Headers', 'X-Watermark-Text, X-Quota-Remaining, X-Quota-Limit');
       }
     }
 
@@ -1116,14 +1142,29 @@ app.post('/api/auth/register-confirm', registerConfirmLimiter, async (req, res) 
 
     await db.collection('users').doc(userRecord.uid).set(newProfile);
     await syncCustomClaimsIfNeeded(userRecord.uid, 'free', []);
-    const customToken = await auth.createCustomToken(userRecord.uid);
 
-    console.log(`[Register Confirm] Uživatel úspěšně ověřen a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
+    let customToken = null;
+    const canSignCustomToken = Boolean(
+      process.env.FIREBASE_SERVICE_ACCOUNT_JSON ||
+      process.env.GOOGLE_APPLICATION_CREDENTIALS ||
+      isCloudFunction
+    );
+
+    if (canSignCustomToken) {
+      try {
+        customToken = await auth.createCustomToken(userRecord.uid);
+      } catch (tokenErr) {
+        console.warn('[Register Confirm] createCustomToken selhal, použito přímé přihlášení:', tokenErr?.message);
+      }
+    }
+
+    console.log(`[Register Confirm] Uživatel úspěšně ověřen 6místným kódem a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
 
     return res.json({
       success: true,
       message: 'Registrace byla úspěšně ověřena a dokončena!',
       customToken,
+      ...(customToken ? {} : { tempPassword: originalPassword }),
       uid: userRecord.uid,
       email: pending.email,
       name: pending.name
@@ -1630,9 +1671,33 @@ app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, r
     const userDoc = userSnap.data() || {};
     const safeUserName = String(userName || userDoc.displayName || userDoc.name || userEmail.split('@')[0] || 'Student').trim().slice(0, 128);
     const safePageUrl = sanitizeHttpUrl(String(pageUrl || '').trim().slice(0, 1024)) || '';
-    const safeScreenshotUrl = screenshotUrl
-      ? (sanitizeHttpUrl(String(screenshotUrl).trim().slice(0, 2048), { allowDataImage: true }) || null)
-      : null;
+
+    let safeScreenshotUrl = null;
+    if (typeof screenshotUrl === 'string' && screenshotUrl.trim()) {
+      const rawScreenshot = screenshotUrl.trim();
+      const isDataUrl = /^data:image\/(?:png|jpe?g|webp);base64,/i.test(rawScreenshot);
+      const maxLen = isDataUrl ? 850 * 1024 : 2048;
+      if (rawScreenshot.length > maxLen) {
+        return res.status(400).json({ error: 'Přiložený snímek obrazovky je příliš velký.' });
+      }
+      const sanitized = sanitizeHttpUrl(rawScreenshot, { allowDataImage: true }) || null;
+      if (sanitized && isDataUrl) {
+        const commaIdx = sanitized.indexOf(',');
+        const b64Part = commaIdx !== -1 ? sanitized.slice(commaIdx + 1) : '';
+        const headBuf = Buffer.from(b64Part.slice(0, 32), 'base64');
+        const isPng = headBuf.length >= 4 && headBuf[0] === 0x89 && headBuf[1] === 0x50 && headBuf[2] === 0x4e && headBuf[3] === 0x47;
+        const isJpeg = headBuf.length >= 3 && headBuf[0] === 0xff && headBuf[1] === 0xd8 && headBuf[2] === 0xff;
+        const isWebp =
+          headBuf.length >= 12 &&
+          headBuf.subarray(0, 4).toString('ascii') === 'RIFF' &&
+          headBuf.subarray(8, 12).toString('ascii') === 'WEBP';
+        if (!isPng && !isJpeg && !isWebp) {
+          return res.status(400).json({ error: 'Neplatný formát přiloženého obrázku.' });
+        }
+      }
+      safeScreenshotUrl = sanitized;
+    }
+
     const safeUserAgent = userAgent ? String(userAgent).trim().slice(0, 512) : String(req.headers['user-agent'] || '').slice(0, 512);
     const safeResolution = screenResolution ? String(screenResolution).trim().slice(0, 64) : null;
 
@@ -1757,14 +1822,14 @@ app.delete('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req
 // --- ORDERS & PAYMENT GATEWAY INTEGRATION ---
 // ==========================================
 
-const BANK_ACCOUNT_NUMBER = process.env.BANK_ACCOUNT_NUMBER || '2100000000';
-const BANK_CODE = process.env.BANK_CODE || '2010';
-const BANK_NAME = process.env.BANK_NAME || 'Fio banka';
-const BANK_RECIPIENT = process.env.BANK_RECIPIENT || 'ProEdu vzdělávání';
 const COMGATE_MERCHANT_ID = process.env.COMGATE_MERCHANT_ID || '';
 const COMGATE_SECRET = process.env.COMGATE_SECRET || '';
 const COMGATE_TEST_MODE = process.env.COMGATE_TEST_MODE !== 'false';
 const ALLOW_SANDBOX_PAYMENTS = process.env.ALLOW_SANDBOX_PAYMENTS === 'true';
+// Platební lhůta pro neuhrazenou (pending) objednávku: 30 minut
+const PENDING_ORDER_TIMEOUT_MS = 30 * 60 * 1000;
+// Okno pro automatické stržení opakované platby v den expirace (24 hodin před koncem období, aby nedošlo k výpadku služby)
+const RECURRING_CHARGE_LEAD_MS = 24 * 60 * 60 * 1000;
 
 const PREMIUM_PLANS = {
   'premium-monthly': {
@@ -1789,6 +1854,36 @@ function isSandboxSimulationAllowed() {
   );
 }
 
+function hasComgateCredentials() {
+  return Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET);
+}
+
+function getComgateAuthHeader() {
+  return 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+}
+
+function isRealComgateTransId(transId) {
+  return Boolean(transId && typeof transId === 'string' && !transId.startsWith('SANDBOX_'));
+}
+
+function resolveAppBaseUrl(req) {
+  const configured = sanitizeHttpUrl(process.env.APP_URL);
+  if (configured) {
+    return configured.replace(/\/+$/, '');
+  }
+  if (process.env.NODE_ENV !== 'production' && req) {
+    const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+    const host = forwardedHost || req.get('host');
+    const proto = forwardedProto || req.protocol || 'http';
+    if (host && (proto === 'http' || proto === 'https')) {
+      const derived = sanitizeHttpUrl(`${proto}://${host}`);
+      if (derived) return derived.replace(/\/+$/, '');
+    }
+  }
+  return 'https://www.proeducator.eu';
+}
+
 function constantTimeSecretEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || !a || !b) return false;
   const hashA = crypto.createHash('sha256').update(a).digest();
@@ -1806,44 +1901,6 @@ async function updateUserDocServer(userId, updateData) {
   if (!userId) return false;
   await db.collection('users').doc(userId).set(updateData, { merge: true });
   return true;
-}
-
-function serverCzechAccountToIban(accountNumberRaw, bankCodeRaw) {
-  const bankCode = (bankCodeRaw || '2010').trim().padStart(4, '0');
-  let prefix = '000000';
-  let account = (accountNumberRaw || '').trim();
-  if (account.includes('-')) {
-    const parts = account.split('-');
-    prefix = parts[0].padStart(6, '0');
-    account = parts[1];
-  }
-  const paddedAccount = account.padStart(10, '0');
-  const bban = `${bankCode}${prefix}${paddedAccount}`;
-  const numericString = `${bban}123500`;
-  let remainder = 0;
-  for (let i = 0; i < numericString.length; i++) {
-    remainder = (remainder * 10 + parseInt(numericString[i], 10)) % 97;
-  }
-  const checkDigits = (98 - remainder).toString().padStart(2, '0');
-  return `CZ${checkDigits}${bban}`;
-}
-
-function serverGenerateSpayd(accountNumber, bankCode, amount, vs, message, recipientName) {
-  const iban = serverCzechAccountToIban(accountNumber, bankCode);
-  const parts = ['SPD', '1.0', `ACC:${iban}`, `AM:${Number(amount).toFixed(2)}`, 'CC:CZK'];
-  if (vs) {
-    const cleanVs = vs.toString().replace(/\D/g, '').slice(0, 10);
-    if (cleanVs) parts.push(`X-VS:${cleanVs}`);
-  }
-  if (message) {
-    const cleanMsg = message.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[*]/g, ' ').slice(0, 60);
-    parts.push(`MSG:${cleanMsg}`);
-  }
-  if (recipientName) {
-    const cleanName = recipientName.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[*]/g, ' ').slice(0, 35);
-    parts.push(`RN:${cleanName}`);
-  }
-  return parts.join('*') + '*';
 }
 
 async function saveOrderDoc(orderId, orderData) {
@@ -1867,9 +1924,16 @@ async function activatePremiumForUser(userId, options = {}) {
   const existingUser = options.existingUser || (await getUserDocServer(userId));
   const rawExistingEnd = existingUser?.subscriptionPeriodEnd ?? existingUser?.subscriptionExpiresAt;
   const existingEndMs = parseIsoMillis(rawExistingEnd) || 0;
-  const baseMs = options.extendFromExisting && existingEndMs > Date.now()
+  const nowMs = Date.now();
+  // Plynulé navázání +30 dní na stávající konec období, pokud je uživatel v aktivním předplaceném období
+  // nebo v 3denní ochranné lhůtě (Grace Period) – platí pro opakované stržení i pro aktualizaci karty novou iniciační platbou.
+  const isWithinActiveOrGracePeriod =
+    existingEndMs > 0 &&
+    (existingEndMs > nowMs ||
+      (existingUser?.role === 'premium' && nowMs <= existingEndMs + SUBSCRIPTION_GRACE_MS));
+  const baseMs = options.extendFromExisting !== false && isWithinActiveOrGracePeriod
     ? existingEndMs
-    : Date.now();
+    : nowMs;
   const periodEnd = new Date(baseMs + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const updateData = {
@@ -1879,8 +1943,13 @@ async function activatePremiumForUser(userId, options = {}) {
     subscriptionPeriodEnd: periodEnd,
     subscriptionGraceUntil: FieldValue.delete(),
     subscriptionExpiredAt: FieldValue.delete(),
+    lastRecurringPaymentFailed: FieldValue.delete(),
+    lastRecurringFailureReason: FieldValue.delete(),
+    lastRecurringFailedAt: FieldValue.delete(),
     subscriptionCancelledAt: null,
-    subscriptionCancelReason: null
+    subscriptionCancelReason: null,
+    recurringCancelled: false,
+    recurringCancelledAt: null
   };
 
   if (options.initRecurringTransId) {
@@ -2092,6 +2161,58 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       return res.status(400).json({ error: 'Pro pokračování je nutné odsouhlasit obchodní podmínky.' });
     }
 
+    // Kontrola, zda uživatel již nemá aktivní neuhrazenou (pending) objednávku.
+    // Nejprve všechny čekající objednávky uživatele sesynchronizujeme s Comgate a případně expirujeme ty po 30minutové lhůtě.
+    const existingOrdersSnap = await db.collection('orders').where('userId', '==', userId).limit(30).get();
+    const existingPendingDocs = existingOrdersSnap.docs
+      .map((d) => ({ id: d.id, ...serializeTimestampFields(d.data()) }))
+      .filter((o) => o.status === 'pending' && !o.isRecurringRenewal)
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
+    if (existingPendingDocs.length > 0) {
+      const reconciledPending = [];
+      for (const pendingOrd of existingPendingDocs) {
+        const synced = await reconcilePendingOrderWithComgate(pendingOrd);
+        if (synced && synced.status === 'pending') {
+          reconciledPending.push(synced);
+        }
+      }
+
+      if (reconciledPending.length > 0) {
+        const activePending = reconciledPending[0];
+        // Pokud z historie zbyla více než 1 živá čekající objednávka, starší duplikáty automaticky zrušíme
+        if (reconciledPending.length > 1) {
+          for (const olderPending of reconciledPending.slice(1)) {
+            if (hasComgateCredentials() && isRealComgateTransId(olderPending.comgateTransId)) {
+              await cancelComgateRemotePayment(olderPending.comgateTransId);
+            }
+            await applyComgatePaymentTransition({
+              orderId: olderPending.id,
+              transId: olderPending.comgateTransId || null,
+              status: 'CANCELLED',
+              isSandbox: Boolean(olderPending.isSandbox)
+            });
+          }
+        }
+
+        const existingIsSandbox = Boolean(activePending.isSandbox);
+        return res.json({
+          success: true,
+          reusedExistingOrder: true,
+          orderId: activePending.id,
+          order: activePending,
+          comgate: {
+            ...(activePending.comgateTransId ? { transId: activePending.comgateTransId } : {}),
+            ...(activePending.comgateRedirectUrl ? { redirectUrl: activePending.comgateRedirectUrl } : {}),
+            isLive: !existingIsSandbox,
+            isSandbox: existingIsSandbox,
+            testMode: existingIsSandbox,
+            message: 'Máte již vytvořenou neuhrazenou objednávku v platební lhůtě. Pokračujte prosím k jejímu zaplacení.'
+          }
+        });
+      }
+    }
+
     let orderId = `ord_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
     if (clientOrderId !== undefined && clientOrderId !== null && clientOrderId !== '') {
       if (typeof clientOrderId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(clientOrderId)) {
@@ -2105,18 +2226,8 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
         ? clientVariableSymbol.replace(/\D/g, '').slice(0, 10) || String(Date.now()).slice(-9)
         : String(Date.now()).slice(-9);
 
-    const paymentMessage = `ProEdu ${variableSymbol}`.slice(0, 60);
-    const spaydString = serverGenerateSpayd(
-      BANK_ACCOUNT_NUMBER,
-      BANK_CODE,
-      amount,
-      variableSymbol,
-      paymentMessage,
-      BANK_RECIPIENT
-    );
-
     const isTest = COMGATE_TEST_MODE === true || COMGATE_TEST_MODE === 'true';
-    const hasComgateCreds = Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET);
+    const hasComgateCreds = hasComgateCredentials();
 
     if (!isTest && !hasComgateCreds) {
       return res.status(503).json({ error: 'Platební brána není v produkci nakonfigurována.' });
@@ -2143,45 +2254,49 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       paymentMethod: 'comgate',
       status: 'pending',
       isSandbox: isTest || !hasComgateCreds,
+      isInitialRecurring: true,
       termsAccepted: true,
       newsletterConsent: Boolean(newsletterConsent),
       variableSymbol,
-      spaydString,
       createdAt: new Date().toISOString()
     };
 
-    const appBaseUrl = sanitizeHttpUrl(process.env.APP_URL) || 'https://www.proeducator.eu';
+    const appBaseUrl = resolveAppBaseUrl(req);
     let comgateData = null;
 
     if (hasComgateCreds) {
       let comgateJson = null;
       let comgateOk = false;
+      const baseComgatePayload = {
+        merchant: COMGATE_MERCHANT_ID,
+        test: isTest,
+        price: Math.round(amount * 100),
+        curr: 'CZK',
+        label: 'ProEdu Premium',
+        refId: orderId,
+        email: orderData.invoiceEmail,
+        fullName: orderData.clientName || undefined,
+        // Vždy povolujeme výhradně karetní metody (CARD_ALL: karta, Apple Pay, Google Pay),
+        // ze kterých lze příští měsíc automaticky strhnout opakovanou platbu.
+        // Bankovní tlačítka (BANK_ALL), QR platby a odložené platby (LATER_ALL) jsou vypnuty.
+        method: 'CARD_ALL',
+        prepareOnly: true,
+        initRecurring: true,
+        country: 'CZ',
+        lang: 'cs',
+        url_paid: `${appBaseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`,
+        url_cancelled: `${appBaseUrl}/?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
+        url_pending: `${appBaseUrl}/?payment=pending&orderId=${encodeURIComponent(orderId)}`
+      };
+
       try {
-        const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
         const comgateRes = await fetch('https://payments.comgate.cz/v2.0/payment.json', {
           method: 'POST',
           headers: {
-            Authorization: authHeader,
+            Authorization: getComgateAuthHeader(),
             'Content-Type': 'application/json'
           },
-          body: JSON.stringify({
-            merchant: COMGATE_MERCHANT_ID,
-            test: isTest,
-            price: Math.round(amount * 100),
-            curr: 'CZK',
-            label: 'ProEdu Premium',
-            refId: orderId,
-            email: orderData.invoiceEmail,
-            fullName: orderData.clientName || undefined,
-            method: 'ALL',
-            prepareOnly: true,
-            initRecurring: true,
-            country: 'CZ',
-            lang: 'cs',
-            url_paid: `${appBaseUrl}/student/dashboard?payment=success&orderId=${encodeURIComponent(orderId)}`,
-            url_cancelled: `${appBaseUrl}/student/dashboard?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
-            url_pending: `${appBaseUrl}/student/dashboard?payment=pending&orderId=${encodeURIComponent(orderId)}`
-          })
+          body: JSON.stringify(baseComgatePayload)
         });
         comgateOk = comgateRes.ok;
         comgateJson = await comgateRes.json().catch(() => null);
@@ -2227,17 +2342,6 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       success: true,
       orderId,
       order: orderData,
-      bankDetails: {
-        accountNumber: BANK_ACCOUNT_NUMBER,
-        bankCode: BANK_CODE,
-        bankName: BANK_NAME,
-        recipientName: BANK_RECIPIENT,
-        amount,
-        currency,
-        variableSymbol,
-        message: paymentMessage,
-        spaydString
-      },
       comgate: comgateData
     });
   } catch (err) {
@@ -2246,10 +2350,122 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
   }
 });
 
+/**
+ * Atomicky převede objednávku do stavu PAID nebo CANCELLED na základě potvrzení z Comgate
+ * (sdíleno mezi Push URL webhookem a přímým ověřením stavu přes Comgate REST API).
+ */
+async function applyComgatePaymentTransition({
+  orderId,
+  transId = null,
+  status,
+  price = null,
+  curr = null,
+  isSandbox = false
+}) {
+  const orderRef = db.collection('orders').doc(orderId);
+  const txOutcome = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(orderRef);
+    if (!snap.exists) {
+      return { errorStatus: 404, body: 'code=1&message=Order not found', errorMessage: 'Objednávka nebyla nalezena.' };
+    }
+
+    const order = { id: snap.id, ...snap.data() };
+    const expectedPriceHaler = Math.round(Number(order.amount) * 100);
+    if (price !== null && price !== undefined && Number(price) !== expectedPriceHaler) {
+      return { errorStatus: 400, body: 'code=1&message=Price mismatch', errorMessage: 'Částka platby nesouhlasí.' };
+    }
+
+    if (curr && String(curr).toUpperCase() !== String(order.currency || 'CZK').toUpperCase()) {
+      return { errorStatus: 400, body: 'code=1&message=Currency mismatch', errorMessage: 'Měna platby nesouhlasí.' };
+    }
+
+    if (order.status === 'refunded') {
+      return { errorStatus: 409, body: 'code=1&message=Order already refunded', errorMessage: 'Objednávka již byla refundována.' };
+    }
+
+    if (status === 'PAID') {
+      const invoiceSettled =
+        Boolean(order.iuctoInvoiceId) ||
+        order.iuctoSyncStatus === 'synced' ||
+        order.iuctoSyncStatus === 'skipped_sandbox';
+      if (order.status === 'paid' && invoiceSettled) {
+        return { alreadyProcessed: true, order };
+      }
+      const paidAtIso = order.paidAt || new Date().toISOString();
+      const lockUpdates = {
+        status: 'paid',
+        paidAt: paidAtIso,
+        comgateTransId: transId || order.comgateTransId || null,
+        isSandbox: Boolean(isSandbox) || Boolean(order.isSandbox)
+      };
+      tx.set(orderRef, lockUpdates, { merge: true });
+      return { action: 'PAID', order: { ...order, ...lockUpdates } };
+    }
+
+    if (status === 'CANCELLED') {
+      const wasPending = order.status === 'pending';
+      if (wasPending) {
+        tx.set(orderRef, {
+          status: 'cancelled',
+          cancelledAt: new Date().toISOString()
+        }, { merge: true });
+      }
+      return { action: 'CANCELLED', wasPending, order };
+    }
+
+    return { action: 'IGNORED', order };
+  });
+
+  if (txOutcome.errorStatus || txOutcome.alreadyProcessed) {
+    return txOutcome;
+  }
+
+  if (txOutcome.action === 'PAID') {
+    const isRenewal = Boolean(txOutcome.order.isRecurringRenewal);
+    // Dle dokumentace Comgate musí initRecurringId pro všechna další stržení vždy zůstat transId PRVNÍ (iniciační) platby.
+    const preservedInitRecurringId = isRenewal
+      ? (txOutcome.order.initRecurringTransId || null)
+      : (transId || txOutcome.order.comgateTransId || null);
+
+    const finalized = await finalizePaidOrderAndInvoice({
+      orderId,
+      order: txOutcome.order,
+      comgateTransId: transId || txOutcome.order.comgateTransId || null,
+      initRecurringTransId: preservedInitRecurringId,
+      isSandbox: Boolean(isSandbox) || Boolean(txOutcome.order.isSandbox),
+      isRecurringRenewal: isRenewal,
+      extendFromExisting: isRenewal
+    });
+    return { ...txOutcome, finalized };
+  }
+
+  if (txOutcome.action === 'CANCELLED' && txOutcome.wasPending && txOutcome.order?.isRecurringRenewal) {
+    const failureReason = 'Opakovaná platba kartou byla zamítnuta vydavatelem karty nebo platební bránou Comgate.';
+    if (txOutcome.order.userId) {
+      await updateUserDocServer(txOutcome.order.userId, {
+        lastRecurringPaymentFailed: true,
+        lastRecurringFailureReason: failureReason,
+        lastRecurringFailedAt: new Date().toISOString()
+      }).catch(() => {});
+    }
+    const notifyEmail = txOutcome.order.invoiceEmail || txOutcome.order.userEmail;
+    if (notifyEmail) {
+      sendRecurringChargeFailedEmail({
+        to: notifyEmail,
+        name: txOutcome.order.clientName || 'zákazníku',
+        amount: txOutcome.order.amount || 99,
+        reason: failureReason
+      }).catch((err) => console.warn('[Recurring Failed Email Warning]:', err?.message || err));
+    }
+  }
+
+  return txOutcome;
+}
+
 // 2. Comgate Push URL Notifikace (Webhook)
 app.post('/api/payments/comgate/notify', async (req, res) => {
   try {
-    if (!COMGATE_SECRET || !COMGATE_MERCHANT_ID) {
+    if (!hasComgateCredentials()) {
       console.error('[Comgate Webhook] COMGATE_SECRET nebo COMGATE_MERCHANT_ID není nastaveno.');
       return res.status(503).send('code=1&message=Payment webhook not configured');
     }
@@ -2277,72 +2493,20 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
       return res.status(403).send('code=1&message=Test mode not allowed in live environment');
     }
 
-    const orderRef = db.collection('orders').doc(refId);
-    const txOutcome = await db.runTransaction(async (tx) => {
-      const snap = await tx.get(orderRef);
-      if (!snap.exists) {
-        return { errorStatus: 404, body: 'code=1&message=Order not found' };
-      }
-
-      const order = { id: snap.id, ...snap.data() };
-      const expectedPriceHaler = Math.round(Number(order.amount) * 100);
-      if (Number(price) !== expectedPriceHaler) {
-        return { errorStatus: 400, body: 'code=1&message=Price mismatch' };
-      }
-
-      if (String(curr || '').toUpperCase() !== String(order.currency || 'CZK').toUpperCase()) {
-        return { errorStatus: 400, body: 'code=1&message=Currency mismatch' };
-      }
-
-      if (order.status === 'refunded') {
-        return { errorStatus: 409, body: 'code=1&message=Order already refunded' };
-      }
-
-      if (status === 'PAID') {
-        if (order.status === 'paid' && order.iuctoInvoiceId) {
-          return { alreadyProcessed: true, order };
-        }
-        const paidAtIso = order.paidAt || new Date().toISOString();
-        const lockUpdates = {
-          status: 'paid',
-          paidAt: paidAtIso,
-          comgateTransId: transId || order.comgateTransId || null,
-          isSandbox: webhookIsSandbox || Boolean(order.isSandbox)
-        };
-        tx.set(orderRef, lockUpdates, { merge: true });
-        return { action: 'PAID', order: { ...order, ...lockUpdates } };
-      }
-
-      if (status === 'CANCELLED') {
-        if (order.status === 'pending') {
-          tx.set(orderRef, {
-            status: 'cancelled',
-            cancelledAt: new Date().toISOString()
-          }, { merge: true });
-        }
-        return { action: 'CANCELLED', order };
-      }
-
-      return { action: 'IGNORED', order };
+    const outcome = await applyComgatePaymentTransition({
+      orderId: refId,
+      transId: transId || null,
+      status,
+      price,
+      curr,
+      isSandbox: webhookIsSandbox
     });
 
-    if (txOutcome.errorStatus) {
-      return res.status(txOutcome.errorStatus).send(txOutcome.body);
+    if (outcome.errorStatus) {
+      return res.status(outcome.errorStatus).send(outcome.body);
     }
 
-    if (txOutcome.alreadyProcessed) {
-      return res.send('code=0&message=OK');
-    }
-
-    if (txOutcome.action === 'PAID') {
-      await finalizePaidOrderAndInvoice({
-        orderId: refId,
-        order: txOutcome.order,
-        comgateTransId: transId || txOutcome.order.comgateTransId || null,
-        initRecurringTransId: transId || null,
-        isSandbox: webhookIsSandbox || Boolean(txOutcome.order.isSandbox),
-        isRecurringRenewal: Boolean(txOutcome.order.isRecurringRenewal)
-      });
+    if (outcome.action === 'PAID') {
       console.log(`[Comgate Webhook] Objednávka ${refId} označena jako ZAPLACENÁ.`);
     }
 
@@ -2350,6 +2514,285 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
   } catch (err) {
     console.error('[Comgate Webhook Error]:', err);
     return res.status(500).send('code=1&message=Internal error');
+  }
+});
+
+async function fetchComgatePaymentStatus(transId) {
+  const statusRes = await fetch(
+    `https://payments.comgate.cz/v2.0/payment/transId/${encodeURIComponent(transId)}.json`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: getComgateAuthHeader()
+      }
+    }
+  );
+  const statusJson = await statusRes.json().catch(() => null);
+  return { ok: statusRes.ok, statusJson };
+}
+
+async function cancelComgateRemotePayment(transId) {
+  try {
+    const res = await fetch(
+      `https://payments.comgate.cz/v2.0/payment/transId/${encodeURIComponent(transId)}.json`,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: getComgateAuthHeader()
+        }
+      }
+    );
+    const json = await res.json().catch(() => null);
+    return { ok: res.ok || res.status === 204, json };
+  } catch (err) {
+    console.warn('[Comgate Cancel Remote Warning]:', err?.message || err);
+    return { ok: false, json: null };
+  }
+}
+
+/**
+ * Zkontroluje čekající (pending) objednávku oproti živému stavu na Comgate API v2.0
+ * a zároveň vyhodnotí 30minutovou platební lhůtu (PENDING_ORDER_TIMEOUT_MS).
+ * Pokud je objednávka na bráně CANCELLED nebo po 30minutové lhůtě, automaticky ji přepne na 'cancelled'.
+ * Pokud je na bráně PAID, automaticky ji dokončí a aktivuje Premium.
+ */
+async function reconcilePendingOrderWithComgate(order, nowMs = Date.now()) {
+  if (!order || order.status !== 'pending') {
+    return order;
+  }
+
+  const orderId = order.id || order.orderId;
+  if (!orderId) return order;
+
+  const createdAtMs = parseIsoMillis(order.createdAt) || 0;
+  const isExpiredByTime = createdAtMs > 0 && nowMs - createdAtMs > PENDING_ORDER_TIMEOUT_MS;
+  const nowIso = new Date(nowMs).toISOString();
+
+  if (hasComgateCredentials() && isRealComgateTransId(order.comgateTransId)) {
+    try {
+      const statusCheck = await fetchComgatePaymentStatus(order.comgateTransId);
+      const statusJson = statusCheck.statusJson;
+      if (statusCheck.ok && statusJson && statusJson.code === 0) {
+        const remoteStatus = String(statusJson.status || '').toUpperCase();
+        const remoteTest =
+          statusJson.test === true ||
+          statusJson.test === 'true' ||
+          statusJson.test === '1' ||
+          statusJson.test === 1;
+
+        if (remoteStatus === 'PAID' && (COMGATE_TEST_MODE || !remoteTest)) {
+          await applyComgatePaymentTransition({
+            orderId,
+            transId: statusJson.transId || order.comgateTransId,
+            status: 'PAID',
+            price: statusJson.price,
+            curr: statusJson.curr,
+            isSandbox: remoteTest || Boolean(order.isSandbox || COMGATE_TEST_MODE)
+          });
+          const refreshed = await getOrderDoc(orderId);
+          return refreshed ? serializeTimestampFields(refreshed) : { ...order, status: 'paid', paidAt: nowIso };
+        }
+
+        if (remoteStatus === 'CANCELLED' || (remoteStatus === 'PENDING' && isExpiredByTime)) {
+          if (remoteStatus === 'PENDING' && isExpiredByTime) {
+            await cancelComgateRemotePayment(order.comgateTransId);
+          }
+          await applyComgatePaymentTransition({
+            orderId,
+            transId: statusJson.transId || order.comgateTransId,
+            status: 'CANCELLED',
+            isSandbox: remoteTest || Boolean(order.isSandbox || COMGATE_TEST_MODE)
+          });
+          return { ...order, status: 'cancelled', cancelledAt: nowIso };
+        }
+      }
+    } catch (err) {
+      console.warn(`[Comgate Reconcile Pending Order Warning] ${orderId}:`, err?.message || err);
+    }
+  } else if (isExpiredByTime) {
+    await applyComgatePaymentTransition({
+      orderId,
+      transId: order.comgateTransId || null,
+      status: 'CANCELLED',
+      isSandbox: Boolean(order.isSandbox)
+    });
+    return { ...order, status: 'cancelled', cancelledAt: nowIso };
+  }
+
+  return order;
+}
+
+// 2b. Ověření stavu platby přímo přes Comgate REST API v2.0 (fallback po návratu z brány)
+app.post('/api/orders/:orderId/verify-payment', requireAuth, async (req, res) => {
+  try {
+    const cleanOrderId = String(req.params.orderId || '').trim();
+    const markCancelledIfPending = req.body?.markCancelledIfPending === true;
+    if (!cleanOrderId) {
+      return res.status(400).json({ error: 'Chybí ID objednávky.' });
+    }
+
+    const order = await getOrderDoc(cleanOrderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nebyla nalezena.' });
+    }
+
+    if (order.userId !== req.user.uid && req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Nemáte oprávnění ověřit cizí objednávku.' });
+    }
+
+    if (order.status === 'paid') {
+      return res.json({ success: true, status: 'paid', alreadyPaid: true });
+    }
+    if (order.status === 'refunded') {
+      return res.json({ success: false, status: 'refunded' });
+    }
+    if (order.status === 'cancelled') {
+      return res.json({ success: false, status: 'cancelled' });
+    }
+
+    if (!hasComgateCredentials() || !isRealComgateTransId(order.comgateTransId)) {
+      if (markCancelledIfPending && order.status === 'pending') {
+        await applyComgatePaymentTransition({
+          orderId: cleanOrderId,
+          status: 'CANCELLED',
+          isSandbox: Boolean(order.isSandbox)
+        });
+        return res.json({ success: false, status: 'cancelled' });
+      }
+      return res.json({ success: false, status: order.status || 'pending' });
+    }
+
+    let statusJson = null;
+    try {
+      const statusCheck = await fetchComgatePaymentStatus(order.comgateTransId);
+      statusJson = statusCheck.statusJson;
+      if (!statusCheck.ok || !statusJson || statusJson.code !== 0) {
+        console.warn('[Comgate Status Check Warning]:', statusJson);
+        return res.status(502).json({ error: 'Nepodařilo se ověřit stav platby na platební bráně.' });
+      }
+    } catch (netErr) {
+      console.error('[Comgate Status Network Error]:', netErr);
+      return res.status(502).json({ error: 'Nepodařilo se spojit s platební bránou Comgate.' });
+    }
+
+    if (statusJson.refId && String(statusJson.refId) !== cleanOrderId) {
+      return res.status(409).json({ error: 'Neshoda identifikátoru objednávky na platební bráně.' });
+    }
+
+    const remoteTest = statusJson.test === true || statusJson.test === 'true' || statusJson.test === '1' || statusJson.test === 1;
+    if (!COMGATE_TEST_MODE && remoteTest) {
+      return res.status(403).json({ error: 'Testovací transakce není v produkčním režimu povolena.' });
+    }
+
+    const remoteStatus = String(statusJson.status || '').toUpperCase();
+    const createdAtMs = parseIsoMillis(order.createdAt) || 0;
+    const isExpiredByTime = createdAtMs > 0 && Date.now() - createdAtMs > PENDING_ORDER_TIMEOUT_MS;
+    const shouldCancelLocally =
+      remoteStatus === 'CANCELLED' ||
+      ((markCancelledIfPending || isExpiredByTime) && remoteStatus === 'PENDING');
+
+    if (remoteStatus === 'PAID' || shouldCancelLocally) {
+      if ((markCancelledIfPending || isExpiredByTime) && remoteStatus === 'PENDING') {
+        await cancelComgateRemotePayment(order.comgateTransId);
+      }
+
+      const outcome = await applyComgatePaymentTransition({
+        orderId: cleanOrderId,
+        transId: statusJson.transId || order.comgateTransId,
+        status: remoteStatus === 'PAID' ? 'PAID' : 'CANCELLED',
+        price: statusJson.price,
+        curr: statusJson.curr,
+        isSandbox: remoteTest || Boolean(COMGATE_TEST_MODE)
+      });
+
+      if (outcome.errorStatus) {
+        return res.status(outcome.errorStatus).json({ error: outcome.errorMessage || 'Ověření platby selhalo.' });
+      }
+
+      if (remoteStatus === 'PAID') {
+        console.log(`[Comgate Verify] Objednávka ${cleanOrderId} ověřena přes API jako ZAPLACENÁ.`);
+        return res.json({ success: true, status: 'paid', verifiedViaComgate: true });
+      }
+
+      console.log(`[Comgate Verify] Objednávka ${cleanOrderId} označena jako ZRUŠENÁ.`);
+      return res.json({ success: false, status: 'cancelled' });
+    }
+
+    return res.json({
+      success: false,
+      status: remoteStatus ? remoteStatus.toLowerCase() : 'pending'
+    });
+  } catch (err) {
+    console.error('[Comgate Verify Payment Error]:', err);
+    return res.status(500).json({ error: 'Nepodařilo se ověřit stav platby.' });
+  }
+});
+
+// 2c. Zrušení čekající objednávky uživatelem nebo učitelem (vč. pokusu o zrušení na Comgate)
+app.post('/api/orders/:orderId/cancel', requireAuth, async (req, res) => {
+  try {
+    const cleanOrderId = String(req.params.orderId || '').trim();
+    if (!cleanOrderId) {
+      return res.status(400).json({ error: 'Chybí ID objednávky.' });
+    }
+
+    const order = await getOrderDoc(cleanOrderId);
+    if (!order) {
+      return res.status(404).json({ error: 'Objednávka nebyla nalezena.' });
+    }
+
+    if (order.userId !== req.user.uid && req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Nemáte oprávnění zrušit cizí objednávku.' });
+    }
+
+    if (order.status === 'paid') {
+      return res.status(409).json({ error: 'Uhrazenou objednávku nelze zrušit.' });
+    }
+    if (order.status === 'refunded') {
+      return res.status(409).json({ error: 'Refundovanou objednávku nelze zrušit.' });
+    }
+    if (order.status === 'cancelled') {
+      return res.json({ success: true, status: 'cancelled', alreadyCancelled: true });
+    }
+
+    if (hasComgateCredentials() && isRealComgateTransId(order.comgateTransId)) {
+      try {
+        const statusCheck = await fetchComgatePaymentStatus(order.comgateTransId);
+        const remoteStatus = String(statusCheck.statusJson?.status || '').toUpperCase();
+        if (statusCheck.ok && statusCheck.statusJson?.code === 0 && remoteStatus === 'PAID') {
+          await applyComgatePaymentTransition({
+            orderId: cleanOrderId,
+            transId: statusCheck.statusJson.transId || order.comgateTransId,
+            status: 'PAID',
+            price: statusCheck.statusJson.price,
+            curr: statusCheck.statusJson.curr,
+            isSandbox: Boolean(order.isSandbox || COMGATE_TEST_MODE)
+          });
+          return res.status(409).json({ error: 'Tato platba již byla na bráně zaplacena.' });
+        }
+        if (remoteStatus !== 'CANCELLED') {
+          await cancelComgateRemotePayment(order.comgateTransId);
+        }
+      } catch (err) {
+        console.warn('[Order Cancel Comgate Sync Warning]:', err?.message || err);
+      }
+    }
+
+    await applyComgatePaymentTransition({
+      orderId: cleanOrderId,
+      transId: order.comgateTransId || null,
+      status: 'CANCELLED',
+      isSandbox: Boolean(order.isSandbox)
+    });
+
+    return res.json({
+      success: true,
+      status: 'cancelled',
+      message: 'Objednávka byla zrušena.'
+    });
+  } catch (err) {
+    console.error('[Order Cancel Error]:', err);
+    return res.status(500).json({ error: 'Nepodařilo se zrušit objednávku.' });
   }
 });
 
@@ -2410,7 +2853,18 @@ app.get('/api/orders/all', requireAuth, requireTeacher, async (req, res) => {
     const rawLimit = Number(req.query.limit);
     const maxItems = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(500, Math.round(rawLimit)) : 200;
     const snap = await db.collection('orders').orderBy('createdAt', 'desc').limit(maxItems).get();
-    const orders = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
+    const rawOrders = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
+    const nowMs = Date.now();
+    let pendingChecked = 0;
+    const orders = await Promise.all(
+      rawOrders.map((o) => {
+        if (o.status === 'pending' && pendingChecked < 15) {
+          pendingChecked += 1;
+          return reconcilePendingOrderWithComgate(o, nowMs);
+        }
+        return Promise.resolve(o);
+      })
+    );
     return res.json({ success: true, orders });
   } catch (err) {
     console.error('Chyba při načítání objednávek:', err);
@@ -2423,7 +2877,11 @@ app.get('/api/orders/my', requireAuth, async (req, res) => {
   try {
     const userId = req.user.uid;
     const snap = await db.collection('orders').where('userId', '==', userId).limit(50).get();
-    const orders = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
+    const rawOrders = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
+    const nowMs = Date.now();
+    const orders = await Promise.all(
+      rawOrders.map((o) => (o.status === 'pending' ? reconcilePendingOrderWithComgate(o, nowMs) : Promise.resolve(o)))
+    );
     orders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
     return res.json({ success: true, orders });
   } catch (err) {
@@ -2470,14 +2928,20 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
           subscriptionCancelReason: safeReason,
           subscriptionPeriodEnd: periodEnd,
           subscriptionGraceUntil: FieldValue.delete(),
-          subscriptionExpiredAt: nowIso
+          subscriptionExpiredAt: nowIso,
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: nowIso
         }
       : {
           role: 'premium',
           subscriptionStatus: 'cancelled_at_period_end',
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason,
-          subscriptionPeriodEnd: periodEnd
+          subscriptionPeriodEnd: periodEnd,
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: nowIso
         };
 
     await userRef.set(updateData, { merge: true });
@@ -2485,6 +2949,19 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
       await syncCustomClaimsIfNeeded(userId, fallbackRole, enrolledCourseIds);
     }
     userRoleCache.delete(userId);
+
+    const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
+    // E-mail s potvrzením o zrušení se odesílá pouze při standardním zrušení členství (vypnutí opakovaných plateb ke konci období),
+    // při předčasném/okamžitém ukončení se duplicitní e-mail již neodesílá.
+    if (notifyEmail && !immediate) {
+      sendSubscriptionCancelledEmail({
+        to: notifyEmail,
+        name: userDoc.billingDetails?.clientName || userDoc.displayName || userDoc.name,
+        periodEnd
+      }).catch((emailErr) => {
+        console.warn('[Subscription Cancel Email Error]:', emailErr?.message || emailErr);
+      });
+    }
 
     const formattedEndDate = new Date(periodEnd).toLocaleDateString('cs-CZ', {
       day: 'numeric',
@@ -2538,6 +3015,8 @@ app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
       subscriptionStatus: 'active',
       subscriptionCancelledAt: null,
       subscriptionCancelReason: null,
+      recurringCancelled: false,
+      recurringCancelledAt: null,
       subscriptionPeriodEnd: periodEnd
     };
 
@@ -2613,61 +3092,133 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
     throw err;
   }
 
-  if (userDoc.subscriptionStatus === 'cancelled_at_period_end' || userDoc.subscriptionStatus === 'inactive') {
+  if (
+    userDoc.subscriptionStatus === 'cancelled_at_period_end' ||
+    userDoc.subscriptionStatus === 'inactive' ||
+    userDoc.subscriptionStatus === 'expired' ||
+    userDoc.recurringCancelled === true ||
+    Boolean(userDoc.subscriptionCancelledAt)
+  ) {
     const err = new Error('Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.');
     err.statusCode = 400;
     throw err;
   }
 
-  const newOrderId = `ORD_REC_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-  const variableSymbol = String(Date.now()).slice(-9);
   const plan = PREMIUM_PLANS['premium-monthly'];
   const amount = plan.amount;
-  const isLiveComgate = Boolean(COMGATE_MERCHANT_ID && COMGATE_SECRET && !COMGATE_TEST_MODE);
+  const hasCreds = hasComgateCredentials();
+  const isTest = Boolean(COMGATE_TEST_MODE);
+  const useComgateRecurringApi = hasCreds && isRealComgateTransId(userDoc.initRecurringTransId);
+
+  // Pokud již existuje čekající (PENDING) opakovaná objednávka z předchozího pokusu, nejprve ověříme její stav u Comgate,
+  // abychom nikdy nestrhli platbu dvakrát ani nevystavili fakturu před potvrzením PAID.
+  if (userDoc.lastRecurringOrderId) {
+    const prevOrder = await getOrderDoc(userDoc.lastRecurringOrderId);
+    if (prevOrder && prevOrder.isRecurringRenewal && prevOrder.status === 'pending') {
+      if (hasCreds && isRealComgateTransId(prevOrder.comgateTransId)) {
+        try {
+          const prevCheck = await fetchComgatePaymentStatus(prevOrder.comgateTransId);
+          const prevRemoteStatus = String(prevCheck.statusJson?.status || '').toUpperCase();
+          if (prevCheck.ok && prevCheck.statusJson?.code === 0) {
+            if (prevRemoteStatus === 'PAID') {
+              const outcome = await applyComgatePaymentTransition({
+                orderId: prevOrder.id,
+                transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
+                status: 'PAID',
+                price: prevCheck.statusJson.price,
+                curr: prevCheck.statusJson.curr,
+                isSandbox: Boolean(prevOrder.isSandbox || isTest)
+              });
+              return {
+                orderId: prevOrder.id,
+                status: 'paid',
+                subscriptionPeriodEnd: outcome.finalized?.periodEnd || userDoc.subscriptionPeriodEnd || null,
+                iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || prevOrder.iuctoInvoiceNumber || null
+              };
+            }
+            if (prevRemoteStatus === 'PENDING' || prevRemoteStatus === 'AUTHORIZED') {
+              return {
+                orderId: prevOrder.id,
+                status: 'pending',
+                subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
+                iuctoInvoiceNumber: null
+              };
+            }
+            if (prevRemoteStatus === 'CANCELLED') {
+              await applyComgatePaymentTransition({
+                orderId: prevOrder.id,
+                transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
+                status: 'CANCELLED',
+                isSandbox: Boolean(prevOrder.isSandbox || isTest)
+              });
+            }
+          }
+        } catch (prevErr) {
+          console.warn('[Comgate Pending Recurring Status Check Warning]:', prevErr?.message || prevErr);
+        }
+      }
+    }
+  }
+
+  const newOrderId = `ORD_REC_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+  const variableSymbol = String(Date.now()).slice(-9);
   let comgateTransId = null;
 
-  if (isLiveComgate) {
-    const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
-    const response = await fetch('https://payments.comgate.cz/v2.0/recurring', {
+  if (useComgateRecurringApi) {
+    // Dle Comgate API v2.0 dokumentace (/v2.0/recurring.json):
+    // - povinný parametr iniciační transakce je `initRecurringId` (vždy transId 1. platby s initRecurring=true)
+    // - `label` musí mít délku 1–16 znaků ('ProEdu Premium' = 14 znaků)
+    const response = await fetch('https://payments.comgate.cz/v2.0/recurring.json', {
       method: 'POST',
       headers: {
-        Authorization: authHeader,
+        Authorization: getComgateAuthHeader(),
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
         merchant: COMGATE_MERCHANT_ID,
-        initTransId: userDoc.initRecurringTransId,
+        initRecurringId: userDoc.initRecurringTransId,
         price: Math.round(amount * 100),
         curr: 'CZK',
-        label: 'ProEdu Premium (obnovení předplatného)',
+        label: 'ProEdu Premium',
         refId: newOrderId,
-        test: false
+        test: isTest
       })
     });
 
     const json = await response.json().catch(() => null);
-    if (response.ok && json && json.code === 0) {
+    if (response.ok && json && json.code === 0 && json.transId) {
       comgateTransId = json.transId;
     } else {
       console.warn('[Comgate Recurring Charge Failed]:', json);
+      const failureReason = json?.extraMessage || json?.message || 'Platba byla zamítnuta vydavatelem karty';
+      await updateUserDocServer(targetUserId, {
+        lastRecurringPaymentFailed: true,
+        lastRecurringFailureReason: String(failureReason).slice(0, 300),
+        lastRecurringFailedAt: new Date().toISOString()
+      }).catch(() => {});
       const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
       if (notifyEmail) {
         sendRecurringChargeFailedEmail({
           to: notifyEmail,
           name: userDoc.billingDetails?.clientName || userDoc.displayName || userDoc.name,
           amount,
-          reason: json?.message || 'Platba byla zamítnuta vydavatelem karty'
+          reason: failureReason
         }).catch(console.warn);
       }
       const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
       err.statusCode = 400;
       throw err;
     }
-  } else {
+  } else if (isSandboxSimulationAllowed()) {
     comgateTransId = `SANDBOX_REC_${Date.now()}`;
     console.log(`[Comgate Recurring Simulation] Testovací opakované stržení ${amount} Kč pro ${targetUserId}`);
+  } else {
+    const err = new Error('Opakované stržení nelze provést bez platné iniciační transakce Comgate.');
+    err.statusCode = 400;
+    throw err;
   }
 
+  const orderIsSandbox = isTest || !useComgateRecurringApi;
   const billing = userDoc.billingDetails || {};
   const recOrderData = {
     id: newOrderId,
@@ -2690,31 +3241,85 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
     planTitle: 'ProEducator Premium (opakované předplatné)',
     paymentMethod: 'comgate',
     status: 'pending',
-    isSandbox: !isLiveComgate,
+    isSandbox: orderIsSandbox,
     termsAccepted: true,
     newsletterConsent: false,
     variableSymbol,
     comgateTransId,
+    initRecurringTransId: userDoc.initRecurringTransId,
     isRecurringRenewal: true,
     createdAt: new Date().toISOString()
   };
 
   await saveOrderDoc(newOrderId, recOrderData);
+  await updateUserDocServer(targetUserId, { lastRecurringOrderId: newOrderId }).catch(() => {});
 
-  const { periodEnd, iuctoRes } = await finalizePaidOrderAndInvoice({
+  // U reálné Comgate brány code=0 z /v2.0/recurring.json znamená přijetí požadavku (transakce vzniká jako PENDING).
+  // Fakturu v iÚčtu vystavujeme a předplatné o 30 dní prodlužujeme VÝHRADNĚ až po potvrzení stavu PAID
+  // (buď při okamžitém ověření stavu, nebo asynchronně přes Comgate Push URL webhook /api/payments/comgate/notify).
+  if (useComgateRecurringApi) {
+    try {
+      const statusCheck = await fetchComgatePaymentStatus(comgateTransId);
+      const remoteStatus = String(statusCheck.statusJson?.status || '').toUpperCase();
+      if (statusCheck.ok && statusCheck.statusJson?.code === 0) {
+        if (remoteStatus === 'PAID') {
+          const outcome = await applyComgatePaymentTransition({
+            orderId: newOrderId,
+            transId: comgateTransId,
+            status: 'PAID',
+            price: statusCheck.statusJson.price,
+            curr: statusCheck.statusJson.curr,
+            isSandbox: orderIsSandbox
+          });
+          return {
+            orderId: newOrderId,
+            status: 'paid',
+            subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
+            iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
+          };
+        }
+        if (remoteStatus === 'CANCELLED') {
+          await applyComgatePaymentTransition({
+            orderId: newOrderId,
+            transId: comgateTransId,
+            status: 'CANCELLED',
+            isSandbox: orderIsSandbox
+          });
+          const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
+          err.statusCode = 400;
+          throw err;
+        }
+      }
+    } catch (verifyErr) {
+      if (verifyErr?.statusCode === 400) {
+        throw verifyErr;
+      }
+      console.warn('[Comgate Recurring Immediate Status Verify Warning]:', verifyErr?.message || verifyErr);
+    }
+
+    return {
+      orderId: newOrderId,
+      status: 'pending',
+      subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
+      iuctoInvoiceNumber: null
+    };
+  }
+
+  // Lokální sandbox simulace (bez živého Comgate) rovnou přechází do PAID
+  const outcome = await applyComgatePaymentTransition({
     orderId: newOrderId,
-    order: recOrderData,
-    comgateTransId,
-    initRecurringTransId: userDoc.initRecurringTransId,
-    isSandbox: !isLiveComgate,
-    isRecurringRenewal: true,
-    extendFromExisting: true
+    transId: comgateTransId,
+    status: 'PAID',
+    price: Math.round(amount * 100),
+    curr: plan.currency,
+    isSandbox: true
   });
 
   return {
     orderId: newOrderId,
-    subscriptionPeriodEnd: periodEnd,
-    iuctoInvoiceNumber: iuctoRes?.invoiceNumber || null
+    status: 'paid',
+    subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
+    iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
   };
 }
 
@@ -2725,7 +3330,16 @@ async function processRecurringChargeForUser(targetUserId, existingUserDoc = nul
 async function runDueRecurringSubscriptions() {
   const todayPrague = formatPragueDate(new Date());
   const nowMs = Date.now();
-  const summary = { checked: 0, renewed: 0, expired: 0, graced: 0, failed: 0, skippedLocked: false };
+  const summary = {
+    checked: 0,
+    renewed: 0,
+    expired: 0,
+    graced: 0,
+    failed: 0,
+    pendingReconciled: 0,
+    iuctoOutboxSynced: 0,
+    skippedLocked: false
+  };
 
   const lockRef = db.collection('cronLocks').doc('subscriptionRenewal');
   const lockOwner = crypto.randomUUID();
@@ -2751,6 +3365,59 @@ async function runDueRecurringSubscriptions() {
       return summary;
     }
 
+    // 1. Kontrola všech visících PENDING objednávek v kolekci orders oproti Comgate API (/v2.0/payment/transId/{transId}.json)
+    // (pokrývá případ chybějícího webhooku nebo opuštěné brány po 30minutové lhůtě)
+    try {
+      const pendingOrdersSnap = await db.collection('orders').where('status', '==', 'pending').limit(50).get();
+      for (const pDoc of pendingOrdersSnap.docs) {
+        const pendingOrd = { id: pDoc.id, ...serializeTimestampFields(pDoc.data()) };
+        const reconciled = await reconcilePendingOrderWithComgate(pendingOrd, nowMs);
+        if (reconciled && reconciled.status !== 'pending') {
+          summary.pendingReconciled += 1;
+        }
+      }
+    } catch (pendingErr) {
+      console.warn('[Subscription Cron Pending Orders Reconcile Warning]:', pendingErr?.message || pendingErr);
+    }
+
+    // 2. Outbox Pattern pro iÚčto: automatické dovystavení faktury u PAID objednávek, kde iÚčto mělo výpadek
+    try {
+      const paidOrdersSnap = await db.collection('orders').where('status', '==', 'paid').limit(100).get();
+      const unsyncedPaid = paidOrdersSnap.docs
+        .map((d) => ({ id: d.id, ...serializeTimestampFields(d.data()) }))
+        .filter(
+          (o) =>
+            !o.iuctoInvoiceId &&
+            o.iuctoSyncStatus !== 'synced' &&
+            o.iuctoSyncStatus !== 'skipped_sandbox' &&
+            o.iuctoSyncStatus !== 'refunded'
+        )
+        .slice(0, 15);
+
+      for (const ord of unsyncedPaid) {
+        const iuctoRes = await syncIuctoForPaidOrder({ orderId: ord.id, order: ord });
+        if (!iuctoRes.failed && !iuctoRes.skipped && iuctoRes.invoiceNumber) {
+          summary.iuctoOutboxSynced += 1;
+          const targetEmail = ord.invoiceEmail || ord.userEmail;
+          if (targetEmail && Array.isArray(iuctoRes.attachments) && iuctoRes.attachments.length > 0) {
+            const uDoc = ord.userId ? await getUserDocServer(ord.userId) : null;
+            sendPaymentConfirmedEmail({
+              to: targetEmail,
+              name: ord.clientName || uDoc?.displayName || uDoc?.name || 'zákazníku',
+              orderId: ord.id,
+              amount: ord.amount || 99,
+              periodEnd: uDoc?.subscriptionPeriodEnd || undefined,
+              invoiceNumber: iuctoRes.invoiceNumber,
+              attachments: iuctoRes.attachments
+            }).catch((err) => console.warn('[iÚčto Outbox Email Warning]:', err?.message || err));
+          }
+        }
+      }
+    } catch (outboxErr) {
+      console.warn('[Subscription Cron iÚčto Outbox Warning]:', outboxErr?.message || outboxErr);
+    }
+
+    // 3. Kontrola expirací, 3denní Grace Period a automatické stržení opakovaných plateb (již v den expirace <= 24 h před koncem)
     const snap = await db.collection('users').where('role', '==', 'premium').get();
     const premiumUsers = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
 
@@ -2771,7 +3438,8 @@ async function runDueRecurringSubscriptions() {
       }
 
       const endMs = computed.periodEndMs;
-      if (!endMs || nowMs <= endMs) {
+      // Strháváme v den expirace (když do vypršení zbývá <= 24 hodin) i během 3denní Grace Period po vypršení
+      if (!endMs || nowMs < endMs - RECURRING_CHARGE_LEAD_MS) {
         continue;
       }
 
@@ -2780,13 +3448,20 @@ async function runDueRecurringSubscriptions() {
         summary.graced += 1;
       }
 
-      if (userDoc.subscriptionStatus === 'active' && userDoc.initRecurringTransId) {
+      if (
+        userDoc.subscriptionStatus === 'active' &&
+        userDoc.initRecurringTransId &&
+        !userDoc.recurringCancelled &&
+        !userDoc.subscriptionCancelledAt
+      ) {
         const userRef = db.collection('users').doc(uid);
         const claimed = await db.runTransaction(async (tx) => {
           const freshSnap = await tx.get(userRef);
           if (!freshSnap.exists) return null;
           const fresh = freshSnap.data() || {};
           if (fresh.role !== 'premium' || fresh.subscriptionStatus !== 'active') return null;
+          if (fresh.recurringCancelled === true || fresh.subscriptionCancelledAt) return null;
+          if (!fresh.initRecurringTransId) return null;
           if (fresh.lastRecurringAttemptDate === todayPrague) return null;
           tx.update(userRef, { lastRecurringAttemptDate: todayPrague });
           return { uid, ...fresh };
@@ -2851,7 +3526,12 @@ app.put('/api/subscription/billing', requireAuth, async (req, res) => {
     const { billingDetails, preferredPaymentMethod } = req.body || {};
 
     const updateData = {};
-    if (preferredPaymentMethod === 'comgate') {
+    if (preferredPaymentMethod !== undefined && preferredPaymentMethod !== null) {
+      if (preferredPaymentMethod !== 'comgate') {
+        return res.status(400).json({
+          error: 'Pro předplatné je podporována pouze platební brána Comgate (platba kartou online).'
+        });
+      }
       updateData.preferredPaymentMethod = 'comgate';
     }
 
@@ -2907,6 +3587,9 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
     }
     if (order.status === 'refunded') {
       return res.status(409).json({ error: 'Refundovanou objednávku nelze potvrdit.' });
+    }
+    if (order.status === 'cancelled') {
+      return res.status(409).json({ error: 'Zrušenou objednávku nelze potvrdit.' });
     }
 
     const { iuctoRes } = await finalizePaidOrderAndInvoice({
@@ -3027,18 +3710,17 @@ app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req,
 
     const safeReason = String(reason || `Storno a vrácení platby objednávky #${orderId}`).trim().slice(0, 500);
 
-    // 1. Pokud jde o živou Comgate transakci, provedeme nejdříve refundaci u brány Comgate
-    if (!order.isSandbox && order.comgateTransId && COMGATE_MERCHANT_ID && COMGATE_SECRET) {
-      const authHeader = 'Basic ' + Buffer.from(`${COMGATE_MERCHANT_ID}:${COMGATE_SECRET}`).toString('base64');
+    // 1. Pokud jde o reálnou Comgate transakci (živou nebo Comgate test=true), provedeme nejdříve refundaci u brány Comgate
+    if (isRealComgateTransId(order.comgateTransId) && hasComgateCredentials()) {
       const refundRes = await fetch('https://payments.comgate.cz/v2.0/refund.json', {
         method: 'POST',
         headers: {
-          Authorization: authHeader,
+          Authorization: getComgateAuthHeader(),
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           merchant: COMGATE_MERCHANT_ID,
-          test: Boolean(COMGATE_TEST_MODE),
+          test: Boolean(order.isSandbox || COMGATE_TEST_MODE),
           transId: order.comgateTransId,
           price: Math.round(Number(order.amount) * 100),
           curr: String(order.currency || 'CZK').toUpperCase(),
@@ -3240,8 +3922,29 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
       updatedAt: new Date().toISOString()
     };
 
-    if (effectiveRole === 'premium' || effectiveRole === 'course') {
+    if (effectiveRole === 'premium') {
       updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
+      updateData.subscriptionStatus = 'active';
+      updateData.subscriptionCancelledAt = null;
+      updateData.subscriptionCancelReason = null;
+      updateData.recurringCancelled = false;
+      updateData.recurringCancelledAt = null;
+      updateData.subscriptionExpiredAt = FieldValue.delete();
+      updateData.subscriptionGraceUntil = FieldValue.delete();
+
+      const existingEndMs = parseIsoMillis(existingSnap.data()?.subscriptionPeriodEnd);
+      if (!existingEndMs || existingEndMs < Date.now()) {
+        updateData.subscriptionPeriodEnd = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+      }
+    } else if (effectiveRole === 'course') {
+      updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
+    } else if (effectiveRole === 'free') {
+      updateData.subscriptionStatus = 'inactive';
+      updateData.subscriptionExpiredAt = new Date().toISOString();
+      updateData.subscriptionGraceUntil = FieldValue.delete();
+      updateData.initRecurringTransId = FieldValue.delete();
+      updateData.recurringCancelled = true;
+      updateData.recurringCancelledAt = new Date().toISOString();
     }
 
     await userRef.set(updateData, { merge: true });
@@ -3652,7 +4355,7 @@ async function deleteMaterialWithChunks(materialId) {
 }
 
 async function processMaterialInBackground(materialId, options) {
-  const { cleanFileBase64, fileByteLength, thumbBase64, thumbContentType, generation } = options;
+  const { cleanFileBase64, fileByteLength, thumbBase64, thumbContentType, generation, detectedPageCount } = options;
   const chunkPrefix = `${generation}_chunk_`;
   console.log(`[MaterialProcessor] Zahajuji asynchronní zpracování materiálu ${materialId} (${generation})...`);
   try {
@@ -3680,12 +4383,17 @@ async function processMaterialInBackground(materialId, options) {
       }
     }
 
-    await updateMaterialDoc(materialId, {
+    const readyUpdates = {
       status: 'ready',
       fileSize: fileByteLength || 0,
       activeChunkPrefix: cleanFileBase64 ? chunkPrefix : null,
       errorMessage: null,
-    });
+    };
+    if (Number.isFinite(detectedPageCount) && detectedPageCount > 0) {
+      readyUpdates.pageCount = detectedPageCount;
+    }
+
+    await updateMaterialDoc(materialId, readyUpdates);
 
     // Starší chunky smažeme až po úspěšném přepnutí activeChunkPrefix na novou generaci
     await deleteMaterialChunksOnly(materialId, {
@@ -3706,14 +4414,355 @@ async function processMaterialInBackground(materialId, options) {
   }
 }
 
+const MATERIAL_FILE_RATE_WINDOW_MS = 10 * 60 * 1000;
+const MATERIAL_FILE_RATE_MAX = 45;
+const materialFileViewRateMap = new Map(); // key -> { timestamps: number[] }
+
+function checkMaterialFileRateLimit(req) {
+  if (req.user?.role === 'teacher') return { allowed: true };
+  const key = req.user?.uid ? `uid:${req.user.uid}` : `ip:${getClientIp(req)}`;
+  const now = Date.now();
+  const cutoff = now - MATERIAL_FILE_RATE_WINDOW_MS;
+
+  if (materialFileViewRateMap.size > 2000) {
+    for (const [k, entry] of materialFileViewRateMap.entries()) {
+      const fresh = entry.timestamps.filter((t) => t > cutoff);
+      if (fresh.length === 0) materialFileViewRateMap.delete(k);
+      else entry.timestamps = fresh;
+    }
+  }
+
+  const entry = materialFileViewRateMap.get(key) || { timestamps: [] };
+  const recent = entry.timestamps.filter((t) => t > cutoff);
+  if (recent.length >= MATERIAL_FILE_RATE_MAX) {
+    const oldest = recent[0];
+    const retryAfterSec = Math.max(1, Math.ceil((oldest + MATERIAL_FILE_RATE_WINDOW_MS - now) / 1000));
+    entry.timestamps = recent;
+    materialFileViewRateMap.set(key, entry);
+    return { allowed: false, retryAfterSec };
+  }
+  recent.push(now);
+  entry.timestamps = recent;
+  materialFileViewRateMap.set(key, entry);
+  return { allowed: true };
+}
+
+function isUserPaidOrTeacher(user) {
+  if (!user) return false;
+  if (user.role === 'teacher' || user.role === 'premium') return true;
+  return (
+    user.role === 'course' &&
+    Array.isArray(user.enrolledCourseIds) &&
+    user.enrolledCourseIds.length > 0
+  );
+}
+
+async function getCourseExemptMaterialIds(enrolledCourseIds) {
+  if (!Array.isArray(enrolledCourseIds) || enrolledCourseIds.length === 0) {
+    return new Set();
+  }
+  const cleanIds = Array.from(
+    new Set(enrolledCourseIds.filter((id) => typeof id === 'string' && id.trim().length > 0))
+  );
+  const exemptSet = new Set();
+  for (let i = 0; i < cleanIds.length; i += 10) {
+    const batch = cleanIds.slice(i, i + 10);
+    const snap = await db.collection('courseItems').where('courseId', 'in', batch).get();
+    snap.docs.forEach((docSnap) => {
+      const data = docSnap.data() || {};
+      if (data.isHidden === true) return;
+      if (typeof data.materialId === 'string' && data.materialId.trim()) {
+        exemptSet.add(data.materialId.trim());
+      }
+      for (const candidateUrl of [data.fileUrl, data.url]) {
+        if (typeof candidateUrl === 'string') {
+          const match = candidateUrl.match(/\/api\/materials\/([a-zA-Z0-9_-]+)/);
+          if (match && match[1]) {
+            exemptSet.add(match[1]);
+          }
+        }
+      }
+    });
+  }
+  return exemptSet;
+}
+
+async function getMaterialQuotaSummaryForUser(user) {
+  if (!user?.uid) {
+    return {
+      limit: 0,
+      used: 0,
+      remaining: 0,
+      unlockedMaterialIds: [],
+      courseExemptMaterialIds: [],
+      periodKey: 'none',
+      periodEndsAt: null,
+      unlimited: false,
+    };
+  }
+  if (user.role === 'teacher') {
+    return {
+      limit: -1,
+      used: 0,
+      remaining: -1,
+      unlockedMaterialIds: [],
+      courseExemptMaterialIds: [],
+      periodKey: 'unlimited',
+      periodEndsAt: null,
+      unlimited: true,
+    };
+  }
+  const isCourse =
+    user.role === 'course' && Array.isArray(user.enrolledCourseIds) && user.enrolledCourseIds.length > 0;
+  const isPaid = user.role === 'premium' || isCourse;
+  if (!isPaid) {
+    return {
+      limit: 0,
+      used: 0,
+      remaining: 0,
+      unlockedMaterialIds: [],
+      courseExemptMaterialIds: [],
+      periodKey: 'none',
+      periodEndsAt: null,
+      unlimited: false,
+    };
+  }
+
+  const userSnap = await db.collection('users').doc(user.uid).get();
+  const userDoc = userSnap.exists ? userSnap.data() || {} : {};
+  const { periodKey, periodEndsAt } = computeMaterialQuotaPeriod(userDoc);
+
+  const [quotaSnap, exemptSet] = await Promise.all([
+    db.collection('users').doc(user.uid).collection('materialQuotas').doc(periodKey).get(),
+    isCourse ? getCourseExemptMaterialIds(user.enrolledCourseIds) : Promise.resolve(new Set()),
+  ]);
+
+  const unlockedMaterialIds = Array.isArray(quotaSnap.data()?.unlockedMaterialIds)
+    ? quotaSnap.data().unlockedMaterialIds.filter((id) => typeof id === 'string')
+    : [];
+
+  return {
+    limit: MATERIAL_EXPORT_MONTHLY_LIMIT,
+    used: unlockedMaterialIds.length,
+    remaining: Math.max(0, MATERIAL_EXPORT_MONTHLY_LIMIT - unlockedMaterialIds.length),
+    unlockedMaterialIds,
+    courseExemptMaterialIds: Array.from(exemptSet),
+    periodKey,
+    periodEndsAt,
+    unlimited: false,
+  };
+}
+
+async function authorizeAndConsumeMaterialExport(user, materialId) {
+  if (!isValidMaterialId(materialId)) {
+    throw createMaterialHttpError(400, 'Neplatné ID materiálu.');
+  }
+  const mat = await getMaterialDoc(materialId);
+  if (!mat) {
+    throw createMaterialHttpError(404, 'Materiál nenalezen.');
+  }
+  if (user?.role !== 'teacher') {
+    if (mat.hiddenFromLibrary === true || (mat.status && mat.status !== 'ready')) {
+      throw createMaterialHttpError(404, 'Materiál nenalezen.');
+    }
+  }
+
+  if (user?.role === 'teacher') {
+    const quota = await getMaterialQuotaSummaryForUser(user);
+    return {
+      allowed: true,
+      alreadyUnlocked: true,
+      courseExempt: false,
+      watermarkText: null,
+      quota,
+    };
+  }
+
+  if (!isUserPaidOrTeacher(user)) {
+    throw createMaterialHttpError(
+      403,
+      'Stažení a tisk materiálu vyžaduje předplatné ProEducator Premium nebo aktivní kurz.'
+    );
+  }
+
+  const watermarkText = buildWatermarkText(user);
+  const isCourse =
+    user.role === 'course' && Array.isArray(user.enrolledCourseIds) && user.enrolledCourseIds.length > 0;
+  const courseExemptSet = isCourse
+    ? await getCourseExemptMaterialIds(user.enrolledCourseIds)
+    : new Set();
+
+  if (courseExemptSet.has(materialId)) {
+    const quota = await getMaterialQuotaSummaryForUser(user);
+    return {
+      allowed: true,
+      alreadyUnlocked: true,
+      courseExempt: true,
+      watermarkText,
+      quota,
+    };
+  }
+
+  const userRef = db.collection('users').doc(user.uid);
+  const txResult = await db.runTransaction(async (tx) => {
+    const userSnap = await tx.get(userRef);
+    const userDoc = userSnap.exists ? userSnap.data() || {} : {};
+    const { periodKey, periodEndsAt } = computeMaterialQuotaPeriod(userDoc);
+    const quotaRef = userRef.collection('materialQuotas').doc(periodKey);
+    const quotaSnap = await tx.get(quotaRef);
+    const existingData = quotaSnap.exists ? quotaSnap.data() || {} : {};
+    const existingIds = Array.isArray(existingData.unlockedMaterialIds)
+      ? existingData.unlockedMaterialIds.filter((id) => typeof id === 'string')
+      : [];
+
+    if (existingIds.includes(materialId)) {
+      return {
+        exceeded: false,
+        alreadyUnlocked: true,
+        periodKey,
+        periodEndsAt,
+        unlockedMaterialIds: existingIds,
+      };
+    }
+
+    if (existingIds.length >= MATERIAL_EXPORT_MONTHLY_LIMIT) {
+      return {
+        exceeded: true,
+        alreadyUnlocked: false,
+        periodKey,
+        periodEndsAt,
+        unlockedMaterialIds: existingIds,
+      };
+    }
+
+    const nextIds = [...existingIds, materialId];
+    tx.set(
+      quotaRef,
+      {
+        uid: user.uid,
+        periodKey,
+        periodEndsAt,
+        limit: MATERIAL_EXPORT_MONTHLY_LIMIT,
+        unlockedMaterialIds: nextIds,
+        updatedAt: Timestamp.now(),
+        ...(quotaSnap.exists ? {} : { createdAt: Timestamp.now() }),
+      },
+      { merge: true }
+    );
+
+    return {
+      exceeded: false,
+      alreadyUnlocked: false,
+      periodKey,
+      periodEndsAt,
+      unlockedMaterialIds: nextIds,
+    };
+  });
+
+  const quota = {
+    limit: MATERIAL_EXPORT_MONTHLY_LIMIT,
+    used: txResult.unlockedMaterialIds.length,
+    remaining: Math.max(0, MATERIAL_EXPORT_MONTHLY_LIMIT - txResult.unlockedMaterialIds.length),
+    unlockedMaterialIds: txResult.unlockedMaterialIds,
+    courseExemptMaterialIds: Array.from(courseExemptSet),
+    periodKey: txResult.periodKey,
+    periodEndsAt: txResult.periodEndsAt,
+    unlimited: false,
+  };
+
+  if (txResult.exceeded) {
+    const err = createMaterialHttpError(
+      429,
+      `Vyčerpali jste měsíční limit ${MATERIAL_EXPORT_MONTHLY_LIMIT} stažení a tisků pro aktuální fakturační období.`
+    );
+    err.code = 'MATERIAL_QUOTA_EXCEEDED';
+    err.quota = quota;
+    throw err;
+  }
+
+  return {
+    allowed: true,
+    alreadyUnlocked: txResult.alreadyUnlocked,
+    courseExempt: false,
+    watermarkText,
+    quota,
+  };
+}
+
+function buildLinkedSubtopicLookup(catalogSubtopics, questionCountBySubtopic) {
+  const byPairedMaterialId = new Map();
+
+  for (const sub of catalogSubtopics) {
+    const pairedId = typeof sub.pairedMaterialId === 'string' ? sub.pairedMaterialId.trim() : '';
+    if (!pairedId || byPairedMaterialId.has(pairedId)) continue;
+
+    const cfgTotal =
+      Number(sub.practiceConfig?.totalCount) ||
+      ((Number(sub.practiceConfig?.easyCount) || 0) +
+        (Number(sub.practiceConfig?.mediumCount) || 0) +
+        (Number(sub.practiceConfig?.hardCount) || 0));
+    const questionCount = cfgTotal || Number(sub.questionCount) || questionCountBySubtopic.get(sub.id) || 0;
+    const subjectId = normalizePracticeSubjectId(sub.subjectId || sub.subject || 'Matematika');
+
+    byPairedMaterialId.set(pairedId, {
+      id: sub.id,
+      title: sub.title || '',
+      topicId: sub.topicId || '',
+      subjectId,
+      stepsCount: Array.isArray(sub.studySteps) ? sub.studySteps.length : 0,
+      questionCount,
+    });
+  }
+
+  return byPairedMaterialId;
+}
+
+function resolveLinkedSubtopicForMaterial(material, lookup) {
+  if (!material || !lookup) return null;
+  return lookup.get(material.id) || null;
+}
+
 // 7.0 Katalog studijních materiálů (teaser pro hosty/free/student, plný přístup pro premium/course/teacher)
 app.get('/api/materials', optionalAuth, async (req, res) => {
   try {
     const isTeacher = req.user?.role === 'teacher';
-    const hasPremiumAccess = Boolean(req.user && ['premium', 'course', 'teacher'].includes(req.user.role));
+    const hasPremiumAccess = isUserPaidOrTeacher(req.user);
     const includeHidden = isTeacher && (req.query.includeHidden === '1' || req.query.includeHidden === 'true');
 
-    const snap = await db.collection('learningSheets').get();
+    const [snap, catalog, quota] = await Promise.all([
+      db.collection('learningSheets').get(),
+      fetchPracticeCatalogUncached().catch(() => ({ rawSubtopics: [], visibleSubtopics: [] })),
+      getMaterialQuotaSummaryForUser(req.user),
+    ]);
+
+    const catalogSubtopics = isTeacher ? catalog.rawSubtopics || [] : catalog.visibleSubtopics || [];
+    const needsQuestionCount = catalogSubtopics.some((s) => {
+      if (typeof s.pairedMaterialId !== 'string' || !s.pairedMaterialId.trim()) return false;
+      const cfg =
+        Number(s.practiceConfig?.totalCount) ||
+        ((Number(s.practiceConfig?.easyCount) || 0) +
+          (Number(s.practiceConfig?.mediumCount) || 0) +
+          (Number(s.practiceConfig?.hardCount) || 0));
+      return !cfg && !s.questionCount;
+    });
+
+    const questionCountBySubtopic = new Map();
+    if (needsQuestionCount) {
+      try {
+        const qSnap = await db.collection('questions').select('subtopicId').get();
+        qSnap.docs.forEach((qd) => {
+          const sid = qd.data()?.subtopicId;
+          if (typeof sid === 'string' && sid) {
+            questionCountBySubtopic.set(sid, (questionCountBySubtopic.get(sid) || 0) + 1);
+          }
+        });
+      } catch (qErr) {
+        console.warn('[Materials Catalog] Nepodařilo se načíst počty otázek:', qErr?.message || qErr);
+      }
+    }
+
+    const linkedSubtopicLookup = buildLinkedSubtopicLookup(catalogSubtopics, questionCountBySubtopic);
+
     const docs = snap.docs
       .map((d) => serializeTimestampFields({ id: d.id, ...d.data() }))
       .filter((mat) => {
@@ -3726,40 +4775,154 @@ app.get('/api/materials', optionalAuth, async (req, res) => {
         return true;
       })
       .sort((a, b) => {
+        const aHasOrd = a.order !== null && a.order !== undefined && a.order !== '' && Number.isFinite(Number(a.order));
+        const bHasOrd = b.order !== null && b.order !== undefined && b.order !== '' && Number.isFinite(Number(b.order));
+        const aOrd = aHasOrd ? Number(a.order) : 9999;
+        const bOrd = bHasOrd ? Number(b.order) : 9999;
+        if (aOrd !== bOrd) return aOrd - bOrd;
         const aTime = parseIsoMillis(a.createdAt) ?? 0;
         const bTime = parseIsoMillis(b.createdAt) ?? 0;
         if (bTime !== aTime) return bTime - aTime;
         return String(a.title || '').localeCompare(String(b.title || ''), 'cs');
       });
 
-    if (!hasPremiumAccess) {
-      const teaserMaterials = docs.map((m) => ({
+    const materials = docs.map((m) => {
+      const canView = canUserViewMaterial(req.user, m);
+      const linkedSubtopic = resolveLinkedSubtopicForMaterial(m, linkedSubtopicLookup);
+      const detectedPages =
+        m.pageCount !== null && m.pageCount !== undefined && Number.isFinite(Number(m.pageCount)) && Number(m.pageCount) > 0
+          ? Number(m.pageCount)
+          : detectSvgPageCount(m.svgContent) || (m.fileUrl || m.pdfUrl || m.svgUrl ? 1 : 0);
+      const hasOrder = m.order !== null && m.order !== undefined && m.order !== '' && Number.isFinite(Number(m.order));
+
+      const baseMeta = {
         id: m.id,
         title: m.title || 'Studijní materiál',
         subject: m.subject || 'Matematika',
         topic: m.topic || 'Obecné',
+        topicId: m.topicId || null,
+        subtopicId: m.subtopicId || null,
+        materialType: normalizeMaterialType(m.materialType),
+        grade: normalizeMaterialGrade(m.grade) || '9',
+        hasExplicitGrade: Boolean(normalizeMaterialGrade(m.grade)),
+        order: hasOrder ? Number(m.order) : null,
+        pageCount: detectedPages,
+        isFreeSample: Boolean(m.isFreeSample),
+        isExamPrep: Boolean(m.isExamPrep),
         fileType: m.fileType || null,
         originalName: m.originalName || null,
         hasStudyMaterial: m.hasStudyMaterial !== false,
-        hiddenFromLibrary: false,
-        status: 'ready',
-        locked: true,
+        hiddenFromLibrary: Boolean(m.hiddenFromLibrary),
+        status: m.status || 'ready',
+        linkedSubtopic,
         createdAt: m.createdAt || null,
-      }));
-      return res.json({ materials: teaserMaterials, locked: true });
-    }
+      };
 
-    const fullMaterials = docs.map((m) => {
-      const sanitizedMat = { ...m, locked: false };
-      if (typeof sanitizedMat.svgContent === 'string' && sanitizedMat.svgContent.trim()) {
-        sanitizedMat.svgContent = sanitizeSvg(sanitizedMat.svgContent);
+      if (!canView) {
+        return {
+          ...baseMeta,
+          locked: true,
+          canDownload: false,
+          thumbnailUrl: null,
+          fileUrl: null,
+          pdfUrl: null,
+          svgUrl: null,
+          downloadUrl: null,
+          svgContent: null,
+          studyTheory: '',
+        };
       }
-      return sanitizedMat;
+
+      const hasFileUrl = Boolean(m.fileUrl || m.pdfUrl || m.svgUrl || m.svgContent || m.activeChunkPrefix);
+      const resolvedFileUrl = m.fileUrl || (hasFileUrl ? `/api/materials/${m.id}/file` : null);
+      const resolvedThumbUrl = m.thumbnailUrl || (hasFileUrl ? `/api/materials/${m.id}/thumbnail` : null);
+
+      if (!hasPremiumAccess) {
+        // Free / host prohlížející ukázku zdarma: online čtení povoleno, stažení PDF nikoli
+        return {
+          ...baseMeta,
+          locked: false,
+          canDownload: false,
+          thumbnailUrl: resolvedThumbUrl,
+          fileUrl: resolvedFileUrl,
+          pdfUrl: m.pdfUrl || null,
+          svgUrl: m.svgUrl || null,
+          downloadUrl: null,
+          svgContent: null,
+          studyTheory: m.studyTheory || '',
+        };
+      }
+
+      if (isTeacher) {
+        const sanitizedTeacherCopy = {
+          ...m,
+          ...baseMeta,
+          locked: false,
+          canDownload: true,
+        };
+        if (typeof sanitizedTeacherCopy.svgContent === 'string' && sanitizedTeacherCopy.svgContent.trim()) {
+          sanitizedTeacherCopy.svgContent = sanitizeSvg(sanitizedTeacherCopy.svgContent);
+        }
+        return sanitizedTeacherCopy;
+      }
+
+      // Platící student (premium / course): čte přes chráněné API (kvůli rate-limitu a vodoznaku)
+      const inlineOnlySvg =
+        !resolvedFileUrl && typeof m.svgContent === 'string' && m.svgContent.trim()
+          ? sanitizeSvg(m.svgContent)
+          : null;
+
+      return {
+        ...baseMeta,
+        locked: false,
+        canDownload: true,
+        thumbnailUrl: resolvedThumbUrl,
+        fileUrl: resolvedFileUrl,
+        pdfUrl: m.pdfUrl || null,
+        svgUrl: m.svgUrl || null,
+        downloadUrl: m.downloadUrl || (hasFileUrl ? `/api/materials/${m.id}/download` : null),
+        svgContent: inlineOnlySvg,
+        studyTheory: m.studyTheory || '',
+      };
     });
-    return res.json({ materials: fullMaterials, locked: false });
+
+    return res.json({ materials, locked: !hasPremiumAccess, quota });
   } catch (err) {
     console.error('[Materials Catalog Error]:', err);
     return res.status(500).json({ error: 'Nepodařilo se načíst katalog materiálů.' });
+  }
+});
+
+// 7.0b Aktuální stav měsíční kvóty uživatele pro stažení/tisk materiálů
+app.get('/api/materials/quota', requireAuth, async (req, res) => {
+  try {
+    const quota = await getMaterialQuotaSummaryForUser(req.user);
+    return res.json({
+      quota,
+      watermarkText: buildWatermarkText(req.user),
+    });
+  } catch (err) {
+    console.error('[Material Quota Read Error]:', err);
+    return res.status(500).json({ error: 'Nepodařilo se načíst stav kvóty materiálů.' });
+  }
+});
+
+// 7.0c Autorizace a případné odečtení kvóty před generováním PDF / tiskem v prohlížeči
+app.post('/api/materials/:id/export-authorize', requireAuth, requirePremiumOrTeacher, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const result = await authorizeAndConsumeMaterialExport(req.user, id);
+    return res.json(result);
+  } catch (err) {
+    if (err?.status && err.status < 500) {
+      return res.status(err.status).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+        ...(err.quota ? { quota: err.quota } : {}),
+      });
+    }
+    console.error(`[Material Export Authorize Error] (${id}):`, err);
+    return res.status(500).json({ error: 'Nepodařilo se ověřit oprávnění k exportu materiálu.' });
   }
 });
 
@@ -3770,6 +4933,14 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       title,
       subject,
       topic,
+      topicId,
+      subtopicId,
+      materialType,
+      grade,
+      order,
+      pageCount,
+      isFreeSample,
+      isExamPrep,
       studyTheory,
       fileData,
       fileType,
@@ -3800,6 +4971,21 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
     const cleanTitle = (typeof title === 'string' && title.trim() ? title.trim() : 'Nový studijní materiál').slice(0, 256);
     const cleanSubject = (typeof subject === 'string' && subject.trim() ? subject.trim() : 'Matematika').slice(0, 128);
     const cleanTopic = (typeof topic === 'string' && topic.trim() ? topic.trim() : 'Obecné').slice(0, 128);
+    const cleanTopicId = typeof topicId === 'string' && topicId.trim() ? topicId.trim().slice(0, 128) : null;
+    const cleanSubtopicId = typeof subtopicId === 'string' && subtopicId.trim() ? subtopicId.trim().slice(0, 128) : null;
+    const cleanMaterialType = normalizeMaterialType(materialType);
+    const cleanGrade = normalizeMaterialGrade(grade);
+    const parsedOrder =
+      order !== null && order !== undefined && order !== '' ? Number(order) : NaN;
+    const cleanOrder = Number.isFinite(parsedOrder) ? Math.max(-1000, Math.min(10000, parsedOrder)) : null;
+    const parsedPageCount =
+      pageCount !== null && pageCount !== undefined && pageCount !== '' ? Number(pageCount) : NaN;
+    const detectedSvgPages = isSvg ? detectSvgPageCount(validated.sanitizedSvgString) : null;
+    const cleanPageCount =
+      Number.isFinite(parsedPageCount) && parsedPageCount > 0
+        ? Math.min(500, Math.round(parsedPageCount))
+        : detectedSvgPages || (hasFile ? 1 : 0);
+
     const cleanOriginalName = sanitizeContentDispositionFilename(
       originalName || (isSvg ? 'material.svg' : 'material.pdf'),
       isSvg ? 'material.svg' : 'material.pdf'
@@ -3811,6 +4997,14 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       title: cleanTitle,
       subject: cleanSubject,
       topic: cleanTopic,
+      ...(cleanTopicId ? { topicId: cleanTopicId } : {}),
+      ...(cleanSubtopicId ? { subtopicId: cleanSubtopicId } : {}),
+      materialType: cleanMaterialType,
+      ...(cleanGrade ? { grade: cleanGrade } : {}),
+      ...(cleanOrder !== null ? { order: cleanOrder } : {}),
+      pageCount: cleanPageCount,
+      isFreeSample: Boolean(isFreeSample),
+      isExamPrep: Boolean(isExamPrep),
       studyTheory: typeof studyTheory === 'string' ? studyTheory.trim().slice(0, 50000) : '',
       hiddenFromLibrary: Boolean(hiddenFromLibrary),
       status: hasFile ? 'processing' : 'ready',
@@ -3845,6 +5039,7 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
           thumbBase64: validated.thumbBase64,
           thumbContentType: validated.thumbContentType,
           generation,
+          detectedPageCount: cleanPageCount,
         }).catch((err) => console.error('[Background process unhandled error]:', err));
       }
     }
@@ -3860,6 +5055,7 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       downloadUrl: initialDoc.downloadUrl,
       fileType: initialDoc.fileType,
       originalName: initialDoc.originalName,
+      pageCount: initialDoc.pageCount,
       message: hasFile
         ? 'Materiál byl zařazen ke zpracování na pozadí.'
         : 'Materiál byl úspěšně vytvořen.',
@@ -3889,6 +5085,14 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
       title,
       subject,
       topic,
+      topicId,
+      subtopicId,
+      materialType,
+      grade,
+      order,
+      pageCount,
+      isFreeSample,
+      isExamPrep,
       studyTheory,
       fileData,
       fileType,
@@ -3912,6 +5116,32 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
     if (typeof title === 'string' && title.trim()) updates.title = title.trim().slice(0, 256);
     if (typeof subject === 'string' && subject.trim()) updates.subject = subject.trim().slice(0, 128);
     if (typeof topic === 'string') updates.topic = (topic.trim() || 'Obecné').slice(0, 128);
+    if (topicId === null) updates.topicId = null;
+    else if (typeof topicId === 'string') updates.topicId = topicId.trim() ? topicId.trim().slice(0, 128) : null;
+    if (subtopicId === null) updates.subtopicId = null;
+    else if (typeof subtopicId === 'string') updates.subtopicId = subtopicId.trim() ? subtopicId.trim().slice(0, 128) : null;
+    if (materialType !== undefined) updates.materialType = normalizeMaterialType(materialType);
+    if (grade !== undefined) {
+      updates.grade = grade === null || grade === '' ? null : normalizeMaterialGrade(grade);
+    }
+    if (order !== undefined) {
+      if (order === null || order === '') {
+        updates.order = null;
+      } else {
+        const parsedOrder = Number(order);
+        if (Number.isFinite(parsedOrder)) {
+          updates.order = Math.max(-1000, Math.min(10000, parsedOrder));
+        }
+      }
+    }
+    if (pageCount !== undefined && pageCount !== null) {
+      const parsedPages = Number(pageCount);
+      if (Number.isFinite(parsedPages) && parsedPages >= 0) {
+        updates.pageCount = Math.min(500, Math.round(parsedPages));
+      }
+    }
+    if (typeof isFreeSample === 'boolean') updates.isFreeSample = isFreeSample;
+    if (typeof isExamPrep === 'boolean') updates.isExamPrep = isExamPrep;
     if (typeof studyTheory === 'string') updates.studyTheory = studyTheory.trim().slice(0, 50000);
     if (typeof hiddenFromLibrary === 'boolean') updates.hiddenFromLibrary = hiddenFromLibrary;
 
@@ -3925,11 +5155,15 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
       );
       const generation = `gen_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`;
       const vStamp = Date.now();
+      const detectedPages = isSvg ? detectSvgPageCount(validated.sanitizedSvgString) : null;
+      const effectivePageCount =
+        updates.pageCount && updates.pageCount > 0 ? updates.pageCount : detectedPages || 1;
 
       updates.status = 'processing';
       updates.errorMessage = null;
       updates.originalName = cleanOriginalName;
       updates.fileType = effectiveMime;
+      updates.pageCount = effectivePageCount;
       updates.thumbnailUrl = `/api/materials/${id}/thumbnail?v=${vStamp}`;
       updates.fileUrl = `/api/materials/${id}/file?v=${vStamp}`;
       updates.pdfUrl = isPdf ? updates.fileUrl : null;
@@ -3949,6 +5183,7 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
         thumbBase64: validated.thumbBase64,
         thumbContentType: validated.thumbContentType,
         generation,
+        detectedPageCount: effectivePageCount,
       }).catch((err) => console.error('[Background replace process unhandled error]:', err));
 
       return res.status(202).json({
@@ -3979,6 +5214,7 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
       updates.svgContent = null;
       updates.activeChunkPrefix = null;
       updates.fileSize = 0;
+      updates.pageCount = 0;
       updates.status = 'ready';
       updates.errorMessage = null;
       await updateMaterialDoc(id, updates);
@@ -4021,6 +5257,7 @@ app.get('/api/materials/:id/status', requireAuth, requirePremiumOrTeacher, async
       status: mat.status || 'ready',
       errorMessage: mat.errorMessage || null,
       fileSize: mat.fileSize || null,
+      pageCount: mat.pageCount || null,
       fileUrl: mat.fileUrl || null,
       pdfUrl: mat.pdfUrl || null,
       svgUrl: mat.svgUrl || null,
@@ -4035,8 +5272,8 @@ app.get('/api/materials/:id/status', requireAuth, requirePremiumOrTeacher, async
   }
 });
 
-// 7.2 Servírování náhledové miniatury (chráněno pro premium/course/teacher, 404 pro neexistující/skryté)
-app.get('/api/materials/:id/thumbnail', requireAuth, requirePremiumOrTeacher, async (req, res) => {
+// 7.2 Servírování náhledové miniatury (premium/course/teacher, nebo ukázka zdarma pro ostatní)
+app.get('/api/materials/:id/thumbnail', optionalAuth, async (req, res) => {
   const { id } = req.params;
   if (!isValidMaterialId(id)) {
     return res.status(400).json({ error: 'Neplatné ID materiálu.' });
@@ -4046,11 +5283,17 @@ app.get('/api/materials/:id/thumbnail', requireAuth, requirePremiumOrTeacher, as
     if (!mat) {
       return res.status(404).json({ error: 'Materiál nenalezen.' });
     }
-    if (mat.hiddenFromLibrary === true && req.user.role !== 'teacher') {
+    if (mat.hiddenFromLibrary === true && req.user?.role !== 'teacher') {
       return res.status(404).json({ error: 'Materiál nenalezen.' });
     }
-    if (mat.status && mat.status !== 'ready' && req.user.role !== 'teacher') {
+    if (mat.status && mat.status !== 'ready' && req.user?.role !== 'teacher') {
       return res.status(404).json({ error: 'Materiál zatím není dostupný.' });
+    }
+    if (!canUserViewMaterial(req.user, mat)) {
+      if (!req.user) {
+        return res.status(401).json({ error: 'Pro zobrazení náhledu se přihlaste.' });
+      }
+      return res.status(403).json({ error: 'Tento náhled je dostupný pouze s předplatným Premium.' });
     }
 
     const thumbChunk = await getMaterialChunk(id, 'thumbnail');
@@ -4087,7 +5330,7 @@ app.get('/api/materials/:id/thumbnail', requireAuth, requirePremiumOrTeacher, as
   }
 });
 
-// 7.3 Servírování plného souboru (pouze premium/course/teacher, se sanitizací SVG a přísnými CSP hlavičkami)
+// 7.3 Servírování plného souboru (online čtení i s ukázkou zdarma; download přes kvótu a vodoznak)
 async function serveMaterialFile(req, res, asDownload = false) {
   const { id } = req.params;
   if (!isValidMaterialId(id)) {
@@ -4098,11 +5341,31 @@ async function serveMaterialFile(req, res, asDownload = false) {
     if (!mat) {
       return res.status(404).json({ error: 'Materiál nenalezen.' });
     }
-    if (mat.hiddenFromLibrary === true && req.user.role !== 'teacher') {
+    if (mat.hiddenFromLibrary === true && req.user?.role !== 'teacher') {
       return res.status(404).json({ error: 'Materiál nenalezen.' });
     }
-    if (mat.status && mat.status !== 'ready' && req.user.role !== 'teacher') {
+    if (mat.status && mat.status !== 'ready' && req.user?.role !== 'teacher') {
       return res.status(404).json({ error: 'Materiál zatím není dostupný.' });
+    }
+
+    let quotaInfo = null;
+    if (asDownload) {
+      const exportAuth = await authorizeAndConsumeMaterialExport(req.user, id);
+      quotaInfo = exportAuth.quota;
+    } else {
+      if (!canUserViewMaterial(req.user, mat)) {
+        if (!req.user) {
+          return res.status(401).json({ error: 'Pro zobrazení materiálu se prosím přihlaste.' });
+        }
+        return res.status(403).json({ error: 'Tento materiál vyžaduje předplatné ProEducator Premium.' });
+      }
+      const rateCheck = checkMaterialFileRateLimit(req);
+      if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfterSec));
+        return res.status(429).json({
+          error: 'Příliš mnoho načtených materiálů za krátkou dobu. Zkuste to prosím za několik minut.',
+        });
+      }
     }
 
     const allChunks = await getAllMaterialChunks(id);
@@ -4140,6 +5403,12 @@ async function serveMaterialFile(req, res, asDownload = false) {
           return res.status(422).json({ error: 'SVG obsah materiálu neprošel bezpečnostní kontrolou.' });
         }
         buf = Buffer.from(cleanSvg, 'utf8');
+        if (!Number.isFinite(Number(mat.pageCount)) || Number(mat.pageCount) <= 1) {
+          const detected = detectSvgPageCount(cleanSvg);
+          if (detected && detected > 1) {
+            updateMaterialDoc(id, { pageCount: detected }).catch(() => {});
+          }
+        }
       }
     }
 
@@ -4151,6 +5420,16 @@ async function serveMaterialFile(req, res, asDownload = false) {
     const filename = sanitizeContentDispositionFilename(mat.originalName, fallbackName);
     const asciiFilename = filename.replace(/[^\x20-\x7e]/g, '_') || fallbackName;
     const dispositionType = asDownload ? 'attachment' : 'inline';
+
+    const watermarkText = buildWatermarkText(req.user);
+    if (watermarkText) {
+      res.setHeader('X-Watermark-Text', encodeURIComponent(watermarkText));
+    }
+    if (quotaInfo) {
+      res.setHeader('X-Quota-Remaining', String(quotaInfo.remaining));
+      res.setHeader('X-Quota-Limit', String(quotaInfo.limit));
+    }
+    res.setHeader('Access-Control-Expose-Headers', 'X-Watermark-Text, X-Quota-Remaining, X-Quota-Limit');
 
     res.setHeader('Content-Type', contentType === 'image/svg+xml' ? 'image/svg+xml; charset=utf-8' : contentType);
     if (contentType === 'image/svg+xml') {
@@ -4165,12 +5444,19 @@ async function serveMaterialFile(req, res, asDownload = false) {
     res.setHeader('Cache-Control', 'private, no-store');
     return res.send(buf);
   } catch (err) {
+    if (err?.status && err.status < 500) {
+      return res.status(err.status).json({
+        error: err.message,
+        ...(err.code ? { code: err.code } : {}),
+        ...(err.quota ? { quota: err.quota } : {}),
+      });
+    }
     console.error(`Chyba při servírování souboru materiálu ${id}:`, err);
     return res.status(500).json({ error: 'Nepodařilo se načíst soubor materiálu.' });
   }
 }
 
-app.get('/api/materials/:id/file', requireAuth, requirePremiumOrTeacher, (req, res) =>
+app.get('/api/materials/:id/file', optionalAuth, (req, res) =>
   serveMaterialFile(req, res, false)
 );
 app.get('/api/materials/:id/download', requireAuth, requirePremiumOrTeacher, (req, res) =>
@@ -5852,6 +7138,43 @@ app.get('/api/courses', optionalAuth, async (req, res) => {
   } catch (err) {
     console.error('[Courses List Error]:', err);
     return res.status(500).json({ error: 'Nepodařilo se načíst seznam kurzů.' });
+  }
+});
+
+// 11.1b Dynamická XML sitemapa kurzů pro Google Search Console (/sitemap-courses.xml & /api/sitemap-courses.xml)
+app.get(['/sitemap-courses.xml', '/api/sitemap-courses.xml'], async (_req, res) => {
+  try {
+    const today = getPragueDateString();
+    const snap = await db.collection('courses').get();
+    const courseIds = new Set(['course-combo', 'course-math', 'course-czech']);
+    snap.docs.forEach((d) => {
+      if (d.id && /^[A-Za-z0-9_-]+$/.test(d.id)) {
+        courseIds.add(d.id);
+      }
+    });
+
+    const urlsXml = Array.from(courseIds)
+      .map(
+        (cid) => `  <url>
+    <loc>https://www.proeducator.eu/courses/${escapeHtml(cid)}</loc>
+    <lastmod>${today}</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>`
+      )
+      .join('\n');
+
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${urlsXml}
+</urlset>`;
+
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    return res.status(200).send(xml);
+  } catch (err) {
+    console.error('[Sitemap Courses Error]:', err);
+    return res.status(500).send('<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>');
   }
 });
 

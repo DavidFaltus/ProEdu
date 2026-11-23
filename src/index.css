@@ -1,4 +1,5 @@
-@import "tailwindcss";
+@import "tailwindcss" source("../src");
+@source "../index.html";
 
 @font-face {
     font-family: 'LePetitCochon';
@@ -456,4 +457,18 @@ input[type="password"]::-ms-clear {
   display: none;
   width: 0;
   height: 0;
+}
+
+/* Ochrana studijních materiálů proti obcházení kvóty přes Ctrl+P */
+.protected-material-print-notice {
+  display: none;
+}
+
+@media print {
+  .protected-material-viewer {
+    display: none !important;
+  }
+  .protected-material-print-notice {
+    display: flex !important;
+  }
 }

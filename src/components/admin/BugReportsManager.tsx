@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Bug, 
   Search, 
   RefreshCcw, 
   ExternalLink, 
@@ -24,6 +23,7 @@ import {
   FileQuestion,
   ChevronDown
 } from 'lucide-react';
+import { BugBlueIcon } from '../common/CustomIcon';
 import { Card, CardHeader, CardTitle, CardContent } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -258,8 +258,8 @@ export default function BugReportsManager() {
       {/* Top Banner & Refresh */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-gradient-to-r from-rose-50 via-amber-50 to-white p-5 sm:p-6 rounded-3xl border border-rose-100/80 shadow-xs">
         <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-500/25">
-            <Bug size={24} />
+          <div className="w-12 h-12 rounded-2xl bg-white border border-blue-100 flex items-center justify-center shadow-sm">
+            <BugBlueIcon size={28} />
           </div>
           <div>
             <h1 className="text-xl sm:text-2xl font-black text-[#0F2942] tracking-tight">Hlášení chyb od studentů</h1>
@@ -662,14 +662,24 @@ export default function BugReportsManager() {
               alt="Zvětšený snímek obrazovky" 
               className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl border border-white/10"
             />
-            <a
-              href={sanitizeSafeUrl(previewImage) || '#'}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 text-xs text-white/80 hover:text-white underline inline-flex items-center gap-1"
-            >
-              Otevřít v novém okně v plném rozlišení <ExternalLink size={12} />
-            </a>
+            {previewImage.startsWith('data:image/') ? (
+              <a
+                href={sanitizeSafeUrl(previewImage) || '#'}
+                download={`screenshot-chyby-${Date.now()}.jpg`}
+                className="mt-3 text-xs text-white/80 hover:text-white underline inline-flex items-center gap-1"
+              >
+                Stáhnout snímek v plném rozlišení <ExternalLink size={12} />
+              </a>
+            ) : (
+              <a
+                href={sanitizeSafeUrl(previewImage) || '#'}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-3 text-xs text-white/80 hover:text-white underline inline-flex items-center gap-1"
+              >
+                Otevřít v novém okně v plném rozlišení <ExternalLink size={12} />
+              </a>
+            )}
           </div>
         </div>
       )}

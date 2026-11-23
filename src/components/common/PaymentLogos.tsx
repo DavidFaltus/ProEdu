@@ -57,7 +57,7 @@ export function GooglePayLogo({ className = "h-4 sm:h-5 w-auto" }: { className?:
 export function ComgateLogoBadge({ className = "" }: { className?: string }) {
   return (
     <a 
-      href="https://www.comgate.cz/cz/platebni-brana" 
+      href="https://www.comgate.eu/cs/platebni-brana" 
       target="_blank" 
       rel="noopener noreferrer" 
       title="Platební brána Comgate"
@@ -75,14 +75,24 @@ export function ComgateLogoBadge({ className = "" }: { className?: string }) {
   );
 }
 
-export function PaymentLogosBar({ className = "" }: { className?: string }) {
+export function PaymentLogosBar({
+  className = "",
+  includeWallets = true,
+}: {
+  className?: string;
+  includeWallets?: boolean;
+}) {
   return (
     <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
+      <ComgateLogoBadge />
       <VisaLogo />
       <MastercardLogo />
-      <ApplePayLogo />
-      <GooglePayLogo />
-      <ComgateLogoBadge />
+      {includeWallets && (
+        <>
+          <ApplePayLogo />
+          <GooglePayLogo />
+        </>
+      )}
     </div>
   );
 }

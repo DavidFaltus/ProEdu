@@ -424,7 +424,7 @@ export default function QuickCalendar({
                 <CalendarBlueIcon size={18} />
               </div>
               <h3 className="text-lg sm:text-xl font-bold text-gray-900 capitalize">
-                {format(currentDate, 'MMMM yyyy', { locale: cs })}
+                {format(currentDate, 'LLLL yyyy', { locale: cs })}
               </h3>
             </div>
 

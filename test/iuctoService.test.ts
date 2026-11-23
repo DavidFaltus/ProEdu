@@ -68,6 +68,7 @@ test('buildCustomerPayload sets external_code, ISO-2 country, and vat_payer only
   assert.equal(person.external_code, 'PROEDU_uid_abc');
   assert.equal(person.vat_payer, false);
   assert.equal(person.vatid, undefined);
+  assert.equal(person.preferred_payment_method, 'transfer');
   assert.equal(person.address.country, 'CZ');
 
   const company = buildCustomerPayload({
@@ -262,4 +263,83 @@ test('createIuctoClient surfaces HTTP 402 quota error clearly', async () => {
     () => client.checkConnection(),
     /Vyčerpána API kvóta iÚčta/
   );
+});
+
+test('createIuctoClient handles OpenAPI 3.1 CompanyProfile vat_type nonpayer and formats validation errors', async () => {
+  const client = createIuctoClient({
+    env: { IUCTO_API_KEY: 'test-key', COMGATE_TEST_MODE: 'false' },
+    fetchImpl: (async (url: string, opts: any = {}) => {
+      if (url.endsWith('/company_profile')) {
+        // OpenAPI 3.1 specifies vat_type: 'nonpayer' | 'monthly' | 'quarterly'
+        return new Response(JSON.stringify({ name: 'ProEdu s.r.o.', vat_type: 'nonpayer' }), { status: 200 });
+      }
+      if (url.includes('/bank_account')) {
+        return new Response(
+          JSON.stringify({ _embedded: { bank_account: [{ id: 42, name: 'Hlavní CZK', currency: 'CZK' }] } }),
+          { status: 200 }
+        );
+      }
+      if (url.includes('/accountentry_type') || url.includes('/vat_type')) {
+        return new Response(JSON.stringify({}), { status: 200 });
+      }
+      if (url.includes('/customer?') && (!opts?.method || opts.method === 'GET')) {
+        return new Response(JSON.stringify({ _embedded: { customer: [] } }), { status: 200 });
+      }
+      if (url.endsWith('/customer') && opts?.method === 'POST') {
+        // Mock 400 validation error in OpenAPI format: { errors: { field: ['msg'] } }
+        return new Response(
+          JSON.stringify({ errors: { name: ['Jméno je povinné.'], email: ['Neplatný e-mail.'] } }),
+          { status: 400 }
+        );
+      }
+      throw new Error('Unexpected URL: ' + url);
+    }) as any
+  });
+
+  const status = await client.checkConnection();
+  assert.equal(status.companyName, 'ProEdu s.r.o.');
+  assert.equal(status.isVatPayer, false);
+  assert.equal(status.selectedBankAccountId, 42);
+
+  await assert.rejects(
+    () => client.syncCustomer({ userId: 'u_err', userDoc: {}, order: {} }),
+    (err: any) => {
+      assert.equal(err.statusCode, 400);
+      assert.match(err.message, /name: Jméno je povinné/);
+      assert.match(err.message, /email: Neplatný e-mail/);
+      return true;
+    }
+  );
+});
+
+test('sendPaymentConfirmedEmail sends Bcc copy to info@pro-edu.eu for order auditing', async () => {
+  const { sendPaymentConfirmedEmail, setTransporterForTesting, resetTransporterForTesting } = await import('../server/services/emailService.js');
+  let capturedMailOptions: any = null;
+
+  setTransporterForTesting({
+    sendMail: async (options: any) => {
+      capturedMailOptions = options;
+      return { messageId: '<mock-audit-msg@pro-edu.eu>' };
+    }
+  });
+
+  try {
+    const res = await sendPaymentConfirmedEmail({
+      to: 'student@example.cz',
+      name: 'Jan Novák',
+      orderId: 'ord_audit_123',
+      amount: 99,
+      periodEnd: '2026-12-15T12:00:00.000Z',
+      invoiceNumber: 'FV20260010',
+      attachments: [{ filename: 'faktura-FV20260010.pdf', content: Buffer.from('%PDF-1.4'), contentType: 'application/pdf' }]
+    });
+
+    assert.equal(res.success, true);
+    assert.equal(capturedMailOptions.to, 'student@example.cz');
+    assert.equal(capturedMailOptions.bcc, 'info@pro-edu.eu');
+    assert.ok(capturedMailOptions.html.includes('FV20260010'));
+    assert.equal(capturedMailOptions.attachments.length, 1);
+  } finally {
+    resetTransporterForTesting();
+  }
 });

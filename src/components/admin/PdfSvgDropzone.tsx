@@ -17,6 +17,7 @@ export interface DropzoneFileResult {
   svgString?: string;
   svgUrl?: string;
   pdfUrl?: string;
+  pageCount?: number;
 }
 
 interface PdfSvgDropzoneProps {
@@ -89,7 +90,8 @@ export default function PdfSvgDropzone({
         fileType: 'image/svg+xml',
         thumbnail: converted.thumbnailDataUrl,
         thumbnailDataUrl: converted.thumbnailDataUrl,
-        svgString: converted.svgString
+        svgString: converted.svgString,
+        pageCount: converted.pageCount,
       });
 
       toast.success(

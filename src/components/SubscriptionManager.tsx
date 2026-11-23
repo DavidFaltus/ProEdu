@@ -11,29 +11,41 @@ import {
   Calendar,
   RefreshCw,
   ArrowRight,
-  Building2,
   XCircle,
   Clock,
-  CreditCard,
-  QrCode,
-  Receipt,
   FileText,
   ExternalLink
 } from 'lucide-react';
-import { StarYellowIcon, CorrectCyanIcon, CapIcon } from './common/CustomIcon';
+import {
+  StarYellowIcon,
+  CorrectCyanIcon,
+  CapIcon,
+  PaymentPinkIcon,
+  CardGrayIcon,
+  InfoPinkIcon
+} from './common/CustomIcon';
 import UnifiedPaywallModal from './common/UnifiedPaywallModal';
 import {
   cancelSubscription,
   reactivateSubscription,
   saveBillingAndPaymentSettings,
   getMyOrders,
-  downloadOrderInvoicePdf
+  downloadOrderInvoicePdf,
+  verifyComgatePayment,
+  cancelPendingOrder
 } from '../services/orderService';
 import { Order } from '../types';
 import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { sanitizeSafeUrl } from '../utils/svgUtils';
+import {
+  trackPurchase,
+  trackCheckoutCancelled,
+  trackSubscriptionCancel,
+  trackSubscriptionReactivate,
+  trackSubscriptionCardUpdateStart
+} from '../services/analyticsService';
 
 const CANCEL_REASONS = [
   'Už mám po přijímacích zkouškách',
@@ -55,6 +67,8 @@ export default function SubscriptionManager() {
   // Stavy jednotlivých plateb a objednávek uživatele
   const [orders, setOrders] = useState<Order[]>([]);
   const [loadingOrders, setLoadingOrders] = useState(true);
+  const [checkingOrderId, setCheckingOrderId] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
 
   // Stavy rušení a obnovy
   const [selectedReason, setSelectedReason] = useState<string>(CANCEL_REASONS[0]);
@@ -91,6 +105,24 @@ export default function SubscriptionManager() {
 
   const isCancelledAtPeriodEnd = isPremium && profile?.subscriptionStatus === 'cancelled_at_period_end' && !isPeriodExpired;
 
+  // Stav PAST_DUE / Ochranná lhůta (Grace Period), kdy opakovaná platba selhala nebo vypršel termín a běží 3denní lhůta
+  const isPastDueOrGrace = React.useMemo(() => {
+    if (!isPremium || isCancelledAtPeriodEnd) return false;
+    return Boolean(profile?.lastRecurringPaymentFailed || profile?.subscriptionGraceUntil || isPeriodExpired);
+  }, [isPremium, isCancelledAtPeriodEnd, profile?.lastRecurringPaymentFailed, profile?.subscriptionGraceUntil, isPeriodExpired]);
+
+  const formattedGraceEnd = React.useMemo(() => {
+    const rawGrace = profile?.subscriptionGraceUntil;
+    const graceDate = rawGrace && !isNaN(new Date(rawGrace).getTime())
+      ? new Date(rawGrace)
+      : new Date(periodEndDate.getTime() + 3 * 24 * 60 * 60 * 1000);
+    return graceDate.toLocaleDateString('cs-CZ', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    });
+  }, [profile?.subscriptionGraceUntil, periodEndDate]);
+
   const formattedPeriodEnd = periodEndDate.toLocaleDateString('cs-CZ', {
     day: 'numeric',
     month: 'long',
@@ -115,6 +147,33 @@ export default function SubscriptionManager() {
     try {
       const data = await getMyOrders();
       setOrders(data);
+
+      // Synchronizace čekajících Comgate objednávek (např. po zrušení přímo na bráně / v portálu)
+      const pendingComgateOrders = data.filter(
+        o =>
+          o.status === 'pending' &&
+          o.comgateTransId &&
+          !String(o.comgateTransId).startsWith('SANDBOX_')
+      );
+      if (pendingComgateOrders.length > 0) {
+        const results = await Promise.allSettled(
+          pendingComgateOrders.map(o => {
+            const oid = (o as any).orderId || o.id;
+            return oid ? verifyComgatePayment(oid) : Promise.resolve({ success: false, status: 'pending' });
+          })
+        );
+        const anyChanged = results.some(
+          r => r.status === 'fulfilled' && (r.value.status === 'paid' || r.value.status === 'cancelled')
+        );
+        const anyPaid = results.some(r => r.status === 'fulfilled' && r.value.status === 'paid');
+        if (anyChanged) {
+          const refreshed = await getMyOrders();
+          setOrders(refreshed);
+          if (anyPaid) {
+            await refreshProfile();
+          }
+        }
+      }
     } catch (err) {
       console.warn('Chyba při načítání jednotlivých plateb:', err);
     } finally {
@@ -127,11 +186,61 @@ export default function SubscriptionManager() {
   }, [profile?.uid]);
 
   const handleOpenNewOrderModal = () => {
+    if (isPremium) {
+      trackSubscriptionCardUpdateStart(isPastDueOrGrace ? 'past_due' : 'active');
+    }
+    const existingPending = orders.find(o => o.status === 'pending' && !(o as any).isRecurringRenewal);
+    if (existingPending) {
+      toast.info('Máš již vytvořenou neuhrazenou objednávku. Otevírám ji k zaplacení.');
+      handleOpenExistingOrderPayment(existingPending);
+      return;
+    }
     setSelectedOrderForPayment(null);
     setIsPaywallOpen(true);
   };
 
-  const handleOpenExistingOrderPayment = (order: Order) => {
+  const handleCancelOrderFromList = async (order: Order) => {
+    const orderId = (order as any).orderId || order.id;
+    if (!orderId) return;
+    setCancellingOrderId(orderId);
+    try {
+      await cancelPendingOrder(orderId);
+      trackCheckoutCancelled({ orderId, source: 'user_manual' });
+      toast.success('Čekající objednávka byla zrušena.');
+      await loadMyOrders();
+    } catch (err: any) {
+      toast.error(err?.message || 'Nepodařilo se zrušit objednávku.');
+      await loadMyOrders();
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
+  const handleOpenExistingOrderPayment = async (order: Order) => {
+    const orderId = (order as any).orderId || order.id;
+    if (orderId && order.comgateTransId && !String(order.comgateTransId).startsWith('SANDBOX_')) {
+      setCheckingOrderId(orderId);
+      try {
+        const check = await verifyComgatePayment(orderId);
+        if (check.status === 'cancelled') {
+          trackCheckoutCancelled({ orderId, source: 'gateway_return' });
+          toast.error('Objednávka byla zrušena.');
+          await loadMyOrders();
+          return;
+        }
+        if (check.status === 'paid') {
+          trackPurchase({ orderId, planId: 'premium-monthly', amount: 99, currency: 'CZK', transId: order.comgateTransId });
+          toast.success('Platba již byla potvrzena! Balíček Premium je aktivní.');
+          await Promise.all([refreshProfile(), loadMyOrders()]);
+          return;
+        }
+      } catch (err) {
+        console.warn('[Order Pre-open Verify]:', err);
+      } finally {
+        setCheckingOrderId(null);
+      }
+    }
+
     setSelectedOrderForPayment(order);
     setIsPaywallOpen(true);
   };
@@ -185,6 +294,7 @@ export default function SubscriptionManager() {
         immediate,
         currentPeriodEnd: periodEndDate.toISOString()
       });
+      trackSubscriptionCancel({ reason: finalReason, immediate });
 
       await refreshProfile();
       await loadMyOrders();
@@ -201,6 +311,7 @@ export default function SubscriptionManager() {
     setIsProcessingReactivate(true);
     try {
       const res = await reactivateSubscription(periodEndDate.toISOString());
+      trackSubscriptionReactivate();
       await refreshProfile();
       await loadMyOrders();
       toast.success(res.message);
@@ -221,9 +332,14 @@ export default function SubscriptionManager() {
               <span className="text-xs font-black uppercase tracking-widest text-gray-400">
                 Aktuální tarif
               </span>
-              {isPremium && !isCancelledAtPeriodEnd && (
+              {isPremium && !isCancelledAtPeriodEnd && !isPastDueOrGrace && (
                 <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
                   <CheckCircle2 size={13} /> Aktivní předplatné
+                </span>
+              )}
+              {isPastDueOrGrace && (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black bg-rose-50 text-rose-700 border border-rose-200">
+                  <AlertTriangle size={13} /> Platba neprošla • Ochranná lhůta
                 </span>
               )}
               {isCancelledAtPeriodEnd && (
@@ -282,8 +398,48 @@ export default function SubscriptionManager() {
           </div>
         </div>
 
-        {/* Stavový informační box pro aktivní nebo zrušené Premium */}
-        {isPremium && !isCancelledAtPeriodEnd && (
+        {/* Stavový informační box pro PAST_DUE (selhání opakované platby / 3denní Grace Period) */}
+        {isPastDueOrGrace && (
+          <div className="bg-rose-50/80 border-2 border-rose-200 rounded-2xl p-5 space-y-4">
+            <div className="flex items-start gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0 mt-0.5">
+                <AlertTriangle size={20} />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-black text-rose-950">
+                  Automatická platba z karty neprošla – běží 3denní ochranná lhůta (do {formattedGraceEnd})
+                </p>
+                <p className="text-xs text-rose-800 leading-relaxed">
+                  {profile?.lastRecurringFailureReason
+                    ? `Důvod zamítnutí: ${profile.lastRecurringFailureReason}. `
+                    : ''}
+                  Přístup k ProEducator Premium máš zatím stále plně aktivní. Systém zkusí platbu strhnout znovu, nebo můžeš ihned zadat novou platební kartu a prodloužit předplatné o dalších 30 dní.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3 pt-1">
+              <Button
+                onClick={handleOpenNewOrderModal}
+                className="rounded-xl bg-[#B80053] hover:bg-[#B80053]/90 text-white font-black text-xs h-10 px-5 shadow-md cursor-pointer flex items-center gap-1.5"
+              >
+                <CardGrayIcon size={16} />
+                <span>Aktualizovat platební kartu (99 Kč)</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setIsCancelModalOpen(true)}
+                className="rounded-xl border-red-200 text-red-600 hover:bg-white hover:text-red-700 font-bold text-xs h-10 px-4 cursor-pointer"
+              >
+                Zrušit předplatné
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Stavový informační box pro aktivní Premium */}
+        {isPremium && !isCancelledAtPeriodEnd && !isPastDueOrGrace && (
           <div className="bg-[#FAF7F0] border border-[#E6E0D4] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3.5">
               <div className="w-10 h-10 rounded-xl bg-[#F5C400]/20 text-[#1E1B18] flex items-center justify-center shrink-0 mt-0.5">
@@ -299,13 +455,25 @@ export default function SubscriptionManager() {
               </div>
             </div>
 
-            <Button
-              variant="outline"
-              onClick={() => setIsCancelModalOpen(true)}
-              className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs h-10 px-4 shrink-0 cursor-pointer"
-            >
-              Zrušit předplatné
-            </Button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <Button
+                variant="outline"
+                onClick={handleOpenNewOrderModal}
+                title="Autorizovat novou platební kartu pro opakované platby a předplatit další období (+30 dní)"
+                className="rounded-xl border-gray-300 text-gray-700 hover:bg-white hover:text-gray-900 font-bold text-xs h-10 px-3.5 shrink-0 cursor-pointer flex items-center gap-1.5"
+              >
+                <CardGrayIcon size={15} />
+                <span>Změnit kartu</span>
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setIsCancelModalOpen(true)}
+                className="rounded-xl border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs h-10 px-4 shrink-0 cursor-pointer"
+              >
+                Zrušit předplatné
+              </Button>
+            </div>
           </div>
         )}
 
@@ -501,7 +669,7 @@ export default function SubscriptionManager() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <Receipt size={18} className="text-[#B80053]" />
+              <PaymentPinkIcon size={24} />
               <h3 className="font-sans font-black text-xl text-gray-900">
                 Jednotlivé platby
               </h3>
@@ -587,8 +755,8 @@ export default function SubscriptionManager() {
                           Refundováno / Dobropis
                         </span>
                       ) : isCancelled ? (
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-gray-200 text-gray-600">
-                          Zrušeno
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200">
+                          <XCircle size={12} /> Zrušeno
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-100 text-amber-900 border border-amber-200">
@@ -609,17 +777,8 @@ export default function SubscriptionManager() {
                         <span>VS: <strong className="font-mono text-gray-800">{order.variableSymbol}</strong></span>
                       )}
                       <span className="inline-flex items-center gap-1">
-                        {order.paymentMethod === 'comgate' ? (
-                          <>
-                            <CreditCard size={13} className="text-blue-600" />
-                            <span>Kartou online</span>
-                          </>
-                        ) : (
-                          <>
-                            <QrCode size={13} className="text-purple-600" />
-                            <span>QR platba</span>
-                          </>
-                        )}
+                        <CardGrayIcon size={15} />
+                        <span>Kartou online (Comgate)</span>
                       </span>
                     </div>
                   </div>
@@ -662,17 +821,33 @@ export default function SubscriptionManager() {
                     )}
 
                     {isPending && (
-                      <Button
-                        type="button"
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleOpenExistingOrderPayment(order);
-                        }}
-                        className="rounded-xl h-9 px-4 bg-[#B80053] hover:bg-[#B80053]/90 text-white text-xs font-black shadow-sm cursor-pointer flex items-center gap-1.5"
-                      >
-                        <CreditCard size={14} />
-                        <span>Rozkliknout a zaplatit</span>
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          disabled={cancellingOrderId === orderKey || checkingOrderId === orderKey}
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleCancelOrderFromList(order);
+                          }}
+                          className="rounded-xl h-9 px-3 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 text-xs font-bold cursor-pointer flex items-center gap-1"
+                        >
+                          <XCircle size={13} />
+                          <span>{cancellingOrderId === orderKey ? 'Ruším...' : 'Zrušit'}</span>
+                        </Button>
+                        <Button
+                          type="button"
+                          disabled={checkingOrderId === orderKey || cancellingOrderId === orderKey}
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleOpenExistingOrderPayment(order);
+                          }}
+                          className="rounded-xl h-9 px-4 bg-[#B80053] hover:bg-[#B80053]/90 text-white text-xs font-black shadow-sm cursor-pointer flex items-center gap-1.5"
+                        >
+                          <CardGrayIcon size={16} />
+                          <span>{checkingOrderId === orderKey ? 'Ověřuji...' : 'Rozkliknout a zaplatit'}</span>
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -689,7 +864,7 @@ export default function SubscriptionManager() {
       >
         <div>
           <div className="flex items-center gap-2">
-            <Building2 size={18} className="text-[#B80053]" />
+            <InfoPinkIcon size={22} />
             <h3 className="font-sans font-black text-xl text-gray-900">
               Fakturační údaje
             </h3>

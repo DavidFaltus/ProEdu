@@ -4,7 +4,6 @@ import { useAuth } from '../../context/AuthContext';
 import { submitBugReport } from '../../services/bugReportService';
 import { BugReportCategory } from '../../types/bugReport';
 import { 
-  Bug, 
   X, 
   Send, 
   Upload, 
@@ -18,6 +17,7 @@ import {
   Trash2, 
   CheckCircle2
 } from 'lucide-react';
+import { BugBlueIcon } from './CustomIcon';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 
@@ -157,8 +157,8 @@ export default function BugReportModal({ isOpen, onClose }: BugReportModalProps)
         {/* Header */}
         <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-orange-50 px-5 sm:px-6 py-4 border-b border-rose-100/60 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/20">
-              <Bug size={20} className="animate-pulse" />
+            <div className="w-10 h-10 rounded-2xl bg-white border border-blue-100 flex items-center justify-center shadow-sm">
+              <BugBlueIcon size={24} />
             </div>
             <div>
               <h2 className="text-lg font-black text-[#0F2942] tracking-tight">Nahlásit chybu</h2>

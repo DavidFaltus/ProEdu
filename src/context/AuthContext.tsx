@@ -31,7 +31,14 @@ import {
   setAnalyticsUser, 
   trackJokerConsumed, 
   trackJokersExhausted, 
-  trackRewardedVideoComplete 
+  trackRewardedVideoComplete,
+  trackAuthLogin,
+  trackAuthSignUpInit,
+  trackAuthSignUpComplete,
+  trackAuthLogout,
+  trackPasswordResetRequest,
+  trackReferralRedeem,
+  trackSurveyComplete
 } from '../services/analyticsService';
 import { toast } from 'sonner';
 
@@ -203,11 +210,10 @@ function getEffectivePeriodEnd(profile: Partial<UserProfile> | null | undefined)
 
 function isSubscriptionPeriodExpired(profile: Partial<UserProfile> | null | undefined): boolean {
   if (!profile || profile.role !== 'premium') return false;
-  if (profile.subscriptionStatus === 'inactive' || profile.subscriptionStatus === 'expired') {
-    return true;
-  }
 
   const rawEnd = getEffectivePeriodEnd(profile);
+  // Pokud datum vypršení vůbec neexistuje (např. ručně nastaveno v administraci nebo v DB),
+  // účet sám o sobě neexpiruje
   if (!rawEnd) return false;
   const endMs = new Date(rawEnd).getTime();
   if (isNaN(endMs)) return false;
@@ -220,7 +226,8 @@ function isSubscriptionPeriodExpired(profile: Partial<UserProfile> | null | unde
     return Date.now() > endMs + GRACE_PERIOD_MS;
   }
 
-  return false;
+  // Pro ostatní statusy (např. inactive / expired) expiruje, pokud zaplacené období již uplynulo
+  return Date.now() > endMs;
 }
 
 function normalizeUserProfile(raw: Partial<UserProfile>, authUser: User): UserProfile {
@@ -425,6 +432,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const claimRes = await claimReferralCodeApi(pendingRef, idToken);
           if (claimRes.success) {
+            trackReferralRedeem(claimRes.reward);
             effectiveProfile = {
               ...effectiveProfile,
               jokers: claimRes.newJokers,
@@ -567,20 +575,46 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Synchronizace uživatelských vlastností a role do Google Analytics
   useEffect(() => {
     if (isAuthReady) {
+      const effectiveSubStatus = isSubscriptionExpired
+        ? 'inactive'
+        : profile?.lastRecurringPaymentFailed || profile?.subscriptionGraceUntil
+        ? 'past_due'
+        : profile?.subscriptionStatus || (hasActivePaidPremium ? 'active' : 'inactive');
+
       setAnalyticsUser(user ? user.uid : null, {
         role: isSubscriptionExpired ? (enrolledCourseIds.length > 0 ? 'course' : 'free') : (effectiveRole || 'guest'),
         isPremium,
+        isTeacher,
+        subscriptionStatus: effectiveSubStatus,
+        studentGrade: profile?.surveyGrade || null,
+        acquisitionSource: profile?.surveyAnswer || null,
       });
     }
-  }, [user?.uid, effectiveRole, isSubscriptionExpired, isPremium, enrolledCourseIds.length, isAuthReady]);
+  }, [
+    user?.uid,
+    effectiveRole,
+    isSubscriptionExpired,
+    isPremium,
+    isTeacher,
+    hasActivePaidPremium,
+    profile?.subscriptionStatus,
+    profile?.lastRecurringPaymentFailed,
+    profile?.subscriptionGraceUntil,
+    profile?.surveyGrade,
+    profile?.surveyAnswer,
+    enrolledCourseIds.length,
+    isAuthReady
+  ]);
 
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
     await signInWithPopup(auth, provider);
+    trackAuthLogin('google');
   };
 
   const signInWithEmail = async (email: string, pass: string) => {
     await signInWithEmailAndPassword(auth, email, pass);
+    trackAuthLogin('password');
   };
 
   const parseSafeJsonResponse = async (res: Response, defaultError: string) => {
@@ -613,7 +647,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       throw new Error('Ověřovací služba je dočasně nedostupná, zkuste to prosím za okamžik.');
     }
-    return await parseSafeJsonResponse(res, 'Nepodařilo se zahájit registraci.');
+    const data = await parseSafeJsonResponse(res, 'Nepodařilo se zahájit registraci.');
+    trackAuthSignUpInit('password');
+    return data;
   };
 
   const resendRegistrationOtp = async (email: string) => {
@@ -647,6 +683,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else if (data.tempPassword) {
       await signInWithEmailAndPassword(auth, email, data.tempPassword);
     }
+    trackAuthSignUpComplete('password');
     return data;
   };
 
@@ -666,7 +703,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: trimmed })
       });
-      return await parseSafeJsonResponse(res, 'Nepodařilo se odeslat odkaz pro obnovení hesla.');
+      const data = await parseSafeJsonResponse(res, 'Nepodařilo se odeslat odkaz pro obnovení hesla.');
+      trackPasswordResetRequest();
+      return data;
     } catch (apiErr: any) {
       // Pokud backend endpoint selže nebo je nedostupný, zkusíme klientský fallback
       if (apiErr.message && !apiErr.message.includes('nedostupná')) {
@@ -686,6 +725,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const signOut = async () => {
+    trackAuthLogout();
     clearSessionStorageKeys();
     cacheManager.clear();
     setClaimRole(null);
@@ -789,6 +829,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const token = await user.getIdToken();
       const res = await claimReferralCodeApi(code, token);
       if (res.success) {
+        trackReferralRedeem(res.reward);
         setProfile(prev =>
           prev
             ? {
@@ -823,6 +864,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const token = await user.getIdToken();
       const res = await submitSurveyAnswerApi(answer, customAnswer, school, grade, token);
+      trackSurveyComplete({ answer, grade });
 
       setProfile(prev =>
         prev

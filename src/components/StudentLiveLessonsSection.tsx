@@ -10,11 +10,10 @@ import {
   Radio, 
   RefreshCcw, 
   ExternalLink, 
-  Info, 
   ChevronDown, 
   ChevronUp 
 } from 'lucide-react';
-import { CalendarBlueIcon, CorrectCyanIcon } from './common/CustomIcon';
+import { CalendarBlueIcon, CorrectCyanIcon, InfoPinkIcon } from './common/CustomIcon';
 import { LiveLesson } from '../types';
 
 interface StudentLiveLessonsSectionProps {
@@ -269,7 +268,7 @@ export default function StudentLiveLessonsSection({
           onClick={() => setShowMeetHelp(!showMeetHelp)}
           className="text-xs font-bold text-gray-500 hover:text-amber-900 flex items-center gap-1.5 transition-colors cursor-pointer"
         >
-          <Info size={14} className="text-amber-600" />
+          <InfoPinkIcon size={16} />
           <span>Nemáš Google účet? Jak se připojit bez přihlášení</span>
           {showMeetHelp ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>

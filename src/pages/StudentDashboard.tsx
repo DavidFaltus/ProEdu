@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useEffect, useCallback, useRef } from 'react';
 import { format } from 'date-fns';
 import { cs } from 'date-fns/locale';
 import { cn, safeToDate } from '../lib/utils';
@@ -41,8 +41,13 @@ import { collection, query, where, onSnapshot, limit } from 'firebase/firestore'
 import { toast } from 'sonner';
 import { getPersonalizedRecommendations, RecommendedPracticeItem } from '../services/recommendationService';
 import { fetchPracticeCatalog } from '../services/practiceService';
-import { trackSectionClick } from '../services/analyticsService';
+import {
+  trackSectionClick,
+  trackPurchase,
+  trackCheckoutCancelled
+} from '../services/analyticsService';
 import { toCzechVocative } from '../utils/czechVocative';
+import { verifyComgatePayment } from '../services/orderService';
 
 const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -98,12 +103,13 @@ const TEACHER_HEADLINE_TEMPLATES = [
 ];
 
 export default function StudentDashboard() {
-  const { user, profile, isPremium, isCourseUser, isTeacher, enrolledCourseIds, jokers, openAuthModal } = useAuth();
+  const { user, profile, loading: authLoading, refreshProfile, isPremium, isCourseUser, isTeacher, enrolledCourseIds, jokers, openAuthModal } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [isPaymentSuccessModalOpen, setIsPaymentSuccessModalOpen] = useState(false);
   const [isDailyLimitModalOpen, setIsDailyLimitModalOpen] = useState(false);
+  const handledPaymentReturnRef = useRef<string | null>(null);
 
   // Kontrola vyčerpání limitu žolíků i videí pro dnešní den
   const isGuest = !user;
@@ -120,24 +126,81 @@ export default function StudentDashboard() {
     }
   }, [location.state, navigate, location.pathname]);
 
-  // Zpracování návratu z platební brány Comgate
+  // Zpracování návratu z platební brány Comgate (včetně serverového ověření stavu platby)
   useEffect(() => {
     const paymentStatus = searchParams.get('payment');
-    if (paymentStatus === 'success') {
-      setIsPaymentSuccessModalOpen(true);
-      toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('payment');
-      nextParams.delete('orderId');
-      setSearchParams(nextParams, { replace: true });
-    } else if (paymentStatus === 'cancelled') {
-      toast.info('Platba na bráně byla zrušena. Můžete ji zopakovat kdykoliv.');
-      const nextParams = new URLSearchParams(searchParams);
-      nextParams.delete('payment');
-      nextParams.delete('orderId');
-      setSearchParams(nextParams, { replace: true });
+    const orderId = searchParams.get('orderId') || '';
+    if (!paymentStatus) return;
+    if (authLoading) return;
+
+    const returnKey = `${paymentStatus}:${orderId}`;
+    if (handledPaymentReturnRef.current === returnKey) return;
+    handledPaymentReturnRef.current = returnKey;
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('payment');
+    nextParams.delete('orderId');
+    setSearchParams(nextParams, { replace: true });
+
+    if (paymentStatus === 'cancelled') {
+      if (orderId && user) {
+        verifyComgatePayment(orderId, { markCancelledIfPending: true })
+          .then(async (res) => {
+            if (res.status === 'paid') {
+              trackPurchase({ orderId, planId: 'premium-monthly', amount: 99, currency: 'CZK' });
+              await user.getIdToken(true).catch(() => {});
+              await refreshProfile();
+              setIsPaymentSuccessModalOpen(true);
+              toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+            } else {
+              trackCheckoutCancelled({ orderId, source: 'gateway_return' });
+              toast.error('Objednávka byla zrušena.');
+            }
+          })
+          .catch(() => {
+            trackCheckoutCancelled({ orderId, source: 'gateway_return' });
+            toast.error('Objednávka byla zrušena.');
+          });
+      } else {
+        trackCheckoutCancelled({ orderId, source: 'gateway_return' });
+        toast.error('Objednávka byla zrušena.');
+      }
+      return;
     }
-  }, [searchParams, setSearchParams]);
+
+    if (paymentStatus === 'success' || paymentStatus === 'pending') {
+      if (orderId && user) {
+        verifyComgatePayment(orderId)
+          .then(async (res) => {
+            if (res.status === 'paid') {
+              trackPurchase({ orderId, planId: 'premium-monthly', amount: 99, currency: 'CZK' });
+              await user.getIdToken(true).catch(() => {});
+              await refreshProfile();
+              setIsPaymentSuccessModalOpen(true);
+              toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+            } else if (res.status === 'cancelled') {
+              trackCheckoutCancelled({ orderId, source: 'gateway_return' });
+              toast.error('Objednávka byla zrušena.');
+            } else {
+              toast.info('Platba se zpracovává. Jakmile brána potvrdí úhradu, předplatné se automaticky aktivuje.');
+            }
+          })
+          .catch((err) => {
+            console.warn('[Comgate Return Verify]:', err);
+            if (paymentStatus === 'success') {
+              refreshProfile().catch(() => {});
+              toast.info('Čekáme na potvrzení platby z brány Comgate. Zkuste stránku za chvíli obnovit.');
+            }
+          });
+      } else if (paymentStatus === 'success') {
+        refreshProfile().catch(() => {});
+        setIsPaymentSuccessModalOpen(true);
+        toast.success('Platba proběhla úspěšně! Balíček Premium byl aktivován.');
+      } else {
+        toast.info('Platba se zpracovává. Jakmile brána potvrdí úhradu, předplatné se automaticky aktivuje.');
+      }
+    }
+  }, [searchParams, setSearchParams, authLoading, user, refreshProfile]);
 
   // Sekce pro lektora a hodiny jsou povoleny pouze pro platící uživatele (Premium/Kurz) a učitele.
   // Pro odhlášené a Free uživatele se tyto sekce NIKDY nezobrazují na hlavní straně.
@@ -408,13 +471,18 @@ export default function StudentDashboard() {
         </div>
       </header>
 
-      {/* JOKER BONUS & STREAK ZONE (Pro přihlášené Free uživatele nad kalendářem a doporučeným procvičováním) */}
-      {isLoggedInFreeUser && <JokerZoneSection />}
+      {/* MAIN DASHBOARD SECTIONS: Mobile = Doporučená procvičování -> Herní zóna žolíků -> Kalendář; Desktop (md+) unchanged */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-y-6 md:gap-y-5 xl:gap-x-5 xl:gap-y-10 items-stretch">
+        {/* JOKER BONUS & STREAK ZONE (Na desktopu pro přihlášené Free nahoře, pro hosty dole; na mobilu vždy pod Doporučenými procvičováními) */}
+        <JokerZoneSection
+          className={cn(
+            "min-w-0 order-2 xl:col-span-2",
+            isLoggedInFreeUser ? "md:order-1 md:mb-5 xl:mb-0" : "md:order-4 md:mt-5 xl:mt-0"
+          )}
+        />
 
-      {/* MAIN TWO-COLUMN ROW: Calendar on Left, Recommended Practice on Right */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-stretch">
-        {/* Left Column: Kalendář */}
-        <div className="w-full h-full flex flex-col">
+        {/* Left Column on Desktop / Bottom on Mobile: Kalendář */}
+        <div className="order-3 md:order-2 w-full h-full flex flex-col">
           <QuickCalendar 
             todos={todos} 
             liveLessons={liveLessons} 
@@ -426,8 +494,8 @@ export default function StudentDashboard() {
           />
         </div>
 
-        {/* Right Column: Doporučená procvičování */}
-        <Card className="rounded-[1.75rem] border-none shadow-md bg-white p-4 sm:p-5 flex flex-col justify-start relative overflow-hidden h-full">
+        {/* Right Column on Desktop / Top on Mobile: Doporučená procvičování */}
+        <Card className="order-1 md:order-3 rounded-[1.75rem] border-none shadow-md bg-white p-4 sm:p-5 flex flex-col justify-start relative overflow-hidden h-full">
           <div className="absolute top-0 right-0 w-36 h-36 bg-gradient-to-br from-amber-100/40 via-yellow-50/20 to-transparent rounded-full blur-2xl -mr-12 -mt-12 pointer-events-none" />
 
           <div className="flex flex-col justify-start h-full space-y-4">
@@ -693,9 +761,6 @@ export default function StudentDashboard() {
           </div>
         </Card>
       </div>
-
-      {/* JOKER BONUS & STREAK ZONE (Pro odhlášené hosty a ostatní zůstává pod kalendářem) */}
-      {!isLoggedInFreeUser && <JokerZoneSection />}
 
       {/* DYNAMIC GRID: Dotazy (Left) & Naplánovaná hodina (Right) */}
       {(() => {

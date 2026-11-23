@@ -621,7 +621,11 @@ export default function Statistics() {
 
             <div className="space-y-3">
               <div className="flex items-center gap-2">
-                <Flame size={28} className={stats.kpi.streak.streakDays > 0 ? "text-orange-500 fill-current animate-pulse" : "text-gray-300"} />
+                <CustomIcon
+                  name="streak"
+                  size={30}
+                  className={stats.kpi.streak.streakDays > 0 ? "animate-pulse" : "opacity-40 grayscale"}
+                />
                 <span className="text-3xl sm:text-4xl font-black text-[#0F2942] tracking-tight">
                   {stats.kpi.streak.streakDays} {stats.kpi.streak.streakDays === 1 ? 'den' : stats.kpi.streak.streakDays < 5 ? 'dny' : 'dní'}
                 </span>

@@ -2,22 +2,31 @@ import React from 'react';
 import { cn } from '../../lib/utils';
 
 export type CustomIconName =
+  | 'account'     // #737373 (gray user with graduation cap)
   | 'bublina'     // #e9b451 (yellow speech bubble with text lines)
+  | 'bug'         // #2f3cc1 (dark blue bug)
+  | 'card'        // #737373 (gray payment card)
   | 'cepice'      // #44a3fe (blue graduation cap)
   | 'dialog'      // #2bcbfe (cyan speech bubble)
+  | 'friends'     // #e9b451 (yellow two friends)
   | 'hvezda'      // #c37393 (pink sparkles / stars)
   | 'hvezda2'     // #e9b451 (yellow 5-pointed star)
+  | 'icon'        // #c37393 (pink info circle "i")
+  | 'joker'       // #2f3cc1 (dark blue joker playing card)
   | 'kalendar'    // #2f3cc1 (dark blue calendar)
   | 'kniha'       // #2bcbfe (cyan open book)
   | 'kniha-bila'  // #ffffff (white open book)
   | 'material'    // #e9b451 (yellow sheet / material)
   | 'mozek'       // #c37393 (pink brain)
   | 'mozek-bila'  // #ffffff (white brain)
+  | 'payment'     // #c37393 (pink "Kč" coin)
   | 'posta'       // #2f3cc1 (dark blue mail envelope)
   | 'spatne'      // #c37393 (pink wrong cross circle)
   | 'spoluprace'  // #2f3cc1 (dark blue handshake)
   | 'spravne'     // #2bcbfe (cyan correct check circle)
   | 'srdce'       // #c37393 (pink heart)
+  | 'streak'      // #e9b451 (yellow streak flame)
+  | 'survey'      // #44a3fe (blue survey clipboard)
   | 'telefon'     // #c37393 (pink phone receiver)
   | 'tym'         // #2f3cc1 + #ffffff (dark blue + white team)
   | 'zarovka';    // #e9b451 (yellow lightbulb)
@@ -116,5 +125,18 @@ export const TeamBlueIcon = createBoundIcon('tym', 'TeamBlueIcon');
 
 // Heart & Streak (Flame / Heart)
 export const HeartPinkIcon = createBoundIcon('srdce', 'HeartPinkIcon');
+export const StreakYellowIcon = createBoundIcon('streak', 'StreakYellowIcon');
+
+// Joker, Friends & Survey (JokerZone & Navigation)
+export const JokerBlueIcon = createBoundIcon('joker', 'JokerBlueIcon');
+export const FriendsYellowIcon = createBoundIcon('friends', 'FriendsYellowIcon');
+export const SurveyBlueIcon = createBoundIcon('survey', 'SurveyBlueIcon');
+
+// Account, Card, Payment, Info & Bug
+export const AccountIcon = createBoundIcon('account', 'AccountIcon');
+export const CardGrayIcon = createBoundIcon('card', 'CardGrayIcon');
+export const PaymentPinkIcon = createBoundIcon('payment', 'PaymentPinkIcon');
+export const InfoPinkIcon = createBoundIcon('icon', 'InfoPinkIcon');
+export const BugBlueIcon = createBoundIcon('bug', 'BugBlueIcon');
 
 export default CustomIcon;

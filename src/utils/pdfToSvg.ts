@@ -294,10 +294,46 @@ export async function convertFileToSvg(
 }
 
 /**
+ * Draws a subtle personalized footer watermark onto a 2D canvas context.
+ */
+export function drawWatermarkFooterOnCanvas(
+  ctx: CanvasRenderingContext2D,
+  canvasWidth: number,
+  canvasHeight: number,
+  watermarkText?: string | null
+): void {
+  if (!watermarkText) return;
+  const fontSize = Math.max(11, Math.round(canvasWidth * 0.015));
+  const padY = Math.max(20, Math.round(fontSize * 1.65));
+
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  ctx.fillRect(0, canvasHeight - padY, canvasWidth, padY);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)';
+  ctx.lineWidth = Math.max(1, Math.round(canvasWidth / 1000));
+  ctx.beginPath();
+  ctx.moveTo(0, canvasHeight - padY);
+  ctx.lineTo(canvasWidth, canvasHeight - padY);
+  ctx.stroke();
+
+  ctx.font = `600 ${fontSize}px "Plus Jakarta Sans", system-ui, -apple-system, sans-serif`;
+  ctx.fillStyle = 'rgba(15, 41, 66, 0.52)';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(watermarkText, canvasWidth / 2, canvasHeight - Math.round(padY / 2), canvasWidth - 32);
+  ctx.restore();
+}
+
+/**
  * Normalizes any image data URL (JPEG, PNG, WebP) or SVG string into a baseline RGB JPEG DataURL
  * along with its pixel dimensions so it can be embedded directly into a PDF 1.4 /DCTDecode stream.
  */
-async function imageSourceToJpegPage(src: string, fallbackWidth = 1240, fallbackHeight = 1754): Promise<{
+export async function imageSourceToJpegPage(
+  src: string,
+  fallbackWidth = 1240,
+  fallbackHeight = 1754,
+  watermarkText?: string | null
+): Promise<{
   width: number;
   height: number;
   jpegBytes: Uint8Array;
@@ -320,6 +356,9 @@ async function imageSourceToJpegPage(src: string, fallbackWidth = 1240, fallback
         ctx.fillStyle = '#ffffff';
         ctx.fillRect(0, 0, w, h);
         ctx.drawImage(img, 0, 0, w, h);
+        if (watermarkText) {
+          drawWatermarkFooterOnCanvas(ctx, w, h, watermarkText);
+        }
         resolve(canvas.toDataURL('image/jpeg', 0.92));
       } catch (err) {
         reject(err);
@@ -354,7 +393,7 @@ async function imageSourceToJpegPage(src: string, fallbackWidth = 1240, fallback
 /**
  * Builds a valid multi-page binary PDF 1.4 document from an array of JPEG page images.
  */
-function buildPdfFromJpegPages(pages: Array<{ width: number; height: number; jpegBytes: Uint8Array }>): Blob {
+export function buildPdfFromJpegPages(pages: Array<{ width: number; height: number; jpegBytes: Uint8Array }>): Blob {
   const encoder = new TextEncoder();
   const chunks: Uint8Array[] = [];
   const offsets: number[] = [0]; // index 0 is free object

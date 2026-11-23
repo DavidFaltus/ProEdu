@@ -11,7 +11,7 @@ import BugReportButton from './components/common/BugReportButton';
 import LiveLessonNotificationWatcher from './components/LiveLessonNotificationWatcher';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Menu, X, LayoutDashboard, Bell, Lock, LogIn, ShieldCheck } from 'lucide-react';
-import { BrainPinkIcon, MaterialYellowIcon, BookCyanIcon, CapIcon, StarYellowIcon } from './components/common/CustomIcon';
+import { BrainPinkIcon, MaterialYellowIcon, BookCyanIcon, CapIcon, StarYellowIcon, JokerBlueIcon } from './components/common/CustomIcon';
 import { useNotifications } from './hooks/useNotifications';
 import NotificationPopover from './components/NotificationPopover';
 import { cn } from './lib/utils';
@@ -39,6 +39,7 @@ const StudyView = React.lazy(() => import('./pages/StudyView'));
 const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
 const Terms = React.lazy(() => import('./pages/Terms'));
 const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
+const ShippingAndPayment = React.lazy(() => import('./pages/ShippingAndPayment'));
 
 import Footer from './components/common/Footer';
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
@@ -193,7 +194,7 @@ function AppContent() {
                   className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-[#FAF7F0] border border-gray-200/70 text-[11px] font-bold text-gray-800"
                   title="Zbývající žolíky na dnešek"
                 >
-                  <span className="text-xs">🃏</span>
+                  <JokerBlueIcon size={14} />
                   <span className="font-mono font-black">{jokers}</span>
                 </div>
               )}
@@ -292,6 +293,7 @@ function AppContent() {
               {/* Hlavní stránka = Nástěnka studenta */}
               <Route path="/" element={<StudentDashboard />} />
               <Route path="/student" element={<Navigate to="/" replace />} />
+              <Route path="/student/dashboard" element={<StudentDashboard />} />
               <Route path="/dashboard" element={<DashboardRedirect />} />
 
               {/* Procvičování & Materiály & Výuka */}
@@ -348,11 +350,39 @@ function AppContent() {
               {/* Právní dokumenty */}
               <Route path="/terms" element={<Terms />} />
               <Route path="/podminky" element={<Terms />} />
+              <Route path="/doprava-a-platba" element={<ShippingAndPayment />} />
               <Route path="/gdpr" element={<PrivacyPolicy />} />
               <Route path="/privacy" element={<PrivacyPolicy />} />
 
-              {/* Fallback na hlavní stránku */}
-              <Route path="*" element={<Navigate to="/" replace />} />
+              {/* 404 stránka s noindex (zabraňuje chybě Soft 404 v Google Search Console) */}
+              <Route
+                path="*"
+                element={
+                  <div className="max-w-xl mx-auto py-20 px-4 text-center space-y-5">
+                    <div className="text-6xl font-playful text-[#B80053]">404</div>
+                    <h1 className="text-2xl sm:text-3xl font-playful text-gray-800 tracking-tight">
+                      Stránka nebyla nalezena
+                    </h1>
+                    <p className="text-sm text-gray-500 font-medium">
+                      Odkaz, který jste otevřeli, neexistuje nebo byl přesunut.
+                    </p>
+                    <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+                      <Link
+                        to="/"
+                        className="px-5 py-2.5 rounded-xl bg-[#F5C400] hover:bg-[#e0b300] text-[#1E1B18] font-black text-sm shadow-xs transition-all"
+                      >
+                        Přejít na hlavní stránku
+                      </Link>
+                      <Link
+                        to="/practice"
+                        className="px-5 py-2.5 rounded-xl bg-white hover:bg-gray-50 text-gray-700 font-bold text-sm border border-gray-200 shadow-2xs transition-all"
+                      >
+                        Procvičování
+                      </Link>
+                    </div>
+                  </div>
+                }
+              />
             </Routes>
           </React.Suspense>
         </div>

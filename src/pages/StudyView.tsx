@@ -29,11 +29,18 @@ import { MathRenderer } from '../components/common/MathRenderer';
 import InlineStudyMedia from '../components/common/InlineStudyMedia';
 import TheoryMaterialViewer from '../components/study/TheoryMaterialViewer';
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
-
-interface StoredStudyProgress {
-  completedSteps: number[];
-  verifiedAnswers: Record<number, string>;
-}
+import {
+  loadStudyProgress,
+  saveStudyProgress,
+  resetStudyProgress,
+} from '../services/studyProgressService';
+import {
+  trackStudySessionStart,
+  trackStudyStepComplete,
+  trackStudySessionComplete,
+  setDynamicPageSeo,
+  startPerfTrace
+} from '../services/analyticsService';
 
 export default function StudyView() {
   const { subtopicId } = useParams<{ subtopicId: string }>();
@@ -87,6 +94,9 @@ export default function StudyView() {
 
       setLoading(true);
       setAccessDenied(false);
+      const perfTrace = startPerfTrace('study_subtopic_load', {
+        subtopic_id: subtopicId,
+      });
       try {
         const [studyRes, catalog] = await Promise.all([
           fetchStudySubtopic(subtopicId),
@@ -94,14 +104,35 @@ export default function StudyView() {
         ]);
 
         if (studyRes.forbidden) {
+          perfTrace.stop({ status: 'forbidden' });
           setAccessDenied(true);
           setSubtopic(null);
           return;
         }
 
         const data = studyRes.subtopic;
+        perfTrace.stop(
+          {
+            status: 'ok',
+            subject: data?.subjectId || 'unknown',
+          },
+          {
+            steps_count: (data?.studySteps || []).length,
+          }
+        );
         setSubtopic(data);
         if (data) {
+          setDynamicPageSeo({
+            pagePath: `/study/${data.id}`,
+            pageTitle: `Výuka: ${data.title} (${data.subjectId}) | ProEdu`,
+            indexable: false,
+          });
+          trackStudySessionStart({
+            subtopicId: data.id,
+            subtopicTitle: data.title,
+            totalSteps: (data.studySteps || []).length,
+            hasMaterial: Boolean(data.materialId || data.pdfUrl || data.fileUrl || data.svgUrl),
+          });
           const cfgTotal =
             data.practiceConfig?.totalCount ||
             ((data.practiceConfig?.easyCount || 0) +
@@ -115,6 +146,7 @@ export default function StudyView() {
           setTopicTitle(matchedTopic?.title || data.topicId || '');
         }
       } catch (err) {
+        perfTrace.stop({ status: 'error' });
         console.error('Failed to load study subtopic:', err);
       } finally {
         setLoading(false);
@@ -125,56 +157,44 @@ export default function StudyView() {
 
   const steps: StudyStep[] = subtopic?.studySteps || [];
 
-  // Load saved step completion progress from localStorage
+  // Load saved step completion progress from Firestore / localStorage
   useEffect(() => {
-    if (!progressStorageKey || !subtopic) return;
+    if (!subtopicId || !subtopic) return;
+    let cancelled = false;
     const totalSteps = (subtopic.studySteps || []).length;
-    try {
-      const raw = localStorage.getItem(progressStorageKey);
-      if (!raw) {
+    loadStudyProgress(user?.uid, subtopicId, totalSteps)
+      .then((record) => {
+        if (cancelled) return;
+        setCompletedSteps(record.completedSteps);
+        setVerifiedAnswers(record.verifiedAnswers);
+        setSelectedOptions(record.verifiedAnswers);
+        setWrongAttemptStep({});
+        setExpandedCompletedSteps({});
+      })
+      .catch(() => {
+        if (cancelled) return;
         setCompletedSteps([]);
         setVerifiedAnswers({});
         setSelectedOptions({});
         setWrongAttemptStep({});
         setExpandedCompletedSteps({});
-        return;
-      }
-      const parsed: StoredStudyProgress = JSON.parse(raw);
-      const validCompleted = Array.isArray(parsed.completedSteps)
-        ? parsed.completedSteps.filter((idx) => typeof idx === 'number' && idx >= 0 && idx < totalSteps)
-        : [];
-      const validAnswers =
-        parsed.verifiedAnswers && typeof parsed.verifiedAnswers === 'object'
-          ? parsed.verifiedAnswers
-          : {};
-      setCompletedSteps(validCompleted);
-      setVerifiedAnswers(validAnswers);
-      setSelectedOptions(validAnswers);
-      setWrongAttemptStep({});
-      setExpandedCompletedSteps({});
-    } catch {
-      setCompletedSteps([]);
-      setVerifiedAnswers({});
-      setSelectedOptions({});
-      setWrongAttemptStep({});
-      setExpandedCompletedSteps({});
-    }
-  }, [progressStorageKey, subtopic]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, subtopicId, subtopic]);
 
   const saveProgress = (nextCompleted: number[], nextVerified: Record<number, string>) => {
-    if (!progressStorageKey) return;
-    try {
-      const payload: StoredStudyProgress = {
-        completedSteps: nextCompleted,
-        verifiedAnswers: nextVerified
-      };
-      localStorage.setItem(progressStorageKey, JSON.stringify(payload));
-    } catch {
-      // Ignore quota errors
-    }
+    if (!subtopicId) return;
+    saveStudyProgress(user?.uid, subtopicId, {
+      completedSteps: nextCompleted,
+      verifiedAnswers: nextVerified,
+      totalSteps: steps.length,
+    });
   };
 
   const markStepCompleted = (idx: number, answerVal: string) => {
+    const isNewStep = !completedSteps.includes(idx);
     const nextCompleted = completedSteps.includes(idx)
       ? completedSteps
       : [...completedSteps, idx].sort((a, b) => a - b);
@@ -184,7 +204,49 @@ export default function StudyView() {
     setWrongAttemptStep((prev) => ({ ...prev, [idx]: false }));
     setExpandedCompletedSteps((prev) => ({ ...prev, [idx]: false }));
     saveProgress(nextCompleted, nextVerified);
+    if (isNewStep && subtopicId) {
+      trackStudyStepComplete({
+        subtopicId,
+        stepIndex: idx,
+        totalSteps: steps.length,
+      });
+    }
   };
+
+  // Měření celkové doby strávené ve výukovém režimu (study_session_complete při odchodu)
+  const studyStartTimeRef = React.useRef<number>(Date.now());
+  const studySnapshotRef = React.useRef({
+    subtopicId: '',
+    subtopicTitle: '',
+    completedCount: 0,
+    totalSteps: 0,
+  });
+  useEffect(() => {
+    studyStartTimeRef.current = Date.now();
+  }, [subtopicId]);
+  useEffect(() => {
+    studySnapshotRef.current = {
+      subtopicId: subtopic?.id || subtopicId || '',
+      subtopicTitle: subtopic?.title || '',
+      completedCount: completedSteps.length,
+      totalSteps: steps.length,
+    };
+  }, [subtopic, subtopicId, completedSteps.length, steps.length]);
+  useEffect(() => {
+    return () => {
+      const snap = studySnapshotRef.current;
+      if (snap.subtopicId && snap.subtopicTitle) {
+        const durationSeconds = Math.max(0, Math.round((Date.now() - studyStartTimeRef.current) / 1000));
+        trackStudySessionComplete({
+          subtopicId: snap.subtopicId,
+          subtopicTitle: snap.subtopicTitle,
+          completedStepsCount: snap.completedCount,
+          totalSteps: snap.totalSteps,
+          durationSeconds,
+        });
+      }
+    };
+  }, []);
 
   const handleResetStepsProgress = () => {
     setCompletedSteps([]);
@@ -192,10 +254,8 @@ export default function StudyView() {
     setSelectedOptions({});
     setWrongAttemptStep({});
     setExpandedCompletedSteps({});
-    if (progressStorageKey) {
-      try {
-        localStorage.removeItem(progressStorageKey);
-      } catch {}
+    if (subtopicId) {
+      resetStudyProgress(user?.uid, subtopicId);
     }
   };
 
@@ -433,6 +493,7 @@ export default function StudyView() {
         {hasTheorySection && (
           <div className={isTwoColumnLayout ? 'lg:col-span-5 lg:sticky lg:top-6' : 'w-full'}>
             <TheoryMaterialViewer
+              materialId={linkedMaterialId}
               title={subtopic.title}
               svgContent={subtopic.svgContent}
               fileUrl={effectiveFileUrl}

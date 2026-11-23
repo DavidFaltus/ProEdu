@@ -19,6 +19,7 @@ import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import { Course } from '../types';
 import { getCourseById } from '../services/courseService';
+import { setDynamicPageSeo, updateSeoMeta } from '../services/analyticsService';
 
 const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
   if (!rawUrl || typeof rawUrl !== 'string') return null;
@@ -44,6 +45,20 @@ export default function CourseDetail() {
       try {
         const data = await getCourseById(id);
         setCourse(data);
+        if (data) {
+          setDynamicPageSeo({
+            pagePath: `/courses/${data.id}`,
+            pageTitle: `${data.title} | Kurz ProEdu`,
+            description: data.description || 'Živý přípravný kurz na přijímací zkoušky CERMAT.',
+            indexable: true,
+          });
+        } else {
+          updateSeoMeta({
+            title: 'Kurz nebyl nalezen | ProEdu',
+            canonicalPath: `/courses/${id}`,
+            indexable: false,
+          });
+        }
       } catch (err) {
         console.error('Failed to load course detail:', err);
       } finally {

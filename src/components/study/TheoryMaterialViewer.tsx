@@ -7,17 +7,31 @@ import {
   Loader2,
   Lock,
   AlertTriangle,
-  X
 } from 'lucide-react';
-import { getPdfJs, isPdfResource, downloadMaterialAsPdf } from '../../utils/pdfToSvg';
-import { sanitizeSvg, sanitizeSafeUrl } from '../../utils/svgUtils';
-import { auth } from '../../lib/firebase';
+import { sanitizeSafeUrl, sanitizeSvg } from '../../utils/svgUtils';
+import { useAuth } from '../../context/AuthContext';
 import { MathRenderer } from '../common/MathRenderer';
 import { BookCyanIcon } from '../common/CustomIcon';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
 import { toast } from 'sonner';
+import { MaterialQuotaSummary } from '../../types';
+import {
+  authorizeMaterialExport,
+  fetchMaterialQuota,
+} from '../../services/practiceService';
+import {
+  exportProtectedMaterialAsPdf,
+  extractMaterialIdFromUrls,
+  loadMaterialPages,
+  MaterialPageItem,
+  printWatermarkedPages,
+} from '../../utils/materialPages';
+import {
+  FullscreenMaterialReaderModal,
+  ProtectedMaterialCanvas,
+} from './ProtectedMaterialCanvas';
 
 export interface TheoryMaterialViewerProps {
+  materialId?: string | null;
   title: string;
   svgContent?: string | null;
   fileUrl?: string | null;
@@ -34,104 +48,18 @@ export interface TheoryMaterialViewerProps {
   showStickyHint?: boolean;
 }
 
-interface TheoryPageItem {
-  pageNumber: number;
-  width?: number;
-  height?: number;
-  dataUrl?: string;
-  svgMarkup?: string;
-}
-
-function isProtectedMaterialsApiUrl(url: string): boolean {
-  if (!url) return false;
-  if (url.startsWith('/api/materials/')) return true;
-  if (typeof window !== 'undefined') {
-    try {
-      const parsed = new URL(url, window.location.origin);
-      return parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/materials/');
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}
-
-function decodeSvgDataUrl(dataUrl: string): string {
-  try {
-    const commaIdx = dataUrl.indexOf(',');
-    if (commaIdx === -1) return '';
-    const header = dataUrl.slice(0, commaIdx).toLowerCase();
-    const payload = dataUrl.slice(commaIdx + 1);
-    if (header.includes(';base64')) {
-      const binary = atob(payload);
-      const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-      return new TextDecoder().decode(bytes);
-    }
-    return decodeURIComponent(payload);
-  } catch {
-    return '';
-  }
-}
-
-/**
- * Splits a composite SVG (created by convertFileToSvg with <g id="pdf-page-N"> groups)
- * into individual pages, or returns a single page for standalone vector/image SVGs.
- */
-function extractPagesFromSvg(rawSvg: string): TheoryPageItem[] {
-  const clean = sanitizeSvg(rawSvg);
-  if (!clean) return [];
-
-  if (typeof window !== 'undefined' && typeof DOMParser !== 'undefined') {
-    try {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(clean, 'image/svg+xml');
-      const pageGroups = Array.from(doc.querySelectorAll('g[id^="pdf-page-"]'));
-
-      if (pageGroups.length > 0) {
-        const extracted: TheoryPageItem[] = [];
-        pageGroups.forEach((group, idx) => {
-          const imgEl = group.querySelector('image');
-          const rectEl = group.querySelector('rect');
-          const width = Number(imgEl?.getAttribute('width') || rectEl?.getAttribute('width') || 1000);
-          const height = Number(imgEl?.getAttribute('height') || rectEl?.getAttribute('height') || 1414);
-          const href = imgEl?.getAttribute('href') || imgEl?.getAttribute('xlink:href') || '';
-
-          if (href && href.startsWith('data:image/')) {
-            extracted.push({
-              pageNumber: idx + 1,
-              width,
-              height,
-              dataUrl: href
-            });
-          } else {
-            const singlePageSvg = `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 ${width} ${height}" width="100%" height="auto">${group.innerHTML}</svg>`;
-            extracted.push({
-              pageNumber: idx + 1,
-              width,
-              height,
-              svgMarkup: sanitizeSvg(singlePageSvg)
-            });
-          }
-        });
-
-        if (extracted.length > 0) {
-          return extracted;
-        }
-      }
-    } catch {
-      // Fallback to single SVG page below
-    }
-  }
-
-  return [
-    {
-      pageNumber: 1,
-      svgMarkup: clean
-    }
-  ];
+function buildFallbackWatermark(email?: string | null, uid?: string | null): string {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  return `ProEducator • ${email || uid || 'Student'} • ${today}`;
 }
 
 export default function TheoryMaterialViewer({
+  materialId,
   title,
   svgContent,
   fileUrl,
@@ -145,273 +73,173 @@ export default function TheoryMaterialViewer({
   isProcessing = false,
   isError = false,
   errorMessage,
-  showStickyHint = false
+  showStickyHint = false,
 }: TheoryMaterialViewerProps) {
-  const [fetchedSvg, setFetchedSvg] = useState<string | null>(null);
-  const [protectedImgBlobUrl, setProtectedImgBlobUrl] = useState<string | null>(null);
-  const [pdfPages, setPdfPages] = useState<TheoryPageItem[]>([]);
+  const { user, isTeacher, isPremium, isCourseUser } = useAuth();
+  const canExport = isTeacher || isPremium || isCourseUser;
+
+  const [pages, setPages] = useState<MaterialPageItem[]>([]);
+  const [serverWatermark, setServerWatermark] = useState<string | null>(null);
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [quota, setQuota] = useState<MaterialQuotaSummary | null>(null);
 
   const [currentPageIdx, setCurrentPageIdx] = useState(0);
   const [isFullscreenOpen, setIsFullscreenOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
-  const isPdf = isPdfResource({ fileType, pdfUrl, svgUrl, fileUrl, originalName, svgContent });
-  const rawResolvedUrl = isPdf
-    ? (pdfUrl || fileUrl || '')
-    : (svgUrl || fileUrl || '');
+  const resolvedMaterialId = useMemo(
+    () =>
+      materialId ||
+      extractMaterialIdFromUrls([downloadUrl, fileUrl, pdfUrl, svgUrl]),
+    [materialId, downloadUrl, fileUrl, pdfUrl, svgUrl]
+  );
 
-  const isInlineSvgDataUrl = rawResolvedUrl.trim().toLowerCase().startsWith('data:image/svg+xml');
-  const decodedDataUrlSvg = isInlineSvgDataUrl ? sanitizeSvg(decodeSvgDataUrl(rawResolvedUrl.trim())) : '';
-  const safeResolvedUrl = isInlineSvgDataUrl ? null : sanitizeSafeUrl(rawResolvedUrl);
+  const safeResolvedUrl = useMemo(() => {
+    const candidate = pdfUrl || fileUrl || svgUrl || '';
+    if (candidate.trim().toLowerCase().startsWith('data:image/svg+xml')) return candidate;
+    return sanitizeSafeUrl(candidate);
+  }, [pdfUrl, fileUrl, svgUrl]);
 
-  const cleanInlineSvg = svgContent?.trim() ? sanitizeSvg(svgContent) : decodedDataUrlSvg;
-  const isProtectedEndpoint = Boolean(safeResolvedUrl && isProtectedMaterialsApiUrl(safeResolvedUrl));
+  const hasInlineSvg = Boolean(svgContent?.trim() && sanitizeSvg(svgContent));
+  const hasVisualMaterial = Boolean(hasInlineSvg || safeResolvedUrl);
 
-  const hasVisualMaterial = Boolean(cleanInlineSvg || safeResolvedUrl);
+  const effectiveWatermark = useMemo(() => {
+    if (isTeacher) return null;
+    if (serverWatermark) return serverWatermark;
+    return buildFallbackWatermark(user?.email, user?.uid);
+  }, [isTeacher, serverWatermark, user?.email, user?.uid]);
 
-  // Load external SVG / protected image / raw PDF when not inlined
+  useEffect(() => {
+    if (!user?.uid || isTeacher || (!isPremium && !isCourseUser)) {
+      setQuota(null);
+      return;
+    }
+    let cancelled = false;
+    fetchMaterialQuota()
+      .then((res) => {
+        if (!cancelled) setQuota(res.quota);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, isTeacher, isPremium, isCourseUser]);
+
   useEffect(() => {
     setCurrentPageIdx(0);
-
-    if (cleanInlineSvg || !safeResolvedUrl) {
-      setFetchedSvg(null);
-      setProtectedImgBlobUrl(null);
-      setPdfPages([]);
+    if (!hasVisualMaterial) {
+      setPages([]);
+      setServerWatermark(null);
       setLoadingMedia(false);
       setIsLocked(false);
       setLoadFailed(false);
       return;
     }
 
-    let cancelled = false;
-    let createdObjectUrl: string | null = null;
+    const controller = new AbortController();
     setLoadingMedia(true);
-    setFetchedSvg(null);
-    setProtectedImgBlobUrl(null);
-    setPdfPages([]);
+    setPages([]);
+    setServerWatermark(null);
     setIsLocked(false);
     setLoadFailed(false);
 
-    (async () => {
-      try {
-        if (isPdf) {
-          const pdfjsLib = await getPdfJs();
-          let loadingTask;
-
-          if (isProtectedEndpoint) {
-            const token = await auth.currentUser?.getIdToken().catch(() => null);
-            const res = await fetch(safeResolvedUrl, {
-              headers: token ? { Authorization: `Bearer ${token}` } : undefined
-            });
-            if (res.status === 401 || res.status === 403) {
-              if (!cancelled) {
-                setIsLocked(true);
-                setLoadingMedia(false);
-              }
-              return;
-            }
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-            const ct = (res.headers.get('content-type') || '').toLowerCase();
-            if (ct.includes('svg')) {
-              const svgText = await res.text();
-              if (!cancelled) {
-                setFetchedSvg(sanitizeSvg(svgText));
-                setLoadingMedia(false);
-              }
-              return;
-            }
-
-            const arrayBuffer = await res.arrayBuffer();
-            loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), useSystemFonts: true });
-          } else {
-            loadingTask = pdfjsLib.getDocument({ url: safeResolvedUrl, useSystemFonts: true });
-          }
-
-          const pdf = await loadingTask.promise;
-          const maxPages = Math.min(pdf.numPages, 25);
-          const rendered: TheoryPageItem[] = [];
-
-          for (let i = 1; i <= maxPages; i++) {
-            if (cancelled) return;
-            const page = await pdf.getPage(i);
-            const viewport = page.getViewport({ scale: 1.8 });
-            const canvas = document.createElement('canvas');
-            canvas.width = Math.floor(viewport.width);
-            canvas.height = Math.floor(viewport.height);
-            const ctx = canvas.getContext('2d', { alpha: false });
-            if (!ctx) continue;
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            await page.render({ canvas, canvasContext: ctx, viewport } as any).promise;
-            rendered.push({
-              pageNumber: i,
-              width: canvas.width,
-              height: canvas.height,
-              dataUrl: canvas.toDataURL('image/jpeg', 0.9)
-            });
-          }
-
-          if (!cancelled) {
-            setPdfPages(rendered);
-            setLoadingMedia(false);
-          }
-          return;
-        }
-
-        // Non-PDF: fetch SVG or protected raster image
-        const shouldFetch =
-          isProtectedEndpoint ||
-          (fileType || '').toLowerCase() === 'image/svg+xml' ||
-          safeResolvedUrl.toLowerCase().endsWith('.svg');
-
-        if (!shouldFetch) {
-          if (!cancelled) {
-            setLoadingMedia(false);
-          }
-          return;
-        }
-
-        const headers: Record<string, string> = {};
-        if (isProtectedEndpoint) {
-          const token = await auth.currentUser?.getIdToken().catch(() => null);
-          if (token) headers.Authorization = `Bearer ${token}`;
-        }
-
-        const res = await fetch(safeResolvedUrl, { headers });
-        if (res.status === 401 || res.status === 403) {
-          if (!cancelled) {
-            setIsLocked(true);
-            setLoadingMedia(false);
-          }
-          return;
-        }
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-        const ct = (res.headers.get('content-type') || '').toLowerCase();
-        if (ct.includes('svg') || safeResolvedUrl.toLowerCase().endsWith('.svg')) {
-          const text = await res.text();
-          if (ct.includes('svg') || /<svg[\s>]/i.test(text)) {
-            if (!cancelled) {
-              setFetchedSvg(sanitizeSvg(text));
-              setLoadingMedia(false);
-            }
-            return;
-          }
-        }
-
-        const blob = await res.blob();
-        createdObjectUrl = URL.createObjectURL(blob);
-        if (!cancelled) {
-          setProtectedImgBlobUrl(createdObjectUrl);
-          setLoadingMedia(false);
-        }
-      } catch (err) {
+    loadMaterialPages({
+      fileUrl,
+      pdfUrl,
+      svgUrl,
+      svgContent,
+      fileType,
+      originalName,
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setPages(result.pages);
+        setServerWatermark(result.watermarkText);
+        setIsLocked(result.isLocked);
+      })
+      .catch((err: any) => {
+        if (controller.signal.aborted || err?.name === 'AbortError') return;
         console.warn('Nepodařilo se načíst studijní materiál:', err);
-        if (!cancelled) {
-          setLoadFailed(true);
-          setLoadingMedia(false);
-        }
-      }
-    })();
+        setLoadFailed(true);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoadingMedia(false);
+      });
 
     return () => {
-      cancelled = true;
-      if (createdObjectUrl) {
-        URL.revokeObjectURL(createdObjectUrl);
-      }
+      controller.abort();
     };
-  }, [cleanInlineSvg, safeResolvedUrl, isPdf, isProtectedEndpoint, fileType]);
-
-  const pages: TheoryPageItem[] = useMemo(() => {
-    const activeSvg = cleanInlineSvg || fetchedSvg;
-    if (activeSvg) {
-      return extractPagesFromSvg(activeSvg);
-    }
-    if (pdfPages.length > 0) {
-      return pdfPages;
-    }
-    if (protectedImgBlobUrl) {
-      return [{ pageNumber: 1, dataUrl: protectedImgBlobUrl }];
-    }
-    if (!isProtectedEndpoint && !isPdf && safeResolvedUrl && !loadFailed) {
-      return [{ pageNumber: 1, dataUrl: safeResolvedUrl }];
-    }
-    return [];
-  }, [cleanInlineSvg, fetchedSvg, pdfPages, protectedImgBlobUrl, isProtectedEndpoint, isPdf, safeResolvedUrl, loadFailed]);
+  }, [hasVisualMaterial, fileUrl, pdfUrl, svgUrl, svgContent, fileType, originalName]);
 
   const safePageIdx = Math.min(currentPageIdx, Math.max(0, pages.length - 1));
   const currentPage = pages[safePageIdx] || null;
   const isMultiPage = pages.length > 1;
 
-  // Keyboard navigation when fullscreen modal is open
-  useEffect(() => {
-    if (!isFullscreenOpen || !isMultiPage) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') {
-        setCurrentPageIdx((prev) => Math.max(0, prev - 1));
-      } else if (e.key === 'ArrowRight') {
-        setCurrentPageIdx((prev) => Math.min(pages.length - 1, prev + 1));
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreenOpen, isMultiPage, pages.length]);
+  const isAlreadyUnlocked = Boolean(
+    resolvedMaterialId && quota?.unlockedMaterialIds?.includes(resolvedMaterialId)
+  );
+  const isCourseExempt = Boolean(
+    resolvedMaterialId && quota?.courseExemptMaterialIds?.includes(resolvedMaterialId)
+  );
 
   const handleDownloadPdf = async () => {
-    if (isDownloading) return;
+    if (isDownloading || isPrinting) return;
     setIsDownloading(true);
     try {
-      await downloadMaterialAsPdf({
+      const res = await exportProtectedMaterialAsPdf({
+        materialId: resolvedMaterialId,
         title,
         downloadUrl,
         pdfUrl,
         fileUrl,
         svgUrl,
-        svgContent: cleanInlineSvg || fetchedSvg || svgContent,
-        fileType
+        svgContent,
+        fileType,
+        originalName,
+        preloadedPages: pages,
+        isTeacher,
       });
+      if (res.quota) {
+        setQuota(res.quota);
+      }
       toast.success('PDF soubor byl připraven ke stažení.');
     } catch (err: any) {
+      if (err?.quota) setQuota(err.quota);
       toast.error(err?.message || 'Nepodařilo se stáhnout PDF.');
     } finally {
       setIsDownloading(false);
     }
   };
 
-  const renderPageContent = (page: TheoryPageItem, mode: 'inline' | 'fullscreen') => {
-    if (page.dataUrl) {
-      return (
-        <img
-          src={page.dataUrl}
-          alt={`${title} — strana ${page.pageNumber}`}
-          width={page.width}
-          height={page.height}
-          className={
-            mode === 'fullscreen'
-              ? 'max-w-full h-auto mx-auto block rounded-xl shadow-sm bg-white'
-              : 'w-full h-auto block bg-white'
-          }
-        />
-      );
+  const handlePrint = async () => {
+    if (isPrinting || isDownloading || pages.length === 0) return;
+    setIsPrinting(true);
+    try {
+      let watermarkForPrint = effectiveWatermark;
+      if (resolvedMaterialId) {
+        const authRes = await authorizeMaterialExport(resolvedMaterialId);
+        if (authRes.quota) setQuota(authRes.quota);
+        watermarkForPrint = authRes.watermarkText;
+      }
+      await printWatermarkedPages(title, pages, watermarkForPrint);
+    } catch (err: any) {
+      if (err?.quota) setQuota(err.quota);
+      toast.error(err?.message || 'Nepodařilo se připravit materiál k tisku.');
+    } finally {
+      setIsPrinting(false);
     }
-    if (page.svgMarkup) {
-      return (
-        <div
-          className={
-            mode === 'fullscreen'
-              ? 'w-full max-w-4xl mx-auto bg-white rounded-xl shadow-sm p-2 [&>svg]:w-full [&>svg]:h-auto [&>svg]:block'
-              : 'w-full bg-white [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:block'
-          }
-          dangerouslySetInnerHTML={{ __html: page.svgMarkup }}
-        />
-      );
-    }
-    return null;
   };
+
+  const quotaHintText = useMemo(() => {
+    if (isTeacher || !quota || quota.unlimited || quota.limit <= 0) return null;
+    if (isCourseExempt) return 'Součást kurzu · stažení bez odečtu';
+    if (isAlreadyUnlocked) return 'Tento list už máš odemčený · bez odečtu';
+    return `Zbývá ${quota.remaining} z ${quota.limit} stažení / tisků`;
+  }, [isTeacher, quota, isCourseExempt, isAlreadyUnlocked]);
 
   return (
     <>
@@ -427,20 +255,27 @@ export default function TheoryMaterialViewer({
             </h2>
           </div>
 
-          {hasVisualMaterial && !isProcessing && !isError && (
-            <button
-              type="button"
-              onClick={handleDownloadPdf}
-              disabled={isDownloading || loadingMedia}
-              className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#1D4ED8] hover:text-[#1E3A8A] disabled:opacity-50 transition-colors cursor-pointer"
-            >
-              {isDownloading ? (
-                <Loader2 size={15} className="animate-spin" />
-              ) : (
-                <Download size={15} />
+          {hasVisualMaterial && !isProcessing && !isError && canExport && !isLocked && (
+            <div className="text-right">
+              <button
+                type="button"
+                onClick={handleDownloadPdf}
+                disabled={isDownloading || isPrinting || loadingMedia}
+                className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#1D4ED8] hover:text-[#1E3A8A] disabled:opacity-50 transition-colors cursor-pointer"
+              >
+                {isDownloading ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Download size={15} />
+                )}
+                <span>Stáhnout PDF</span>
+              </button>
+              {quotaHintText && (
+                <p className="text-[10px] font-semibold text-gray-400 leading-tight">
+                  {quotaHintText}
+                </p>
               )}
-              <span>Stáhnout PDF</span>
-            </button>
+            </div>
           )}
         </div>
 
@@ -479,18 +314,21 @@ export default function TheoryMaterialViewer({
             </div>
           ) : currentPage ? (
             <div className="space-y-3.5">
-              {/* Soft frame around the sheet */}
+              {/* Soft frame around the protected canvas sheet */}
               <div
                 onClick={() => setIsFullscreenOpen(true)}
+                onContextMenu={(e) => e.preventDefault()}
                 title="Kliknutím zvětšíte na celou obrazovku"
                 className="rounded-2xl bg-[#EEF3F9] p-3 sm:p-4 border border-slate-200/70 overflow-hidden cursor-zoom-in transition-shadow hover:shadow-xs"
               >
-                <div className="rounded-xl overflow-hidden bg-white shadow-2xs">
-                  {renderPageContent(currentPage, 'inline')}
-                </div>
+                <ProtectedMaterialCanvas
+                  page={currentPage}
+                  watermarkText={effectiveWatermark}
+                  maxCssWidth={520}
+                />
               </div>
 
-              {/* Controls Row: Pagination (if multi-page) + Fullscreen button */}
+              {/* Controls Row: Pagination + Fullscreen button */}
               <div className="flex items-center justify-between gap-2">
                 {isMultiPage ? (
                   <div className="flex items-center gap-2">
@@ -530,7 +368,7 @@ export default function TheoryMaterialViewer({
                 </button>
               </div>
 
-              {/* Page Thumbnails (only for multi-page documents) */}
+              {/* Page Thumbnails */}
               {isMultiPage && (
                 <div className="flex items-center gap-2.5 overflow-x-auto pb-1 pt-0.5">
                   {pages.map((p, idx) => {
@@ -540,8 +378,9 @@ export default function TheoryMaterialViewer({
                         key={p.pageNumber}
                         type="button"
                         onClick={() => setCurrentPageIdx(idx)}
+                        onContextMenu={(e) => e.preventDefault()}
                         aria-label={`Přejít na stranu ${idx + 1}`}
-                        className={`w-13 h-17 sm:w-14 sm:h-19 rounded-xl overflow-hidden border-2 bg-white p-0.5 shrink-0 transition-all cursor-pointer ${
+                        className={`w-13 h-17 sm:w-14 sm:h-19 rounded-xl overflow-hidden border-2 bg-white p-0.5 shrink-0 transition-all cursor-pointer select-none ${
                           active
                             ? 'border-[#2563EB] ring-2 ring-blue-500/20 shadow-2xs'
                             : 'border-gray-200 opacity-70 hover:opacity-100 hover:border-gray-300'
@@ -551,7 +390,8 @@ export default function TheoryMaterialViewer({
                           <img
                             src={p.dataUrl}
                             alt={`Náhled strany ${idx + 1}`}
-                            className="w-full h-full object-contain rounded-lg"
+                            draggable={false}
+                            className="w-full h-full object-contain rounded-lg pointer-events-none"
                           />
                         ) : (
                           <div className="w-full h-full flex items-center justify-center text-[10px] font-bold text-gray-500 bg-gray-50 rounded-lg">
@@ -566,7 +406,7 @@ export default function TheoryMaterialViewer({
             </div>
           ) : (
             <p className="text-sm text-gray-500 text-center py-6">
-              Materiál se nepodařilo načíst k zobrazení.
+              {loadFailed ? 'Materiál se nepodařilo načíst k zobrazení.' : 'Materiál nemá žádné zobrazitelné stránky.'}
             </p>
           )
         ) : studyTheory?.trim() ? (
@@ -594,83 +434,25 @@ export default function TheoryMaterialViewer({
         )}
       </div>
 
-      {/* Fullscreen Modal */}
-      <Dialog open={isFullscreenOpen} onOpenChange={setIsFullscreenOpen}>
-        <DialogContent className="max-w-5xl w-[95vw] max-h-[92vh] p-0 rounded-3xl overflow-hidden flex flex-col bg-[#F8FAFC] border border-gray-200 shadow-2xl [&>button]:hidden">
-          <div className="px-5 py-3.5 bg-white border-b border-gray-100 flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-7 h-7 rounded-xl bg-[#DCEBFE] text-[#1D4ED8] flex items-center justify-center shrink-0">
-                <BookCyanIcon size={16} />
-              </div>
-              <div className="min-w-0">
-                <DialogTitle className="font-black text-sm sm:text-base text-[#0F2942] truncate">
-                  {title} — Teorie
-                </DialogTitle>
-                <DialogDescription className="sr-only">
-                  Zvětšený náhled studijního materiálu
-                </DialogDescription>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-              {isMultiPage && (
-                <div className="flex items-center gap-1.5 bg-gray-100 px-2 py-1 rounded-full">
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPageIdx((prev) => Math.max(0, prev - 1))}
-                    disabled={safePageIdx === 0}
-                    className="w-7 h-7 rounded-full hover:bg-white disabled:opacity-40 flex items-center justify-center text-gray-700 cursor-pointer"
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
-                  <span className="text-xs font-bold text-[#0F2942] px-1.5 select-none">
-                    Strana {safePageIdx + 1} / {pages.length}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setCurrentPageIdx((prev) => Math.min(pages.length - 1, prev + 1))}
-                    disabled={safePageIdx === pages.length - 1}
-                    className="w-7 h-7 rounded-full hover:bg-white disabled:opacity-40 flex items-center justify-center text-gray-700 cursor-pointer"
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                </div>
-              )}
-
-              {hasVisualMaterial && (
-                <button
-                  type="button"
-                  onClick={handleDownloadPdf}
-                  disabled={isDownloading}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#DCEBFE] hover:bg-[#B9D8FC] text-[#1D4ED8] font-bold text-xs transition-colors cursor-pointer"
-                >
-                  {isDownloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                  <span className="hidden sm:inline">Stáhnout PDF</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                onClick={() => setIsFullscreenOpen(false)}
-                aria-label="Zavřít zvětšený náhled"
-                className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-600 flex items-center justify-center transition-colors cursor-pointer"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6">
-            {currentPage ? (
-              renderPageContent(currentPage, 'fullscreen')
-            ) : studyTheory?.trim() ? (
-              <div className="max-w-3xl mx-auto bg-white rounded-2xl p-6 sm:p-8 shadow-xs text-gray-800 text-base leading-relaxed">
-                <MathRenderer content={studyTheory} imageMap={theoryImages} />
-              </div>
-            ) : null}
-          </div>
-        </DialogContent>
-      </Dialog>
+      <FullscreenMaterialReaderModal
+        isOpen={isFullscreenOpen}
+        onClose={() => setIsFullscreenOpen(false)}
+        title={`${title} — Teorie`}
+        pages={pages}
+        currentPageIdx={safePageIdx}
+        onPageChange={setCurrentPageIdx}
+        watermarkText={effectiveWatermark}
+        canExport={canExport && !isLocked}
+        isAlreadyUnlocked={isAlreadyUnlocked}
+        isCourseExempt={isCourseExempt}
+        quota={quota}
+        onDownloadPdf={handleDownloadPdf}
+        onPrint={handlePrint}
+        isDownloading={isDownloading}
+        isPrinting={isPrinting}
+        studyTheory={studyTheory}
+        theoryImages={theoryImages}
+      />
     </>
   );
 }

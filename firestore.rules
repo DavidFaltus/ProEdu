@@ -148,9 +148,12 @@ service cloud.firestore {
           'enrolledCourseIds', 'courseId', 'subscriptionStatus',
           'subscriptionPeriodEnd', 'subscriptionExpiresAt', 'subscriptionExpiredAt',
           'subscriptionCancelledAt', 'subscriptionCancelReason',
-          'initRecurringTransId', 'pendingOrderId', 'isAdmin', 'referredBy',
+          'initRecurringTransId', 'recurringCancelled', 'recurringCancelledAt',
+          'pendingOrderId', 'isAdmin', 'referredBy',
           'surveyCompleted', 'surveyAnswer', 'surveyCustomAnswer', 'surveySubmittedAt',
-          'iuctoCustomerId', 'lastRecurringAttemptDate', 'xp', 'gardenPlants',
+          'iuctoCustomerId', 'lastRecurringAttemptDate', 'lastRecurringOrderId',
+          'lastRecurringPaymentFailed', 'lastRecurringFailureReason', 'lastRecurringFailedAt',
+          'xp', 'gardenPlants',
           'focusSessionsHistory', 'lastPracticeDate', 'lastStreakPracticeDate',
           'premiumSince', 'cancelledOrderIds'
         ]) &&
@@ -200,10 +203,13 @@ service cloud.firestore {
           'lastDailyGrantDate', 'streak', 'lastPracticeDate', 'lastStreakPracticeDate',
           'xp', 'subscriptionStatus', 'subscriptionPeriodEnd', 'subscriptionExpiresAt',
           'subscriptionExpiredAt', 'subscriptionCancelledAt', 'subscriptionCancelReason',
-          'initRecurringTransId', 'pendingOrderId', 'referredBy', 'referralsCount',
+          'initRecurringTransId', 'recurringCancelled', 'recurringCancelledAt',
+          'pendingOrderId', 'referredBy', 'referralsCount',
           'referralCode', 'surveyCompleted', 'surveyAnswer', 'surveyCustomAnswer',
           'surveySubmittedAt', 'gardenPlants', 'focusSessionsHistory', 'isAdmin',
-          'iuctoCustomerId', 'lastRecurringAttemptDate', 'premiumSince'
+          'iuctoCustomerId', 'lastRecurringAttemptDate', 'lastRecurringOrderId',
+          'lastRecurringPaymentFailed', 'lastRecurringFailureReason', 'lastRecurringFailedAt',
+          'premiumSince'
         ]) &&
         isOptionalString(data, 'displayName', 128) &&
         isOptionalString(data, 'name', 128) &&
@@ -222,7 +228,7 @@ service cloud.firestore {
         isOptionalBool(data, 'onboardingCompleted') &&
         (!('focusAreas' in data) || (data.focusAreas is list && data.focusAreas.size() <= 30)) &&
         (!('preferredPaymentMethod' in data) || data.preferredPaymentMethod == null ||
-          data.preferredPaymentMethod in ['comgate', 'qr_bank_transfer']) &&
+          data.preferredPaymentMethod == 'comgate') &&
         (!('billingDetails' in data) || data.billingDetails == null ||
           isValidBillingDetails(data.billingDetails)) &&
         isOptionalTimestampOrString(data, 'updatedAt') &&
@@ -271,7 +277,7 @@ service cloud.firestore {
     function isValidPracticeSubtopic(data) {
       return data.keys().hasOnly([
           'id', 'title', 'topicId', 'topic', 'subjectId', 'description',
-          'order', 'isHidden', 'hasStudyMaterial', 'materialId',
+          'order', 'isHidden', 'hasStudyMaterial', 'materialId', 'pairedMaterialId',
           'fileUrl', 'pdfUrl', 'downloadUrl', 'thumbnailUrl', 'fileType',
           'originalName', 'svgUrl', 'svgContent', 'studyTheory', 'studySteps',
           'studyTips', 'studyImages', 'studyVideos', 'sampleProblem',
@@ -286,6 +292,7 @@ service cloud.firestore {
         isOptionalBool(data, 'isHidden') &&
         isOptionalBool(data, 'hasStudyMaterial') &&
         isOptionalString(data, 'materialId', 128) &&
+        isOptionalString(data, 'pairedMaterialId', 128) &&
         isOptionalString(data, 'fileUrl', 5000) &&
         isOptionalString(data, 'pdfUrl', 5000) &&
         isOptionalString(data, 'downloadUrl', 5000) &&
@@ -356,6 +363,8 @@ service cloud.firestore {
       return data.keys().hasOnly([
           'id', 'title', 'subject', 'subjectId', 'topic', 'topicId', 'subtopicId',
           'studyTheory', 'content', 'studySteps', 'hiddenFromLibrary', 'isHidden',
+          'materialType', 'grade', 'order', 'pageCount', 'isFreeSample', 'isExamPrep',
+          'activeChunkPrefix',
           'status', 'errorMessage', 'originalName', 'fileType', 'fileSize',
           'thumbnailUrl', 'fileUrl', 'pdfUrl', 'svgUrl', 'downloadUrl',
           'hasStudyMaterial', 'hasThumbnailChunk', 'chunkCount', 'chunkedPdf',
@@ -373,6 +382,15 @@ service cloud.firestore {
           (data.studySteps is list && data.studySteps.size() <= 50)) &&
         isOptionalBool(data, 'hiddenFromLibrary') &&
         isOptionalBool(data, 'isHidden') &&
+        (!('materialType' in data) || data.materialType == null ||
+          data.materialType in ['worksheet', 'summary', 'cheatsheet']) &&
+        (!('grade' in data) || data.grade == null ||
+          data.grade in ['5', '7', '9', 'all']) &&
+        isOptionalNumber(data, 'order', -1000, 10000) &&
+        isOptionalNumber(data, 'pageCount', 0, 500) &&
+        isOptionalBool(data, 'isFreeSample') &&
+        isOptionalBool(data, 'isExamPrep') &&
+        isOptionalString(data, 'activeChunkPrefix', 128) &&
         (!('status' in data) || data.status == null ||
           data.status in ['processing', 'ready', 'error']) &&
         isOptionalString(data, 'errorMessage', 1000) &&
@@ -389,6 +407,21 @@ service cloud.firestore {
         isOptionalNumber(data, 'chunkCount', 0, 500) &&
         isOptionalBool(data, 'chunkedPdf') &&
         isOptionalString(data, 'createdBy', 128) &&
+        isOptionalTimestampOrString(data, 'createdAt') &&
+        isOptionalTimestampOrString(data, 'updatedAt');
+    }
+
+    function isValidStudyProgress(data, userId, subtopicId) {
+      return data.keys().hasOnly([
+          'uid', 'subtopicId', 'completedSteps', 'verifiedAnswers',
+          'totalSteps', 'createdAt', 'updatedAt'
+        ]) &&
+        data.uid == userId &&
+        data.subtopicId == subtopicId &&
+        data.completedSteps is list &&
+        data.completedSteps.size() <= 100 &&
+        (!('verifiedAnswers' in data) || data.verifiedAnswers == null || data.verifiedAnswers is map) &&
+        isOptionalNumber(data, 'totalSteps', 0, 100) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'updatedAt');
     }
@@ -655,6 +688,23 @@ service cloud.firestore {
            request.resource.data.role in ['free', 'student', 'premium', 'course', 'teacher'])) ||
         (isOwner(userId) && isValidUserProfileOwnerUpdate(request.resource.data));
       allow delete: if isTeacher();
+
+      match /materialQuotas/{periodKey} {
+        allow read: if isOwner(userId) || isTeacher();
+        allow write: if false;
+      }
+
+      match /studyProgress/{subtopicId} {
+        allow read: if isOwner(userId) || isTeacher();
+        allow create: if isOwner(userId) &&
+          isValidStudyProgress(request.resource.data, userId, subtopicId);
+        allow update: if isOwner(userId) &&
+          unchanged('uid') &&
+          unchanged('subtopicId') &&
+          unchanged('createdAt') &&
+          isValidStudyProgress(request.resource.data, userId, subtopicId);
+        allow delete: if isOwner(userId) || isTeacher();
+      }
     }
 
     match /questions/{qId} {
@@ -708,7 +758,7 @@ service cloud.firestore {
     }
 
     match /learningSheets/{sheetId} {
-      allow read: if isTeacher() || isPaidUser();
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidLearningSheet(request.resource.data);
       allow update: if isTeacher() &&
         unchanged('createdAt') &&
@@ -717,7 +767,7 @@ service cloud.firestore {
       allow delete: if isTeacher();
 
       match /chunks/{chunkId} {
-        allow read: if isTeacher() || isPaidUser();
+        allow read: if isTeacher();
         allow create: if isTeacher() && isValidLearningSheetChunk(request.resource.data);
         allow update: if isTeacher() &&
           unchanged('createdAt') &&

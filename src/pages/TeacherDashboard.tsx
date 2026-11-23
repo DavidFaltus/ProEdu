@@ -2,13 +2,16 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Video, BarChart3, CreditCard, Bug, ShieldAlert } from 'lucide-react';
+import { Video, ShieldAlert } from 'lucide-react';
 import {
   BrainPinkIcon,
   MaterialYellowIcon,
   TeamBlueIcon,
   BubbleYellowIcon,
   CapIcon,
+  SurveyBlueIcon,
+  PaymentPinkIcon,
+  BugBlueIcon,
 } from '../components/common/CustomIcon';
 import PracticeManager from '../components/admin/PracticeManager';
 import MaterialsManager from '../components/admin/MaterialsManager';
@@ -183,21 +186,21 @@ export default function TeacherDashboard() {
             value="surveys" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-blue-700 data-[state=active]:shadow-sm data-[state=active]:border-blue-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <BarChart3 size={16} />
+            <SurveyBlueIcon size={17} />
             <span>Dotazníky</span>
           </TabsTrigger>
           <TabsTrigger 
             value="orders" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-emerald-700 data-[state=active]:shadow-sm data-[state=active]:border-emerald-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <CreditCard size={16} />
+            <PaymentPinkIcon size={17} />
             <span>Objednávky</span>
           </TabsTrigger>
           <TabsTrigger 
             value="bugReports" 
             className="shrink-0 rounded-xl data-[state=active]:bg-white data-[state=active]:text-rose-600 data-[state=active]:shadow-sm data-[state=active]:border-rose-200 border border-transparent px-3.5 sm:px-4 py-2 sm:py-2.5 flex items-center gap-2 font-bold text-xs sm:text-sm transition-all"
           >
-            <Bug size={16} />
+            <BugBlueIcon size={17} />
             <span>Hlášení chyb</span>
           </TabsTrigger>
           </TabsList>
