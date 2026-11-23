@@ -43,7 +43,7 @@ import {
   updateStudentAccess,
   deleteStudentByAdmin 
 } from '../../services/studentProgressService';
-import { getAllCourses, enrollStudentInCourse, unenrollStudentFromCourse } from '../../services/courseService';
+import { getAllCourses, enrollStudentInCourse, unenrollStudentFromCourse, formatCoursePrice } from '../../services/courseService';
 import {
   getStudentPracticeTodos,
   updateScheduledTodoDueDate,
@@ -1138,9 +1138,9 @@ export default function StudentsProgressManager() {
                           </div>
                         </div>
 
-                        {course.price && (
+                        {course.price !== undefined && course.price !== '' && (
                           <span className="text-[11px] font-bold text-gray-500 shrink-0">
-                            {course.price}
+                            {formatCoursePrice(course.price)}
                           </span>
                         )}
                       </div>

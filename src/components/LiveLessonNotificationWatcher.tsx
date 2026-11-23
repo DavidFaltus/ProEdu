@@ -3,6 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { subscribeToStudentLiveLessons } from '../services/liveLessonService';
 import { LiveLesson } from '../types';
 import { isLessonJoined, markLessonAsJoined, playLessonNotificationSound } from '../lib/liveLessonUtils';
+import { sanitizeSafeUrl } from '../utils/urlSecurity';
 import { toast } from 'sonner';
 import { Video, ExternalLink, BellRing, X } from 'lucide-react';
 
@@ -94,9 +95,14 @@ export default function LiveLessonNotificationWatcher() {
 
                   <button
                     onClick={() => {
+                      const safeMeetUrl = sanitizeSafeUrl(lesson.meetUrl, { httpOnly: true });
+                      if (!safeMeetUrl) {
+                        toast.error('Odkaz na online hodinu má neplatný formát.');
+                        return;
+                      }
                       markLessonAsJoined(lesson.id);
                       toast.dismiss(toastId);
-                      window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer');
+                      window.open(safeMeetUrl, '_blank', 'noopener,noreferrer');
                     }}
                     className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black flex items-center gap-1.5 shadow-lg shadow-red-600/40 transition-transform hover:scale-105 cursor-pointer"
                   >

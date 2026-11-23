@@ -44,7 +44,7 @@ export function isPdfResource(item?: {
   const url = (item.fileUrl || '').toLowerCase();
   if (url.endsWith('.pdf') || url.startsWith('data:application/pdf')) return true;
   if (item.svgUrl && !url.endsWith('.pdf')) return false;
-  return Boolean(url.includes('/api/materials/') && !item.svgContent && !item.svgUrl);
+  return Boolean(isSameOriginApiUrl(item.fileUrl, '/api/materials/') && !item.svgContent && !item.svgUrl);
 }
 
 export interface ConvertedSvgResult {
@@ -58,6 +58,7 @@ export interface ConvertedSvgResult {
 }
 
 import { sanitizeSvg } from './svgUtils';
+import { isSameOriginApiUrl, sanitizeMaterialPreviewUrl, sanitizeSafeUrl } from './urlSecurity';
 export { sanitizeSvg };
 
 /**
@@ -494,13 +495,13 @@ export async function downloadMaterialAsPdf(material: {
         (material.fileUrl && (
           material.fileUrl.toLowerCase().endsWith('.pdf') ||
           material.fileUrl.startsWith('data:application/pdf') ||
-          material.fileUrl.includes('/api/materials/')
+          isSameOriginApiUrl(material.fileUrl, '/api/materials/')
         ) ? (material.fileUrl.endsWith('/file') ? material.fileUrl.replace(/\/file$/, '/download') : material.fileUrl) : null));
 
   let svgText = material.svgContent || '';
 
   const getAuthHeaders = async (targetUrl: string): Promise<Record<string, string>> => {
-    if (!targetUrl.startsWith('/api/') && !targetUrl.includes('/api/materials/')) {
+    if (!isSameOriginApiUrl(targetUrl, '/api/materials/')) {
       return {};
     }
     try {
@@ -513,37 +514,51 @@ export async function downloadMaterialAsPdf(material: {
   };
 
   if (directPdfUrl) {
-    try {
-      const headers = await getAuthHeaders(directPdfUrl);
-      const response = await fetch(directPdfUrl, { headers, credentials: 'include' });
-      if (response.ok) {
-        const contentType = (response.headers.get('content-type') || '').toLowerCase();
-        if (contentType.includes('svg')) {
-          svgText = await response.text();
-        } else {
-          const blob = await response.blob();
-          const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
-          const blobUrl = URL.createObjectURL(pdfBlob);
-          const link = document.createElement('a');
-          link.href = blobUrl;
-          link.download = downloadFileName;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
-          return;
+    const isSameOriginProtected = isSameOriginApiUrl(directPdfUrl, '/api/materials/');
+    const safeDirectPdfUrl = isSameOriginProtected
+      ? directPdfUrl
+      : (sanitizeMaterialPreviewUrl(directPdfUrl) || sanitizeSafeUrl(directPdfUrl, { httpOnly: true }));
+
+    if (safeDirectPdfUrl) {
+      try {
+        const headers = isSameOriginProtected ? await getAuthHeaders(safeDirectPdfUrl) : {};
+        const response = await fetch(safeDirectPdfUrl, {
+          headers,
+          credentials: isSameOriginProtected ? 'include' : 'omit',
+        });
+        if (response.ok) {
+          const contentType = (response.headers.get('content-type') || '').toLowerCase();
+          if (contentType.includes('svg')) {
+            svgText = sanitizeSvg(await response.text());
+          } else {
+            const blob = await response.blob();
+            const pdfBlob = blob.type === 'application/pdf' ? blob : new Blob([blob], { type: 'application/pdf' });
+            const blobUrl = URL.createObjectURL(pdfBlob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = downloadFileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(() => URL.revokeObjectURL(blobUrl), 5000);
+            return;
+          }
         }
-      }
-    } catch {
-      if (!directPdfUrl.startsWith('/api/')) {
-        const link = document.createElement('a');
-        link.href = directPdfUrl;
-        link.download = downloadFileName;
-        link.target = '_blank';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        return;
+      } catch {
+        if (!isSameOriginProtected) {
+          const safeFallbackUrl = sanitizeSafeUrl(directPdfUrl, { httpOnly: true });
+          if (safeFallbackUrl) {
+            const link = document.createElement('a');
+            link.href = safeFallbackUrl;
+            link.download = downloadFileName;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            return;
+          }
+        }
       }
     }
   }
@@ -552,12 +567,22 @@ export async function downloadMaterialAsPdf(material: {
   if (!svgText) {
     const svgSourceUrl = material.svgUrl || (storedAsSvg ? material.fileUrl : null);
     if (svgSourceUrl) {
-      const headers = await getAuthHeaders(svgSourceUrl);
-      const resp = await fetch(svgSourceUrl, { headers, credentials: 'include' });
+      const isSameOriginSvg = isSameOriginApiUrl(svgSourceUrl, '/api/materials/');
+      const safeSvgSourceUrl = isSameOriginSvg
+        ? svgSourceUrl
+        : sanitizeSafeUrl(svgSourceUrl, { httpOnly: true });
+      if (!safeSvgSourceUrl) {
+        throw new Error('Neplatná adresa podkladu pro stažení PDF.');
+      }
+      const headers = isSameOriginSvg ? await getAuthHeaders(safeSvgSourceUrl) : {};
+      const resp = await fetch(safeSvgSourceUrl, {
+        headers,
+        credentials: isSameOriginSvg ? 'include' : 'omit',
+      });
       if (!resp.ok) {
         throw new Error('Nepodařilo se načíst podklad pro stažení PDF.');
       }
-      svgText = await resp.text();
+      svgText = sanitizeSvg(await resp.text());
     }
   }
 

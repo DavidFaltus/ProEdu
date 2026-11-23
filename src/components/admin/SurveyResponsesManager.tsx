@@ -42,22 +42,11 @@ export interface SurveyResponseItem {
 }
 
 const SURVEYS_CACHE_KEY = 'surveys:all';
-const SURVEYS_SESSION_KEY = 'proedu_admin_surveys_cache';
 
 export default function SurveyResponsesManager() {
   const { user } = useAuth();
-  const [surveys, setSurveys] = useState<SurveyResponseItem[]>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const raw = sessionStorage.getItem(SURVEYS_SESSION_KEY);
-        if (raw) return JSON.parse(raw);
-      } catch {
-        // Ignore session cache parse error
-      }
-    }
-    return [];
-  });
-  const [loading, setLoading] = useState(() => surveys.length === 0);
+  const [surveys, setSurveys] = useState<SurveyResponseItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   // Filtry
@@ -158,13 +147,6 @@ export default function SurveyResponsesManager() {
       );
 
       setSurveys(fetched);
-      if (typeof window !== 'undefined') {
-        try {
-          sessionStorage.setItem(SURVEYS_SESSION_KEY, JSON.stringify(fetched));
-        } catch {
-          // Ignore storage quota error
-        }
-      }
 
       if (isManual) {
         toast.success(`Načteno ${fetched.length} vyplněných dotazníků`);
@@ -220,11 +202,6 @@ export default function SurveyResponsesManager() {
       const updated = surveys.filter(s => s.id !== item.id);
       setSurveys(updated);
       cacheManager.invalidate(SURVEYS_CACHE_KEY);
-      if (typeof window !== 'undefined') {
-        try {
-          sessionStorage.setItem(SURVEYS_SESSION_KEY, JSON.stringify(updated));
-        } catch {}
-      }
 
       setSurveyToDelete(null);
       toast.success('Odpověď z dotazníku byla úspěšně smazána.');

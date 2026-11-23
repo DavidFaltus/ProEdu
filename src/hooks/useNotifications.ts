@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { safeToDate } from '../lib/utils';
 import { subscribeToStudentLiveLessons, subscribeToTeacherLiveLessons, subscribeToStudentTodos } from '../services/liveLessonService';
 import { markInquiryAsRead } from '../services/inquiryService';
+import { fetchPracticeCatalog, fetchMaterialsCatalog } from '../services/practiceService';
 import { LiveLesson } from '../types';
 
 export type NotificationType = 
@@ -120,7 +121,7 @@ export function useNotifications() {
 
     // Helper: fetch only recent items, not older than 30 days and not older than registration
     const minTimestampDate = new Date(Math.max(userCreatedAt.getTime() - 60000, Date.now() - 30 * 24 * 60 * 60 * 1000));
-    const minTimestamp = Timestamp.fromDate(minTimestampDate);
+    const minTimestampMs = minTimestampDate.getTime();
 
     if (isTeacher) {
       // Teacher Notifications (bounded to latest 25 items)
@@ -180,26 +181,29 @@ export function useNotifications() {
 
     } else {
       // STUDENT NOTIFICATIONS
+      let isCancelledCatalog = false;
+      unsubs.push(() => {
+        isCancelledCatalog = true;
+      });
 
-      // 1. New practice subtopics - available to ALL students (Free, Pro, Course)
-      try {
-        const qPractice = query(
-          collection(db, 'practiceSubtopics'),
-          where('createdAt', '>=', minTimestamp),
-          limit(15)
-        );
-        const unsubPractice = onSnapshot(
-          qPractice,
-          (snap) => {
-            const items = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setPracticeList(items);
-          },
-          (err) => console.warn('Error listening to practice subtopics notifications:', err)
-        );
-        unsubs.push(unsubPractice);
-      } catch (err) {
-        console.warn('Failed to subscribe to practice subtopics notifications', err);
-      }
+      // 1. New practice subtopics - fetched via sanitized backend catalog API (never direct Firestore read)
+      fetchPracticeCatalog()
+        .then((catalog) => {
+          if (isCancelledCatalog) return;
+          const recentSubtopics = (catalog.subtopics || [])
+            .filter((item: any) => {
+              const created = safeToDate(item.createdAt);
+              return Boolean(created && created.getTime() >= minTimestampMs);
+            })
+            .sort((a: any, b: any) => {
+              const ta = safeToDate(a.createdAt)?.getTime() || 0;
+              const tb = safeToDate(b.createdAt)?.getTime() || 0;
+              return tb - ta;
+            })
+            .slice(0, 15);
+          setPracticeList(recentSubtopics);
+        })
+        .catch((err) => console.warn('Error fetching practice subtopics notifications:', err));
 
       // 1b. Student Todos / Assigned Practice from Teacher (for ALL students including Free)
       try {
@@ -222,27 +226,26 @@ export function useNotifications() {
       if (!isFree) {
         // PRO & COURSE STUDENTS:
 
-        // 2. Learning sheets (recent sheets created after minTimestamp)
-        try {
-          const qSheets = query(
-            collection(db, 'learningSheets'),
-            where('createdAt', '>=', minTimestamp),
-            limit(15)
-          );
-          const unsubSheets = onSnapshot(
-            qSheets,
-            (snap) => {
-              const items = snap.docs
-                .map(doc => ({ id: doc.id, ...(doc.data() as any) }))
-                .filter((item: any) => !item.hiddenFromLibrary && (!item.status || item.status === 'ready'));
-              setSheetsList(items);
-            },
-            (err) => console.warn('Error listening to notifications (learningSheets):', err)
-          );
-          unsubs.push(unsubSheets);
-        } catch (err) {
-          console.warn('Failed to subscribe to sheets notifications', err);
-        }
+        // 2. Learning sheets - fetched via backend materials catalog API (never direct Firestore read)
+        fetchMaterialsCatalog()
+          .then(({ materials }) => {
+            if (isCancelledCatalog) return;
+            const recentSheets = (materials || [])
+              .filter((item: any) => {
+                if (item.hiddenFromLibrary) return false;
+                if (item.status && item.status !== 'ready') return false;
+                const created = safeToDate(item.createdAt);
+                return Boolean(created && created.getTime() >= minTimestampMs);
+              })
+              .sort((a: any, b: any) => {
+                const ta = safeToDate(a.createdAt)?.getTime() || 0;
+                const tb = safeToDate(b.createdAt)?.getTime() || 0;
+                return tb - ta;
+              })
+              .slice(0, 15);
+            setSheetsList(recentSheets);
+          })
+          .catch((err) => console.warn('Error fetching learning sheets notifications:', err));
 
         // 3. Student Inquiries (answered, bounded)
         try {

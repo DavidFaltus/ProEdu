@@ -22,6 +22,7 @@ import { toast } from 'sonner';
 import { LiveLesson } from '../../types';
 import { updateLessonStatus } from '../../services/liveLessonService';
 import { cn, safeToDate } from '../../lib/utils';
+import { sanitizeSafeUrl } from '../../utils/urlSecurity';
 
 interface TeacherLessonsOverviewProps {
   lessons: LiveLesson[];
@@ -61,13 +62,22 @@ export default function TeacherLessonsOverview({
   const primaryLesson = sortedLessons[0];
   const remainingLessons = sortedLessons.slice(1);
 
+  const openSafeMeetUrl = (url?: string | null) => {
+    const safeUrl = sanitizeSafeUrl(url, { httpOnly: true });
+    if (!safeUrl) {
+      toast.error('Odkaz na online hodinu má neplatný formát.');
+      return;
+    }
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const handleStartLesson = async (lesson: LiveLesson) => {
     if (!lesson.id) return;
     setUpdatingId(lesson.id);
     try {
       await updateLessonStatus(lesson.id, 'live');
       toast.success('Lekce byla spuštěna! Otevírám Google Meet...');
-      window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer');
+      openSafeMeetUrl(lesson.meetUrl);
     } catch (err: any) {
       toast.error('Nepodařilo se spustit lekci: ' + err.message);
     } finally {
@@ -121,7 +131,7 @@ export default function TeacherLessonsOverview({
               </div>
             </div>
             <Button
-              onClick={() => window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer')}
+              onClick={() => openSafeMeetUrl(lesson.meetUrl)}
               className="h-8 px-3 rounded-xl bg-white hover:bg-gray-100 text-red-600 font-black text-xs shrink-0 shadow cursor-pointer transition-transform hover:scale-105"
             >
               Otevřít hovor
@@ -199,7 +209,7 @@ export default function TeacherLessonsOverview({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer')}
+                onClick={() => openSafeMeetUrl(lesson.meetUrl)}
                 className="h-9 px-3.5 rounded-xl border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-2xs"
               >
                 <ExternalLink size={13} />
@@ -211,7 +221,7 @@ export default function TeacherLessonsOverview({
           <div>
             {isLive ? (
               <Button
-                onClick={() => window.open(lesson.meetUrl, '_blank', 'noopener,noreferrer')}
+                onClick={() => openSafeMeetUrl(lesson.meetUrl)}
                 className="h-10 px-5 rounded-xl font-black text-xs sm:text-sm bg-red-600 hover:bg-red-700 text-white flex items-center justify-center gap-2 shadow-md shadow-red-300 cursor-pointer transition-transform hover:scale-[1.02]"
               >
                 <Video size={16} />

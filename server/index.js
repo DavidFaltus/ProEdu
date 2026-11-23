@@ -7,12 +7,15 @@ import { fileURLToPath } from 'url';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { user as authUserTrigger } from 'firebase-functions/v1/auth';
-import { GoogleGenAI, Type } from '@google/genai';
 import { applicationDefault, cert, getApp, getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import {
+  isStrictSingleEmail,
+  sanitizeAllowedBugReportPageUrl,
+  sanitizeAllowedBugReportScreenshotUrl,
+  resolveBugReportRecipient,
   sendOtpEmail,
   sendOrderQrEmail,
   sendPaymentConfirmedEmail,
@@ -34,6 +37,10 @@ import {
   normalizeMaterialType,
   normalizeMaterialGrade,
 } from './utils/materialQuota.js';
+import {
+  embedWatermarkIntoSvg,
+  embedWatermarkIntoPdf,
+} from './utils/materialWatermark.js';
 
 console.log('--- SERVER STARTING ---');
 
@@ -162,7 +169,10 @@ const db = getFirestore(appInstance, 'ai-studio-1fc75345-16e5-4af6-a275-4152ed61
 const storage = getStorage();
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// V Cloud Functions / Cloud Run za Firebase Hosting (Fastly -> GFE -> Cloud Run = 2 důvěryhodné proxy hopy)
+// ignoruje Express levé klientem podvržené položky v X-Forwarded-For a req.ip vybere skutečnou IP klienta.
+// Na lokálním vývojovém serveru bez reverzní proxy nepoužíváme důvěru v X-Forwarded-For (false).
+app.set('trust proxy', isCloudFunction ? 2 : false);
 
 const PROD_CORS_ORIGINS = [
   'https://proeducator.eu',
@@ -207,29 +217,54 @@ function getPragueDateString(date = new Date()) {
   }).format(date);
 }
 
-function getClientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
+const DEFAULT_MAP_MAX_ENTRIES = 5000;
+
+function setBoundedMapEntry(map, key, value, maxEntries = DEFAULT_MAP_MAX_ENTRIES) {
+  if (map.has(key)) {
+    map.delete(key);
   }
-  return req.ip || req.socket?.remoteAddress || 'unknown';
+  map.set(key, value);
+  while (map.size > maxEntries) {
+    const oldestKey = map.keys().next().value;
+    if (oldestKey === undefined) break;
+    map.delete(oldestKey);
+  }
+}
+
+function getClientIp(req) {
+  // SEC-09: Nikdy nečteme nejlevější položku X-Forwarded-For (útočník ji může libovolně podvrhnout).
+  // Používáme Express req.ip kalibrované přes app.set('trust proxy', isCloudFunction ? 2 : false).
+  if (typeof req?.ip === 'string' && req.ip.trim()) {
+    return req.ip.trim();
+  }
+  if (typeof req?.socket?.remoteAddress === 'string' && req.socket.remoteAddress.trim()) {
+    return req.socket.remoteAddress.trim();
+  }
+  return 'unknown';
 }
 
 function isLoopbackRequest(req) {
-  const ip = String(req.ip || req.socket?.remoteAddress || '');
-  const hostname = String(req.hostname || '');
-  const isLoopbackIp =
-    ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
-  const isLoopbackHost = hostname === 'localhost' || hostname === '127.0.0.1';
-  return isLoopbackIp && isLoopbackHost;
+  // SEC-38: Kontrolujeme přímo socket.remoteAddress (bez spoléhání na proxy hlavičky)
+  const remoteAddress = String(req?.socket?.remoteAddress || '').trim();
+  return (
+    remoteAddress === '127.0.0.1' ||
+    remoteAddress === '::1' ||
+    remoteAddress === '::ffff:127.0.0.1'
+  );
 }
 
-function createRateLimiter({ windowMs, max, keyFn, message = 'Příliš mnoho požadavků. Zkuste to za chvíli.' }) {
+function createRateLimiter({
+  windowMs,
+  max,
+  keyFn,
+  message = 'Příliš mnoho požadavků. Zkuste to za chvíli.',
+  maxEntries = DEFAULT_MAP_MAX_ENTRIES,
+}) {
   const buckets = new Map();
   let lastPrune = Date.now();
   return function rateLimitMiddleware(req, res, next) {
     const now = Date.now();
-    if (now - lastPrune > windowMs) {
+    if (now - lastPrune > windowMs || buckets.size >= maxEntries) {
       for (const [k, entry] of buckets.entries()) {
         if (entry.resetAt <= now) buckets.delete(k);
       }
@@ -242,7 +277,7 @@ function createRateLimiter({ windowMs, max, keyFn, message = 'Příliš mnoho po
       entry = { count: 0, resetAt: now + windowMs };
     }
     entry.count += 1;
-    buckets.set(key, entry);
+    setBoundedMapEntry(buckets, key, entry, maxEntries);
 
     if (entry.count > max) {
       const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
@@ -251,6 +286,100 @@ function createRateLimiter({ windowMs, max, keyFn, message = 'Příliš mnoho po
     }
     return next();
   };
+}
+
+const distributedRateLimitFallbackMap = new Map();
+
+function checkInMemoryFallbackRateLimit(key, windowMs, max) {
+  const now = Date.now();
+  let entry = distributedRateLimitFallbackMap.get(key);
+  if (!entry || entry.resetAt <= now) {
+    entry = { count: 0, resetAt: now + windowMs };
+  }
+  if (entry.count >= max) {
+    const retryAfterSec = Math.max(1, Math.ceil((entry.resetAt - now) / 1000));
+    setBoundedMapEntry(distributedRateLimitFallbackMap, key, entry, DEFAULT_MAP_MAX_ENTRIES);
+    return { allowed: false, remaining: 0, retryAfterSec, count: entry.count, resetAt: entry.resetAt };
+  }
+  entry.count += 1;
+  setBoundedMapEntry(distributedRateLimitFallbackMap, key, entry, DEFAULT_MAP_MAX_ENTRIES);
+  return {
+    allowed: true,
+    remaining: Math.max(0, max - entry.count),
+    retryAfterSec: 0,
+    count: entry.count,
+    resetAt: entry.resetAt,
+  };
+}
+
+/**
+ * SEC-09: Distribuovaný rate-limiter sdílený napříč instancemi Cloud Functions přes server-only kolekci rateLimits.
+ * Při výpadku Firestore se bezpečně přepne na omezený paměťový fallback.
+ */
+async function checkDistributedRateLimit({ key, windowMs, max }) {
+  const now = Date.now();
+  const normalizedKey = String(key || 'unknown');
+  const docId = crypto.createHash('sha256').update(normalizedKey).digest('hex');
+  const ref = db.collection('rateLimits').doc(docId);
+
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const data = snap.exists ? snap.data() || {} : null;
+      const isWindowActive = Boolean(data && typeof data.resetAt === 'number' && data.resetAt > now);
+      const resetAt = isWindowActive ? data.resetAt : now + windowMs;
+      const currentCount = isWindowActive ? Number(data.count || 0) : 0;
+
+      if (currentCount >= max) {
+        const retryAfterSec = Math.max(1, Math.ceil((resetAt - now) / 1000));
+        return {
+          allowed: false,
+          remaining: 0,
+          retryAfterSec,
+          count: currentCount,
+          resetAt,
+        };
+      }
+
+      const nextCount = currentCount + 1;
+      tx.set(ref, {
+        keyHash: docId,
+        count: nextCount,
+        resetAt,
+        expiresAt: Timestamp.fromMillis(resetAt + 60 * 60 * 1000),
+        updatedAt: Timestamp.now(),
+      });
+
+      return {
+        allowed: true,
+        remaining: Math.max(0, max - nextCount),
+        retryAfterSec: 0,
+        count: nextCount,
+        resetAt,
+      };
+    });
+  } catch (err) {
+    console.warn(`[DistributedRateLimit fallback] (${normalizedKey.slice(0, 40)}):`, err?.message || err);
+    return checkInMemoryFallbackRateLimit(normalizedKey, windowMs, max);
+  }
+}
+
+/**
+ * SEC-32: CDN hlavičky pro veřejné read-only katalogy (anonymní provoz cachovatelný na Fastly CDN,
+ * přihlášené požadavky s Authorization hlavičkou vždy private, no-store).
+ */
+function setPublicCatalogCacheHeaders(req, res) {
+  const existingVary = String(res.getHeader('Vary') || '').trim();
+  if (!existingVary) {
+    res.setHeader('Vary', 'Authorization');
+  } else if (!existingVary.toLowerCase().includes('authorization')) {
+    res.setHeader('Vary', `${existingVary}, Authorization`);
+  }
+  if (!req.headers.authorization) {
+    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=300, stale-while-revalidate=60');
+  } else {
+    res.setHeader('Cache-Control', 'private, no-store');
+  }
 }
 
 function parseIsoMillis(val) {
@@ -429,25 +558,46 @@ async function syncCustomClaimsIfNeeded(uid, role, enrolledCourseIds, currentCla
   }
 }
 
+const ROLE_PRIVILEGE_RANK = {
+  student: 0,
+  free: 0,
+  premium: 1,
+  course: 2,
+  teacher: 3
+};
+
+// SEC-11: Bezpečné zneplatnění refresh tokenů při odebrání oprávnění / refundu / odebrání kurzu / smazání účtu
+async function revokeUserTokensSafe(uid, reason = 'privilege-change') {
+  if (!uid) return false;
+  try {
+    await auth.revokeRefreshTokens(uid);
+    return true;
+  } catch (err) {
+    if (err?.code === 'auth/user-not-found') {
+      return false;
+    }
+    console.warn(`[RevokeRefreshTokens Warning] UID ${uid} (${reason}):`, err?.code || err?.message || err);
+    return false;
+  }
+}
+
+const STANDARD_BODY_LIMIT_BYTES = 2 * 1024 * 1024; // 2 MiB
+const MATERIAL_UPLOAD_BODY_LIMIT_BYTES = 30 * 1024 * 1024; // 30 MiB
+
+function isMaterialUploadRoute(req) {
+  const pathname = String(req.path || '').split('?')[0];
+  return (
+    (req.method === 'POST' && pathname === '/api/materials/upload') ||
+    (req.method === 'PUT' && /^\/api\/materials\/[^/]+$/.test(pathname))
+  );
+}
+
 let serverInitialized = false;
 function setupExpressApp() {
   if (serverInitialized) return;
   serverInitialized = true;
 
-  const standardJsonParser = express.json({ limit: '2mb' });
-  const materialUploadJsonParser = express.json({ limit: '30mb' });
-  app.use((req, res, next) => {
-    const isMaterialUpload =
-      (req.method === 'POST' && req.path === '/api/materials/upload') ||
-      (req.method === 'PUT' && /^\/api\/materials\/[^/]+$/.test(req.path));
-    if (isMaterialUpload) {
-      return materialUploadJsonParser(req, res, next);
-    }
-    return standardJsonParser(req, res, next);
-  });
-  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
-
-  // Normalizace URL pouze v prostředí Cloud Functions
+  // Normalizace URL pouze v prostředí Cloud Functions (před velikostním guardem i JSON parsery)
   if (isCloudFunction) {
     app.use((req, _res, next) => {
       if (req.url !== '/health' && req.url !== '/api' && !req.url.startsWith('/api/')) {
@@ -456,6 +606,43 @@ function setupExpressApp() {
       next();
     });
   }
+
+  // SEC-14: Ranní guard velikosti těla (chrání i před předparsovaným req.rawBody v Cloud Functions v2
+  // a blokuje neautentizované >2 MB upload požadavky dříve, než se parsuje 30 MB JSON)
+  app.use((req, res, next) => {
+    const contentLengthHeader = Number(req.headers['content-length']);
+    const contentLength = Number.isFinite(contentLengthHeader) && contentLengthHeader > 0 ? contentLengthHeader : 0;
+    const rawBodyLen = Buffer.isBuffer(req.rawBody) ? req.rawBody.length : 0;
+    const payloadBytes = Math.max(contentLength, rawBodyLen);
+
+    if (!isMaterialUploadRoute(req)) {
+      if (payloadBytes > STANDARD_BODY_LIMIT_BYTES) {
+        return res.status(413).json({ error: 'Požadavek je příliš velký (max 2 MB).' });
+      }
+      return next();
+    }
+
+    if (payloadBytes > MATERIAL_UPLOAD_BODY_LIMIT_BYTES) {
+      return res.status(413).json({ error: 'Nahrávaný požadavek je příliš velký (max 30 MB).' });
+    }
+    if (payloadBytes > STANDARD_BODY_LIMIT_BYTES) {
+      const authHeader = typeof req.headers.authorization === 'string' ? req.headers.authorization.trim() : '';
+      if (!authHeader.startsWith('Bearer ') || authHeader.length <= 7) {
+        return res.status(401).json({ error: 'Pro nahrání velkého souboru je vyžadováno přihlášení.' });
+      }
+    }
+    return next();
+  });
+
+  const standardJsonParser = express.json({ limit: '2mb' });
+  const materialUploadJsonParser = express.json({ limit: '30mb' });
+  app.use((req, res, next) => {
+    if (isMaterialUploadRoute(req)) {
+      return materialUploadJsonParser(req, res, next);
+    }
+    return standardJsonParser(req, res, next);
+  });
+  app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
   // Bezpečnostní hlavičky + explicitní CORS allowlist
   app.use((req, res, next) => {
@@ -489,6 +676,7 @@ function setupExpressApp() {
 
 setupExpressApp();
 
+const USER_ROLE_CACHE_TTL_MS = 5_000;
 const userRoleCache = new Map(); // uid -> { role, enrolledCourseIds, isPremium, email, periodEndMs, expiresAt }
 
 async function resolveUserState(uid) {
@@ -521,6 +709,7 @@ async function resolveUserState(uid) {
   }
   if (computed.downgraded) {
     await syncCustomClaimsIfNeeded(uid, computed.role, computed.enrolledCourseIds);
+    await revokeUserTokensSafe(uid, 'subscription-expired-lazy');
   }
 
   const state = {
@@ -531,9 +720,9 @@ async function resolveUserState(uid) {
     isPremium: computed.isPremium,
     subscriptionStatus: computed.subscriptionStatus,
     periodEndMs: computed.periodEndMs,
-    expiresAt: nowMs + 60000
+    expiresAt: nowMs + USER_ROLE_CACHE_TTL_MS
   };
-  userRoleCache.set(uid, state);
+  setBoundedMapEntry(userRoleCache, uid, state, DEFAULT_MAP_MAX_ENTRIES);
   return state;
 }
 
@@ -661,6 +850,20 @@ function requirePremiumOrTeacher(req, res, next) {
   return next();
 }
 
+// SEC-08: Ochrana citlivých akcí proti neověřeným password-provider účtům (přímý bypass OTP přes Identity Toolkit)
+function isUnverifiedPasswordCaller(req) {
+  if (req.user?.role === 'teacher') return false;
+  const signInProvider = req.decodedToken?.firebase?.sign_in_provider;
+  return signInProvider === 'password' && req.decodedToken?.email_verified !== true;
+}
+
+function requireVerifiedEmailForPasswordAuth(req, res, next) {
+  if (isUnverifiedPasswordCaller(req)) {
+    return res.status(403).json({ error: 'Pro tuto akci prosím nejprve ověřte svůj e-mail.' });
+  }
+  return next();
+}
+
 app.get(['/health', '/api/health'], (_req, res) => {
   res.json({ ok: true });
 });
@@ -668,6 +871,24 @@ app.get(['/health', '/api/health'], (_req, res) => {
 app.get(['/api', '/api/'], (_req, res) => {
   res.json({ ok: true, message: 'ProEdu API is running' });
 });
+
+// SEC-34: Omezuje interní platební / účetní identifikátory v klientském profilu ze session-bootstrap
+function sanitizeUserProfileForClient(rawProfile) {
+  const serialized = serializeTimestampFields(rawProfile || {});
+  const {
+    initRecurringTransId,
+    iuctoCustomerId: _iuctoCustomerId,
+    recurringChargeLockUntil: _recurringChargeLockUntil,
+    recurringChargeLockOwner: _recurringChargeLockOwner,
+    ...publicProfile
+  } = serialized;
+  return {
+    ...publicProfile,
+    hasRecurringPaymentMethod: Boolean(
+      typeof initRecurringTransId === 'string' && initRecurringTransId.trim()
+    ),
+  };
+}
 
 // Session bootstrap: vytvoří chybějící profil, vynutí expiraci a synchronizuje custom claims
 app.post('/api/auth/session-bootstrap', requireVerifiedToken, async (req, res) => {
@@ -680,6 +901,18 @@ app.post('/api/auth/session-bootstrap', requireVerifiedToken, async (req, res) =
     const bootstrapResult = await db.runTransaction(async (tx) => {
       const snap = await tx.get(userRef);
       if (!snap.exists) {
+        // SEC-08: Nový účet přihlášený heslem bez ověřeného e-mailu nesmí obejít 6místné OTP registrace
+        if (
+          req.decodedToken?.firebase?.sign_in_provider === 'password' &&
+          req.decodedToken?.email_verified !== true
+        ) {
+          return {
+            rejected: true,
+            status: 403,
+            error: 'Před vytvořením účtu prosím ověřte svůj e-mail.'
+          };
+        }
+
         const claimRole = authRecord.customClaims?.role || req.decodedToken.role;
         const initialRole = claimRole === 'teacher' ? 'teacher' : 'free';
         const displayName =
@@ -749,6 +982,10 @@ app.post('/api/auth/session-bootstrap', requireVerifiedToken, async (req, res) =
       };
     });
 
+    if (bootstrapResult.rejected) {
+      return res.status(bootstrapResult.status).json({ error: bootstrapResult.error });
+    }
+
     const claimsUpdated = await syncCustomClaimsIfNeeded(
       uid,
       bootstrapResult.effectiveRole,
@@ -759,7 +996,7 @@ app.post('/api/auth/session-bootstrap', requireVerifiedToken, async (req, res) =
 
     return res.json({
       ok: true,
-      profile: serializeTimestampFields(bootstrapResult.profile),
+      profile: sanitizeUserProfileForClient(bootstrapResult.profile),
       claimsUpdated
     });
   } catch (err) {
@@ -783,6 +1020,11 @@ function getRegistrationSecret() {
     throw new Error('REGISTRATION_ENCRYPTION_SECRET není bezpečně nakonfigurováno.');
   }
   return DEV_EPHEMERAL_REGISTRATION_SECRET;
+}
+
+// SEC-37: Doménově oddělené odvození záložních tajných klíčů přes HMAC-SHA256
+function deriveDomainSeparatedSecret(baseSecret, domain) {
+  return crypto.createHmac('sha256', String(baseSecret)).update(String(domain)).digest('hex');
 }
 
 const registerInitLimiter = createRateLimiter({
@@ -905,6 +1147,31 @@ app.post('/api/auth/register-init', registerInitLimiter, async (req, res) => {
     }
 
     const emailKey = hashEmailKey(safeEmail);
+
+    // SEC-09: Distribuovaný IP limit + per-email 60s cooldown napříč instancemi
+    const [ipRate, emailCooldown] = await Promise.all([
+      checkDistributedRateLimit({
+        key: `reg-init-ip:${getClientIp(req)}`,
+        windowMs: 15 * 60 * 1000,
+        max: 10,
+      }),
+      checkDistributedRateLimit({
+        key: `reg-init-email:${emailKey}`,
+        windowMs: 60 * 1000,
+        max: 1,
+      }),
+    ]);
+    if (!ipRate.allowed) {
+      res.setHeader('Retry-After', String(ipRate.retryAfterSec));
+      return res.status(429).json({ error: 'Příliš mnoho pokusů o registraci. Zkuste to prosím za několik minut.' });
+    }
+    if (!emailCooldown.allowed) {
+      res.setHeader('Retry-After', String(emailCooldown.retryAfterSec));
+      return res.status(429).json({
+        error: `Ověřovací kód byl nedávno odeslán. Další pokus za ${emailCooldown.retryAfterSec} sekund.`,
+      });
+    }
+
     const pendingRef = db.collection('pendingRegistrations').doc(emailKey);
     const existingPendingSnap = await pendingRef.get();
     if (existingPendingSnap.exists) {
@@ -981,6 +1248,31 @@ app.post('/api/auth/register-resend', registerResendLimiter, async (req, res) =>
     }
 
     const emailKey = hashEmailKey(safeEmail);
+
+    // SEC-09: Distribuovaný IP limit + per-email 60s cooldown napříč instancemi
+    const [ipRate, emailCooldown] = await Promise.all([
+      checkDistributedRateLimit({
+        key: `reg-resend-ip:${getClientIp(req)}`,
+        windowMs: 15 * 60 * 1000,
+        max: 10,
+      }),
+      checkDistributedRateLimit({
+        key: `reg-resend-email:${emailKey}`,
+        windowMs: 60 * 1000,
+        max: 1,
+      }),
+    ]);
+    if (!ipRate.allowed) {
+      res.setHeader('Retry-After', String(ipRate.retryAfterSec));
+      return res.status(429).json({ error: 'Příliš mnoho žádostí o opětovné zaslání kódu.' });
+    }
+    if (!emailCooldown.allowed) {
+      res.setHeader('Retry-After', String(emailCooldown.retryAfterSec));
+      return res.status(429).json({
+        error: `Nový kód lze odeslat za ${emailCooldown.retryAfterSec} sekund.`,
+      });
+    }
+
     const pendingRef = db.collection('pendingRegistrations').doc(emailKey);
 
     const txResult = await db.runTransaction(async (tx) => {
@@ -1154,17 +1446,25 @@ app.post('/api/auth/register-confirm', registerConfirmLimiter, async (req, res) 
       try {
         customToken = await auth.createCustomToken(userRecord.uid);
       } catch (tokenErr) {
-        console.warn('[Register Confirm] createCustomToken selhal, použito přímé přihlášení:', tokenErr?.message);
+        console.warn('[Register Confirm] createCustomToken selhal:', tokenErr?.message);
       }
     }
 
     console.log(`[Register Confirm] Uživatel úspěšně ověřen 6místným kódem a vytvořen ve Firebase Auth (UID: ${userRecord.uid})`);
 
+    // SEC-37: Nikdy nevracíme heslo uživatele v HTTP odpovědi při selhání createCustomToken
+    if (!customToken) {
+      return res.status(503).json({
+        accountCreated: true,
+        requiresLogin: true,
+        error: 'Váš účet byl úspěšně vytvořen a ověřen, ale automatické přihlášení se nezdařilo. Přihlaste se prosím svým zvoleným heslem.'
+      });
+    }
+
     return res.json({
       success: true,
       message: 'Registrace byla úspěšně ověřena a dokončena!',
       customToken,
-      ...(customToken ? {} : { tempPassword: originalPassword }),
       uid: userRecord.uid,
       email: pending.email,
       name: pending.name
@@ -1184,13 +1484,47 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Zadejte prosím platnou e-mailovou adresu.' });
     }
 
+    // SEC-09: Distribuovaný IP limit + per-email 60s cooldown (brání SMTP spamu rotací IP adres)
+    const [ipRate, emailCooldown] = await Promise.all([
+      checkDistributedRateLimit({
+        key: `pwd-reset-ip:${getClientIp(req)}`,
+        windowMs: 15 * 60 * 1000,
+        max: 10,
+      }),
+      checkDistributedRateLimit({
+        key: `pwd-reset-email:${hashEmailKey(safeEmail)}`,
+        windowMs: 60 * 1000,
+        max: 1,
+      }),
+    ]);
+    if (!ipRate.allowed) {
+      res.setHeader('Retry-After', String(ipRate.retryAfterSec));
+      return res.status(429).json({
+        error: 'Příliš mnoho žádostí o obnovení hesla. Zkuste to prosím za několik minut.',
+      });
+    }
+    if (!emailCooldown.allowed) {
+      res.setHeader('Retry-After', String(emailCooldown.retryAfterSec));
+      return res.status(429).json({
+        error: `Žádost o obnovení hesla pro tento e-mail byla nedávno odeslána. Zkuste to za ${emailCooldown.retryAfterSec} sekund.`,
+      });
+    }
+
+    // SEC-26: Jednotná odpověď proti enumeraci účtů
+    const UNIFORM_PASSWORD_RESET_MESSAGE =
+      'Pokud účet s tímto e-mailem existuje, odeslali jsme odkaz pro obnovení hesla.';
+
     // 1. Ověření existence uživatele ve Firebase Auth
     let userRecord = null;
     try {
       userRecord = await auth.getUserByEmail(safeEmail);
     } catch (err) {
       if (err.code === 'auth/user-not-found' || err.message?.includes('no user record')) {
-        return res.status(404).json({ error: 'Účet s tímto e-mailem nebyl nalezen. Zkontrolujte prosím zadanou adresu.' });
+        return res.status(200).json({
+          success: true,
+          simulated: false,
+          message: UNIFORM_PASSWORD_RESET_MESSAGE
+        });
       }
       console.warn('[password-reset getUserByEmail notice]:', err?.code || err?.message || err);
       return res.status(500).json({ error: 'Nastala chyba při ověřování účtu. Zkuste to prosím za chvíli.' });
@@ -1223,16 +1557,14 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
 
     // 4. Transformace na vlastní ProEdu stránku /reset-password?oobCode=...
     let publicResetLink = rawResetLink;
-    let localResetLink = rawResetLink;
     try {
       const parsedUrl = new URL(rawResetLink);
       const oobCode = parsedUrl.searchParams.get('oobCode');
       if (oobCode) {
         publicResetLink = `${CANONICAL_PUBLIC_APP_URL}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
-        localResetLink = `${clientOrigin}/reset-password?oobCode=${encodeURIComponent(oobCode)}&email=${encodeURIComponent(safeEmail)}`;
       }
     } catch (urlErr) {
-      console.warn('[password-reset link parse notice]:', urlErr);
+      console.warn('[password-reset link parse notice]:', urlErr?.code || 'invalid URL');
     }
 
     // 5. Odeslání e-mailu (do e-mailu jde výhradně reálná veřejná URL aplikace)
@@ -1242,24 +1574,23 @@ app.post('/api/auth/password-reset', passwordResetLimiter, async (req, res) => {
       resetLink: publicResetLink
     });
 
-    console.log(`\n🔑 [OBNOVENÍ HESLA] Požadavek pro: ${safeEmail}`);
-    console.log(`🌐 Odkaz v e-mailu (Produkce):\n${publicResetLink}`);
-    if (localResetLink !== publicResetLink) {
-      console.log(`💻 Lokální odkaz (pro testování na vývojovém serveru):\n${localResetLink}`);
+    if (process.env.NODE_ENV === 'production' && emailRes?.simulated) {
+      console.error('[password-reset] Simulated email delivery blocked in production.');
+      return res.status(503).json({ error: 'E-mailová služba není v produkci dostupná.' });
     }
-    console.log('');
 
-    if (!emailRes.success) {
+    if (!emailRes?.success) {
       return res.status(502).json({ error: 'Nepodařilo se odeslat e-mail s odkazem. Zkuste to prosím znovu.' });
     }
 
-    return res.json({
+    console.log(`[password-reset] Request processed (simulated=${Boolean(emailRes.simulated)}).`);
+
+    return res.status(200).json({
       success: true,
-      email: safeEmail,
       simulated: Boolean(emailRes.simulated),
       message: emailRes.simulated
         ? 'Režim náhledu: Odkaz pro obnovení hesla byl vypsán do konzole serveru.'
-        : 'Odkaz pro obnovení hesla byl odeslán na váš e-mail.'
+        : UNIFORM_PASSWORD_RESET_MESSAGE
     });
   } catch (err) {
     console.error('Chyba při zpracování požadavku na obnovení hesla:', err);
@@ -1306,7 +1637,7 @@ app.post('/api/dev/set-role', (req, res, next) => {
     if (lastCall && lastCall.key === dedupKey && Date.now() - lastCall.timestamp < 2000) {
       return res.json({ success: true, uid: targetUid, role, deduplicated: true });
     }
-    recentSetRoleCalls.set(targetUid, { key: dedupKey, timestamp: Date.now() });
+    setBoundedMapEntry(recentSetRoleCalls, targetUid, { key: dedupKey, timestamp: Date.now() }, DEFAULT_MAP_MAX_ENTRIES);
 
     const cleanCourses = Array.isArray(enrolledCourseIds)
       ? Array.from(new Set(enrolledCourseIds.filter((id) => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim())))
@@ -1336,7 +1667,14 @@ app.post('/api/dev/set-role', (req, res, next) => {
 });
 
 // --- REFERRAL CLAIM ENDPOINT ---
-app.post('/api/referrals/claim', requireAuth, async (req, res) => {
+const referralsClaimLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => `referrals-claim:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho pokusů o uplatnění doporučení. Zkuste to prosím za chvíli.'
+});
+
+app.post('/api/referrals/claim', requireAuth, requireVerifiedEmailForPasswordAuth, referralsClaimLimiter, async (req, res) => {
   try {
     const { referralCode } = req.body || {};
     const refereeUid = req.user.uid;
@@ -1450,7 +1788,7 @@ app.post('/api/referrals/claim', requireAuth, async (req, res) => {
 });
 
 // --- SURVEY SUBMIT ENDPOINT ---
-app.post('/api/survey/submit', requireAuth, async (req, res) => {
+app.post('/api/survey/submit', requireAuth, requireVerifiedEmailForPasswordAuth, async (req, res) => {
   try {
     const { answer, customAnswer, school, grade } = req.body || {};
     const userId = req.user.uid;
@@ -1634,7 +1972,7 @@ const bugReportLimiter = createRateLimiter({
   message: 'Příliš mnoho hlášení v krátkém čase. Zkuste to prosím za několik minut.'
 });
 
-app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, res) => {
+app.post('/api/bug-reports/submit', requireAuth, requireVerifiedEmailForPasswordAuth, bugReportLimiter, async (req, res) => {
   try {
     const userId = req.user.uid;
     const userEmail = req.user.email || '';
@@ -1670,7 +2008,11 @@ app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, r
     const userSnap = await db.collection('users').doc(userId).get();
     const userDoc = userSnap.data() || {};
     const safeUserName = String(userName || userDoc.displayName || userDoc.name || userEmail.split('@')[0] || 'Student').trim().slice(0, 128);
-    const safePageUrl = sanitizeHttpUrl(String(pageUrl || '').trim().slice(0, 1024)) || '';
+
+    // SEC-36: Povolujeme klikatelnou URL pouze z originu ProEducator (externí/neplatnou ukládáme bez schématu jako prostý text)
+    const rawPageUrl = String(pageUrl || '').replace(/[\r\n\0]+/g, ' ').trim().slice(0, 1024);
+    const allowedPageUrl = sanitizeAllowedBugReportPageUrl(rawPageUrl);
+    const safePageUrl = allowedPageUrl || (rawPageUrl ? rawPageUrl.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '[externí] ').slice(0, 512) : '');
 
     let safeScreenshotUrl = null;
     if (typeof screenshotUrl === 'string' && screenshotUrl.trim()) {
@@ -1680,8 +2022,11 @@ app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, r
       if (rawScreenshot.length > maxLen) {
         return res.status(400).json({ error: 'Přiložený snímek obrazovky je příliš velký.' });
       }
-      const sanitized = sanitizeHttpUrl(rawScreenshot, { allowDataImage: true }) || null;
-      if (sanitized && isDataUrl) {
+      const sanitized = sanitizeAllowedBugReportScreenshotUrl(rawScreenshot) || null;
+      if (!sanitized) {
+        return res.status(400).json({ error: 'Nepovolená URL adresa snímku obrazovky.' });
+      }
+      if (isDataUrl) {
         const commaIdx = sanitized.indexOf(',');
         const b64Part = commaIdx !== -1 ? sanitized.slice(commaIdx + 1) : '';
         const headBuf = Buffer.from(b64Part.slice(0, 32), 'base64');
@@ -1721,22 +2066,28 @@ app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, r
     const docRef = await db.collection('bugReports').add(reportData);
     const reportId = docRef.id;
 
-    try {
-      await sendBugReportEmail({
-        to: process.env.BUG_REPORT_EMAIL || 'netkova.nela@gmail.com',
-        studentName: safeUserName,
-        studentEmail: userEmail,
-        category: safeCategory,
-        categoryLabel: categoryLabels[safeCategory],
-        description: cleanDescription,
-        pageUrl: safePageUrl,
-        userAgent: safeUserAgent,
-        screenResolution: safeResolution,
-        screenshotUrl: safeScreenshotUrl,
-        reportId
-      });
-    } catch (emailErr) {
-      console.error('[BugReport submit] Chyba při odesílání e-mailu:', emailErr);
+    // SEC-36: Žádný hardcoded osobní Gmail — čteme pouze z BUG_REPORT_EMAIL / ADMIN_EMAIL
+    const bugReportRecipient = resolveBugReportRecipient();
+    if (!bugReportRecipient) {
+      console.warn('[BugReport submit] BUG_REPORT_EMAIL / ADMIN_EMAIL není nakonfigurováno — e-mail s hlášením nebyl odeslán.');
+    } else {
+      try {
+        await sendBugReportEmail({
+          to: bugReportRecipient,
+          studentName: safeUserName,
+          studentEmail: userEmail,
+          category: safeCategory,
+          categoryLabel: categoryLabels[safeCategory],
+          description: cleanDescription,
+          pageUrl: safePageUrl,
+          userAgent: safeUserAgent,
+          screenResolution: safeResolution,
+          screenshotUrl: safeScreenshotUrl,
+          reportId
+        });
+      } catch (emailErr) {
+        console.error('[BugReport submit] Chyba při odesílání e-mailu:', emailErr);
+      }
     }
 
     return res.json({
@@ -1750,12 +2101,14 @@ app.post('/api/bug-reports/submit', requireAuth, bugReportLimiter, async (req, r
   }
 });
 
-// Admin endpoint: Načtení všech hlášení pro učitele
-app.get('/api/admin/bug-reports', requireAuth, requireTeacher, async (_req, res) => {
+// Admin endpoint: Načtení hlášení pro učitele s omezením počtu (SEC-26: default 200, max 500)
+app.get('/api/admin/bug-reports', requireAuth, requireTeacher, async (req, res) => {
   try {
-    const snap = await db.collection('bugReports').orderBy('createdAt', 'desc').get();
+    const rawLimit = Number(req.query?.limit);
+    const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 500) : 200;
+    const snap = await db.collection('bugReports').orderBy('createdAt', 'desc').limit(limit).get();
     const reports = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
-    return res.json({ success: true, reports });
+    return res.json({ success: true, reports, limit });
   } catch (err) {
     console.error('Chyba při načítání hlášení chyb:', err);
     return res.status(500).json({ error: 'Nepodařilo se načíst hlášení chyb.' });
@@ -1824,12 +2177,20 @@ app.delete('/api/admin/bug-reports/:id', requireAuth, requireTeacher, async (req
 
 const COMGATE_MERCHANT_ID = process.env.COMGATE_MERCHANT_ID || '';
 const COMGATE_SECRET = process.env.COMGATE_SECRET || '';
-const COMGATE_TEST_MODE = process.env.COMGATE_TEST_MODE !== 'false';
+// SEC-24: Fail-closed v produkci (musí být explicitně 'true', v dev výchozí test režim pokud není 'false')
+const COMGATE_TEST_MODE =
+  process.env.NODE_ENV === 'production'
+    ? process.env.COMGATE_TEST_MODE === 'true'
+    : process.env.COMGATE_TEST_MODE !== 'false';
 const ALLOW_SANDBOX_PAYMENTS = process.env.ALLOW_SANDBOX_PAYMENTS === 'true';
 // Platební lhůta pro neuhrazenou (pending) objednávku: 30 minut
 const PENDING_ORDER_TIMEOUT_MS = 30 * 60 * 1000;
 // Okno pro automatické stržení opakované platby v den expirace (24 hodin před koncem období, aby nedošlo k výpadku služby)
 const RECURRING_CHARGE_LEAD_MS = 24 * 60 * 60 * 1000;
+// SEC-10: Transakční zámky pro idempotentní fakturaci, refundaci a opakované strhávání
+const IUCTO_SYNC_LEASE_MS = 2 * 60 * 1000;
+const REFUND_LOCK_LEASE_MS = 2 * 60 * 1000;
+const RECURRING_CHARGE_LEASE_MS = 5 * 60 * 1000;
 
 const PREMIUM_PLANS = {
   'premium-monthly': {
@@ -1845,6 +2206,138 @@ const orderCreateLimiter = createRateLimiter({
   keyFn: (req) => `order-create:${req.user?.uid || getClientIp(req)}`,
   message: 'Příliš mnoho pokusů o vytvoření objednávky. Zkuste to prosím za chvíli.'
 });
+
+const comgateWebhookLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  keyFn: (req) => `comgate-webhook:${getClientIp(req)}`,
+  message: 'Příliš mnoho webhook požadavků.'
+});
+
+const subscriptionCancelLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => `sub-cancel:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho požadavků na zrušení předplatného. Zkuste to prosím za chvíli.'
+});
+
+const subscriptionReactivateLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => `sub-reactivate:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho požadavků na obnovení předplatného. Zkuste to prosím za chvíli.'
+});
+
+const subscriptionBillingLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  keyFn: (req) => `sub-billing:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho změn fakturačních údajů. Zkuste to prosím za chvíli.'
+});
+
+// SEC-26: Per-user rate limitery pro /api/orders/my a /api/orders/:orderId/invoice.pdf
+const ordersMyLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  keyFn: (req) => `orders-my:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho požadavků na načtení objednávek. Zkuste to prosím za chvíli.'
+});
+
+const orderInvoicePdfLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyFn: (req) => `order-invoice-pdf:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho požadavků na stažení faktury. Zkuste to prosím za chvíli.'
+});
+
+// SEC-26: Omezení fan-outu synchronizace čekajících objednávek s Comgate + krátkodobá cache PDF faktur z iÚčta
+const ORDERS_MY_MAX_COMGATE_SYNC = 5;
+const ORDER_COMGATE_SYNC_COOLDOWN_MS = 60 * 1000;
+const lastComgateCheckAt = new Map(); // orderId -> timestampMs
+
+const INVOICE_PDF_CACHE_TTL_MS = 5 * 60 * 1000;
+const INVOICE_PDF_CACHE_MAX_ENTRIES = 50;
+const invoicePdfCache = new Map(); // `${orderId}:${iuctoInvoiceId}` -> { buffer, expiresAt }
+
+function getCachedInvoicePdf(cacheKey, nowMs = Date.now()) {
+  const entry = invoicePdfCache.get(cacheKey);
+  if (!entry) return null;
+  if (entry.expiresAt <= nowMs) {
+    invoicePdfCache.delete(cacheKey);
+    return null;
+  }
+  return entry.buffer;
+}
+
+function setCachedInvoicePdf(cacheKey, buffer, nowMs = Date.now()) {
+  if (!Buffer.isBuffer(buffer)) return;
+  if (invoicePdfCache.size >= INVOICE_PDF_CACHE_MAX_ENTRIES) {
+    for (const [k, v] of invoicePdfCache.entries()) {
+      if (!v || v.expiresAt <= nowMs) {
+        invoicePdfCache.delete(k);
+      }
+    }
+  }
+  setBoundedMapEntry(
+    invoicePdfCache,
+    cacheKey,
+    { buffer, expiresAt: nowMs + INVOICE_PDF_CACHE_TTL_MS },
+    INVOICE_PDF_CACHE_MAX_ENTRIES
+  );
+}
+
+// SEC-35: ID objednávky se generuje výhradně na serveru (ignorujeme klientské orderId)
+function generateServerOrderId() {
+  return `ORD-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+}
+
+// SEC-34: Explicitní allowlist polí objednávky vracených studentovi (bez admin diagnostiky, chyb a zámků)
+const STUDENT_ORDER_ALLOWLIST_FIELDS = [
+  'id',
+  'orderId',
+  'userId',
+  'userEmail',
+  'clientName',
+  'billingAddress',
+  'invoiceEmail',
+  'ico',
+  'dic',
+  'amount',
+  'currency',
+  'planId',
+  'paymentMethod',
+  'status',
+  'isSandbox',
+  'isInitialRecurring',
+  'isRecurringRenewal',
+  'variableSymbol',
+  'createdAt',
+  'paidAt',
+  'cancelledAt',
+  'refundedAt',
+  'comgateTransId',
+  'comgateRedirectUrl',
+  'iuctoInvoiceId',
+  'iuctoInvoiceNumber',
+  'iuctoSyncStatus',
+  'iuctoCreditNoteId',
+  'iuctoCreditNoteNumber',
+  'iuctoCreditNoteShareUrl',
+  'iuctoCreditNoteStatus',
+  'spaydString'
+];
+
+function sanitizeOrderForStudent(order) {
+  if (!order || typeof order !== 'object') return order;
+  const serialized = serializeTimestampFields(order);
+  const safe = {};
+  for (const key of STUDENT_ORDER_ALLOWLIST_FIELDS) {
+    if (serialized[key] !== undefined) {
+      safe[key] = serialized[key];
+    }
+  }
+  return safe;
+}
 
 function isSandboxSimulationAllowed() {
   return (
@@ -1920,25 +2413,27 @@ async function getOrderDoc(orderId) {
   return docSnap.exists ? { id: docSnap.id, ...docSnap.data() } : null;
 }
 
-async function activatePremiumForUser(userId, options = {}) {
-  const existingUser = options.existingUser || (await getUserDocServer(userId));
+function buildPremiumActivationUpdate(existingUser, options = {}) {
   const rawExistingEnd = existingUser?.subscriptionPeriodEnd ?? existingUser?.subscriptionExpiresAt;
   const existingEndMs = parseIsoMillis(rawExistingEnd) || 0;
-  const nowMs = Date.now();
+  const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
   // Plynulé navázání +30 dní na stávající konec období, pokud je uživatel v aktivním předplaceném období
-  // nebo v 3denní ochranné lhůtě (Grace Period) – platí pro opakované stržení i pro aktualizaci karty novou iniciační platbou.
+  // nebo v 3denní ochranné lhůtě (Grace Period) – zachovává zaplacené dny i při mid-cycle prodloužení/aktualizaci karty.
   const isWithinActiveOrGracePeriod =
     existingEndMs > 0 &&
     (existingEndMs > nowMs ||
       (existingUser?.role === 'premium' && nowMs <= existingEndMs + SUBSCRIPTION_GRACE_MS));
-  const baseMs = options.extendFromExisting !== false && isWithinActiveOrGracePeriod
-    ? existingEndMs
-    : nowMs;
+  const baseMs =
+    existingEndMs > nowMs
+      ? Math.max(nowMs, existingEndMs)
+      : options.extendFromExisting !== false && isWithinActiveOrGracePeriod
+        ? existingEndMs
+        : nowMs;
   const periodEnd = new Date(baseMs + 30 * 24 * 60 * 60 * 1000).toISOString();
 
   const updateData = {
     role: 'premium',
-    premiumSince: existingUser?.premiumSince || new Date().toISOString(),
+    premiumSince: existingUser?.premiumSince || new Date(nowMs).toISOString(),
     subscriptionStatus: 'active',
     subscriptionPeriodEnd: periodEnd,
     subscriptionGraceUntil: FieldValue.delete(),
@@ -1956,8 +2451,18 @@ async function activatePremiumForUser(userId, options = {}) {
     updateData.initRecurringTransId = options.initRecurringTransId;
   }
 
+  return {
+    periodEnd,
+    updateData,
+    enrolledCourseIds: normalizeEnrolledCourseIds(existingUser || {})
+  };
+}
+
+async function activatePremiumForUser(userId, options = {}) {
+  const existingUser = options.existingUser || (await getUserDocServer(userId));
+  const { periodEnd, updateData, enrolledCourseIds } = buildPremiumActivationUpdate(existingUser, options);
+
   await updateUserDocServer(userId, updateData);
-  const enrolledCourseIds = normalizeEnrolledCourseIds(existingUser || {});
   await syncCustomClaimsIfNeeded(userId, 'premium', enrolledCourseIds);
   userRoleCache.delete(userId);
   console.log(`[Premium Activation] Úspěšně aktivováno pro ${userId} (do ${periodEnd})`);
@@ -1966,18 +2471,76 @@ async function activatePremiumForUser(userId, options = {}) {
 
 /**
  * Synchronizuje uhrazenou objednávku s iÚčto API (zákazník, faktura, platba, PDF).
- * Průběžně ukládá partial IDs, aby opakování nikdy nevytvořilo duplicitní fakturu.
+ * SEC-10: Chrání vystavení faktury atomickým transakčním zámkem (iuctoSyncLockUntil, 2 min),
+ * aby souběžné volání webhooku / verify-payment / CRON Outboxu nikdy nevystavilo duplicitní doklad.
  */
 async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
+  const orderRef = db.collection('orders').doc(orderId);
+  const lockOwner = crypto.randomUUID();
+  let leaseAcquired = false;
+
   try {
-    const resolvedUserDoc = userDoc || (order?.userId ? await getUserDocServer(order.userId) : null) || {};
+    const leaseCheck = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(orderRef);
+      if (!snap.exists) {
+        return { acquired: false, reason: 'order_not_found' };
+      }
+      const freshOrder = { id: snap.id, ...snap.data() };
+      if (freshOrder.status === 'refunded') {
+        return { acquired: false, reason: 'already_refunded', order: freshOrder };
+      }
+      if (freshOrder.iuctoSyncStatus === 'synced' || Boolean(freshOrder.iuctoInvoiceId)) {
+        return { acquired: false, reason: 'already_synced', order: freshOrder };
+      }
+      const nowMs = Date.now();
+      if (Number(freshOrder.iuctoSyncLockUntil || 0) > nowMs) {
+        return { acquired: false, reason: 'sync_in_progress', order: freshOrder };
+      }
+      tx.set(
+        orderRef,
+        {
+          iuctoSyncLockUntil: nowMs + IUCTO_SYNC_LEASE_MS,
+          iuctoSyncLockOwner: lockOwner,
+          iuctoSyncStatus: 'syncing'
+        },
+        { merge: true }
+      );
+      return { acquired: true, order: freshOrder };
+    });
+
+    if (!leaseCheck.acquired) {
+      if (leaseCheck.reason === 'already_synced') {
+        return {
+          skipped: true,
+          alreadySynced: true,
+          reason: 'already_synced',
+          invoiceNumber: leaseCheck.order?.iuctoInvoiceNumber || null,
+          iuctoInvoiceId: leaseCheck.order?.iuctoInvoiceId || null,
+          attachments: []
+        };
+      }
+      if (leaseCheck.reason === 'sync_in_progress') {
+        return {
+          skipped: true,
+          locked: true,
+          reason: 'sync_in_progress',
+          invoiceNumber: null,
+          attachments: []
+        };
+      }
+      return { skipped: true, reason: leaseCheck.reason, invoiceNumber: null, attachments: [] };
+    }
+
+    leaseAcquired = true;
+    const latestOrder = { ...order, ...leaseCheck.order };
+    const resolvedUserDoc = userDoc || (latestOrder?.userId ? await getUserDocServer(latestOrder.userId) : null) || {};
     const result = await iuctoService.issuePaidInvoice({
       orderId,
-      order,
+      order: latestOrder,
       userDoc: resolvedUserDoc,
       onProgress: async (partial) => {
-        if (partial.iuctoCustomerId && order?.userId && resolvedUserDoc.iuctoCustomerId !== partial.iuctoCustomerId) {
-          await updateUserDocServer(order.userId, { iuctoCustomerId: partial.iuctoCustomerId }).catch(() => {});
+        if (partial.iuctoCustomerId && latestOrder?.userId && resolvedUserDoc.iuctoCustomerId !== partial.iuctoCustomerId) {
+          await updateUserDocServer(latestOrder.userId, { iuctoCustomerId: partial.iuctoCustomerId }).catch(() => {});
         }
         const progressUpdate = {};
         if (partial.iuctoInvoiceId) progressUpdate.iuctoInvoiceId = partial.iuctoInvoiceId;
@@ -1993,13 +2556,16 @@ async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
       const nextStatus = result.reason === 'sandbox_skipped' ? 'skipped_sandbox' : 'pending';
       await updateOrderDoc(orderId, {
         iuctoSyncStatus: nextStatus,
-        iuctoError: null
+        iuctoError: null,
+        iuctoSyncLockUntil: FieldValue.delete(),
+        iuctoSyncLockOwner: FieldValue.delete()
       });
+      leaseAcquired = false;
       return { skipped: true, reason: result.reason, invoiceNumber: null, attachments: [] };
     }
 
-    if (order?.userId && result.iuctoCustomerId && resolvedUserDoc.iuctoCustomerId !== result.iuctoCustomerId) {
-      await updateUserDocServer(order.userId, { iuctoCustomerId: result.iuctoCustomerId }).catch((err) => {
+    if (latestOrder?.userId && result.iuctoCustomerId && resolvedUserDoc.iuctoCustomerId !== result.iuctoCustomerId) {
+      await updateUserDocServer(latestOrder.userId, { iuctoCustomerId: result.iuctoCustomerId }).catch((err) => {
         console.warn('[iÚčto] Nepodařilo se uložit iuctoCustomerId k uživateli:', err?.message || err);
       });
     }
@@ -2010,8 +2576,11 @@ async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
       iuctoPaymentId: result.iuctoPaymentId,
       iuctoSyncStatus: 'synced',
       iuctoError: null,
-      iuctoSyncedAt: new Date().toISOString()
+      iuctoSyncedAt: new Date().toISOString(),
+      iuctoSyncLockUntil: FieldValue.delete(),
+      iuctoSyncLockOwner: FieldValue.delete()
     });
+    leaseAcquired = false;
 
     const attachments = result.pdfBuffer
       ? [{ filename: result.pdfFilename, content: result.pdfBuffer, contentType: 'application/pdf' }]
@@ -2028,7 +2597,9 @@ async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
     console.warn(`[iÚčto Sync Error] Objednávka ${orderId}:`, err?.message || err);
     const partialUpdate = {
       iuctoSyncStatus: 'failed',
-      iuctoError: String(err?.message || err).slice(0, 500)
+      iuctoError: String(err?.message || err).slice(0, 500),
+      iuctoSyncLockUntil: FieldValue.delete(),
+      iuctoSyncLockOwner: FieldValue.delete()
     };
     if (err?.partialResult?.iuctoInvoiceId) partialUpdate.iuctoInvoiceId = err.partialResult.iuctoInvoiceId;
     if (err?.partialResult?.iuctoInvoiceNumber) partialUpdate.iuctoInvoiceNumber = err.partialResult.iuctoInvoiceNumber;
@@ -2036,17 +2607,18 @@ async function syncIuctoForPaidOrder({ orderId, order, userDoc = null }) {
     if (err?.partialResult?.iuctoCustomerId && order?.userId) {
       await updateUserDocServer(order.userId, { iuctoCustomerId: err.partialResult.iuctoCustomerId }).catch(() => {});
     }
-    await updateOrderDoc(orderId, partialUpdate).catch(() => {});
+    if (leaseAcquired) {
+      await updateOrderDoc(orderId, partialUpdate).catch(() => {});
+    }
     return { failed: true, error: 'Synchronizace faktury s iÚčtem selhala.', invoiceNumber: null, attachments: [] };
   }
 }
 
 /**
  * Sdílený tok po potvrzení úhrady objednávky:
- * 1) Označí objednávku jako paid
- * 2) Aktivuje / prodlouží Premium uživateli a custom claims
- * 3) Vystaví fakturu v iÚčtu a stáhne PDF
- * 4) Odešle potvrzovací e-mail (s PDF fakturou v příloze, pokud byla vystavena)
+ * 1) Atomicky označí objednávku jako paid a aktivuje Premium (pokud již nebylo provedeno v transakci volajícího)
+ * 2) Vystaví fakturu v iÚčtu pod transakčním zámkem iuctoSyncLockUntil a stáhne PDF
+ * 3) Atomicky deduplikovaně odešle potvrzovací e-mail (s PDF fakturou v příloze, pokud byla vystavena)
  */
 async function finalizePaidOrderAndInvoice({
   orderId,
@@ -2056,30 +2628,75 @@ async function finalizePaidOrderAndInvoice({
   confirmedBy = null,
   isSandbox = undefined,
   isRecurringRenewal = false,
-  extendFromExisting = false
+  extendFromExisting = true,
+  skipPremiumActivation = false,
+  periodEnd: precomputedPeriodEnd = null,
+  premiumActivatedNow = false
 }) {
-  const paidAtIso = order?.paidAt || new Date().toISOString();
-  const orderUpdate = {
-    status: 'paid',
-    paidAt: paidAtIso
-  };
-  if (comgateTransId) orderUpdate.comgateTransId = comgateTransId;
-  if (confirmedBy) orderUpdate.confirmedBy = confirmedBy;
-  if (typeof isSandbox === 'boolean') orderUpdate.isSandbox = isSandbox;
+  let mergedOrder = { ...order };
+  let periodEnd = precomputedPeriodEnd || null;
+  let activatedHere = Boolean(premiumActivatedNow);
 
-  await updateOrderDoc(orderId, orderUpdate);
+  if (!skipPremiumActivation) {
+    const orderRef = db.collection('orders').doc(orderId);
+    const txActivation = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(orderRef);
+      const currentOrder = snap.exists ? { id: snap.id, ...snap.data() } : { ...order };
+      const needsPremium = !currentOrder.premiumActivatedAt;
+      const userRef = needsPremium && currentOrder.userId ? db.collection('users').doc(currentOrder.userId) : null;
+      const userSnap = userRef ? await tx.get(userRef) : null;
+      const existingUser = userSnap?.exists ? userSnap.data() : null;
 
-  const mergedOrder = { ...order, ...orderUpdate };
-  const userDoc = mergedOrder.userId ? await getUserDocServer(mergedOrder.userId) : null;
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const orderUpdate = {
+        status: 'paid',
+        paidAt: currentOrder.paidAt || nowIso
+      };
+      if (comgateTransId) orderUpdate.comgateTransId = comgateTransId;
+      if (confirmedBy) orderUpdate.confirmedBy = confirmedBy;
+      if (typeof isSandbox === 'boolean') orderUpdate.isSandbox = isSandbox;
 
-  let periodEnd = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  if (mergedOrder.userId) {
-    const activation = await activatePremiumForUser(mergedOrder.userId, {
-      initRecurringTransId: initRecurringTransId || undefined,
-      existingUser: userDoc,
-      extendFromExisting
+      let computedPeriodEnd = null;
+      let enrolledCourseIds = [];
+      if (needsPremium) {
+        orderUpdate.premiumActivatedAt = nowIso;
+        if (userRef) {
+          const plan = buildPremiumActivationUpdate(existingUser, {
+            initRecurringTransId: initRecurringTransId || undefined,
+            nowMs,
+            extendFromExisting
+          });
+          computedPeriodEnd = plan.periodEnd;
+          enrolledCourseIds = plan.enrolledCourseIds;
+          tx.set(userRef, plan.updateData, { merge: true });
+        }
+      }
+
+      tx.set(orderRef, orderUpdate, { merge: true });
+      return {
+        order: { ...currentOrder, ...orderUpdate },
+        needsPremium,
+        periodEnd: computedPeriodEnd,
+        enrolledCourseIds
+      };
     });
-    periodEnd = activation.periodEnd;
+
+    mergedOrder = txActivation.order;
+    if (txActivation.needsPremium) {
+      activatedHere = true;
+      periodEnd = txActivation.periodEnd || periodEnd;
+      if (mergedOrder.userId) {
+        await syncCustomClaimsIfNeeded(mergedOrder.userId, 'premium', txActivation.enrolledCourseIds);
+        userRoleCache.delete(mergedOrder.userId);
+        console.log(`[Premium Activation] Úspěšně atomicky aktivováno pro ${mergedOrder.userId} (do ${periodEnd})`);
+      }
+    }
+  }
+
+  const userDoc = mergedOrder.userId ? await getUserDocServer(mergedOrder.userId) : null;
+  if (!periodEnd) {
+    periodEnd = userDoc?.subscriptionPeriodEnd || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   }
 
   const iuctoRes = await syncIuctoForPaidOrder({
@@ -2088,22 +2705,56 @@ async function finalizePaidOrderAndInvoice({
     userDoc
   });
 
-  const targetEmail = mergedOrder.invoiceEmail || userDoc?.email;
-  if (targetEmail) {
-    const emailPayload = {
-      to: targetEmail,
-      name: mergedOrder.clientName || userDoc?.displayName || userDoc?.name || 'zákazníku',
-      orderId,
-      amount: mergedOrder.amount || 99,
-      invoiceNumber: iuctoRes.invoiceNumber || undefined,
-      attachments: iuctoRes.attachments || []
-    };
+  const targetEmail = String(mergedOrder.invoiceEmail || userDoc?.email || '').trim();
+  const hasInvoiceAttachment = Array.isArray(iuctoRes.attachments) && iuctoRes.attachments.length > 0;
+  const shouldAttemptEmail =
+    Boolean(targetEmail) &&
+    isStrictSingleEmail(targetEmail) &&
+    !iuctoRes.locked &&
+    (activatedHere || (!iuctoRes.skipped && !iuctoRes.failed && Boolean(iuctoRes.invoiceNumber)));
 
-    const emailPromise = isRecurringRenewal
-      ? sendRecurringChargeSuccessEmail({ ...emailPayload, nextPeriodEnd: periodEnd })
-      : sendPaymentConfirmedEmail({ ...emailPayload, periodEnd });
+  if (shouldAttemptEmail) {
+    const emailClaimed = await db
+      .runTransaction(async (tx) => {
+        const oRef = db.collection('orders').doc(orderId);
+        const oSnap = await tx.get(oRef);
+        if (!oSnap.exists) return false;
+        const fresh = oSnap.data() || {};
+        if (hasInvoiceAttachment) {
+          if (fresh.invoiceEmailSentAt) return false;
+          const sentAt = new Date().toISOString();
+          tx.set(
+            oRef,
+            {
+              confirmationEmailSentAt: fresh.confirmationEmailSentAt || sentAt,
+              invoiceEmailSentAt: sentAt
+            },
+            { merge: true }
+          );
+          return true;
+        }
+        if (fresh.confirmationEmailSentAt) return false;
+        tx.set(oRef, { confirmationEmailSentAt: new Date().toISOString() }, { merge: true });
+        return true;
+      })
+      .catch(() => false);
 
-    emailPromise.catch((err) => console.warn('[Payment Email Error]:', err?.message || err));
+    if (emailClaimed) {
+      const emailPayload = {
+        to: targetEmail,
+        name: mergedOrder.clientName || userDoc?.displayName || userDoc?.name || 'zákazníku',
+        orderId,
+        amount: mergedOrder.amount || 99,
+        invoiceNumber: iuctoRes.invoiceNumber || undefined,
+        attachments: iuctoRes.attachments || []
+      };
+
+      const emailPromise = isRecurringRenewal
+        ? sendRecurringChargeSuccessEmail({ ...emailPayload, nextPeriodEnd: periodEnd })
+        : sendPaymentConfirmedEmail({ ...emailPayload, periodEnd });
+
+      emailPromise.catch((err) => console.warn('[Payment Email Error]:', err?.message || err));
+    }
   }
 
   return { periodEnd, iuctoRes };
@@ -2113,7 +2764,6 @@ async function finalizePaidOrderAndInvoice({
 app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res) => {
   try {
     const {
-      orderId: clientOrderId,
       variableSymbol: clientVariableSymbol,
       clientName,
       billingAddress,
@@ -2143,7 +2793,12 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       return res.status(400).json({ error: 'Zadejte prosím platné jméno a příjmení klienta.' });
     }
 
-    if (!invoiceEmail || typeof invoiceEmail !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invoiceEmail.trim())) {
+    if (
+      !invoiceEmail ||
+      typeof invoiceEmail !== 'string' ||
+      /[\r\n\0]/.test(invoiceEmail) ||
+      !isStrictSingleEmail(invoiceEmail.trim())
+    ) {
       return res.status(400).json({ error: 'Zadejte prosím platný e-mail pro zaslání faktury.' });
     }
 
@@ -2162,8 +2817,13 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
     }
 
     // Kontrola, zda uživatel již nemá aktivní neuhrazenou (pending) objednávku.
-    // Nejprve všechny čekající objednávky uživatele sesynchronizujeme s Comgate a případně expirujeme ty po 30minutové lhůtě.
-    const existingOrdersSnap = await db.collection('orders').where('userId', '==', userId).limit(30).get();
+    // SEC-35: Řazený dotaz dle existujícího složeného indexu (userId ASC, createdAt DESC) + deterministické dořazení v paměti.
+    const existingOrdersSnap = await db
+      .collection('orders')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(30)
+      .get();
     const existingPendingDocs = existingOrdersSnap.docs
       .map((d) => ({ id: d.id, ...serializeTimestampFields(d.data()) }))
       .filter((o) => o.status === 'pending' && !o.isRecurringRenewal)
@@ -2200,7 +2860,7 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
           success: true,
           reusedExistingOrder: true,
           orderId: activePending.id,
-          order: activePending,
+          order: sanitizeOrderForStudent(activePending),
           comgate: {
             ...(activePending.comgateTransId ? { transId: activePending.comgateTransId } : {}),
             ...(activePending.comgateRedirectUrl ? { redirectUrl: activePending.comgateRedirectUrl } : {}),
@@ -2213,13 +2873,8 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
       }
     }
 
-    let orderId = `ord_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
-    if (clientOrderId !== undefined && clientOrderId !== null && clientOrderId !== '') {
-      if (typeof clientOrderId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(clientOrderId)) {
-        return res.status(400).json({ error: 'Neplatné ID objednávky.' });
-      }
-      orderId = clientOrderId;
-    }
+    // SEC-35: Vždy generujeme orderId striktně na serveru (ignorujeme klientské orderId — bez kolizního orákula a osiřelých transakcí)
+    const orderId = generateServerOrderId();
 
     const variableSymbol =
       clientVariableSymbol && typeof clientVariableSymbol === 'string'
@@ -2341,7 +2996,7 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
     return res.json({
       success: true,
       orderId,
-      order: orderData,
+      order: sanitizeOrderForStudent(orderData),
       comgate: comgateData
     });
   } catch (err) {
@@ -2353,6 +3008,8 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
 /**
  * Atomicky převede objednávku do stavu PAID nebo CANCELLED na základě potvrzení z Comgate
  * (sdíleno mezi Push URL webhookem a přímým ověřením stavu přes Comgate REST API).
+ * SEC-10: Ověřuje shodu comgateTransId a provádí aktivaci Premium atomicky s premiumActivatedAt
+ * nejvýše jednou i při souběhu webhooku + /verify-payment + /iucto-retry.
  */
 async function applyComgatePaymentTransition({
   orderId,
@@ -2379,27 +3036,82 @@ async function applyComgatePaymentTransition({
       return { errorStatus: 400, body: 'code=1&message=Currency mismatch', errorMessage: 'Měna platby nesouhlasí.' };
     }
 
+    // SEC-10: Kontrola shody uloženého comgateTransId proti příchozímu transId
+    if (order.comgateTransId) {
+      const storedTransId = String(order.comgateTransId).trim();
+      const incomingTransId = transId ? String(transId).trim() : '';
+      if (
+        (incomingTransId && storedTransId !== incomingTransId) ||
+        (status === 'PAID' && !incomingTransId)
+      ) {
+        return {
+          errorStatus: 409,
+          body: 'code=1&message=Transaction ID mismatch',
+          errorMessage: 'Identifikátor transakce Comgate nesouhlasí s objednávkou.'
+        };
+      }
+    }
+
     if (order.status === 'refunded') {
       return { errorStatus: 409, body: 'code=1&message=Order already refunded', errorMessage: 'Objednávka již byla refundována.' };
     }
 
     if (status === 'PAID') {
+      const needsPremiumActivation = !order.premiumActivatedAt;
+      const userRef = needsPremiumActivation && order.userId ? db.collection('users').doc(order.userId) : null;
+      const userSnap = userRef ? await tx.get(userRef) : null;
+
       const invoiceSettled =
         Boolean(order.iuctoInvoiceId) ||
         order.iuctoSyncStatus === 'synced' ||
         order.iuctoSyncStatus === 'skipped_sandbox';
-      if (order.status === 'paid' && invoiceSettled) {
+      if (order.status === 'paid' && !needsPremiumActivation && invoiceSettled) {
         return { alreadyProcessed: true, order };
       }
-      const paidAtIso = order.paidAt || new Date().toISOString();
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const paidAtIso = order.paidAt || nowIso;
+      const isRenewal = Boolean(order.isRecurringRenewal);
+      // Dle dokumentace Comgate musí initRecurringId pro všechna další stržení vždy zůstat transId PRVNÍ (iniciační) platby.
+      const preservedInitRecurringId = isRenewal
+        ? (order.initRecurringTransId || null)
+        : (transId || order.comgateTransId || null);
+
       const lockUpdates = {
         status: 'paid',
         paidAt: paidAtIso,
         comgateTransId: transId || order.comgateTransId || null,
         isSandbox: Boolean(isSandbox) || Boolean(order.isSandbox)
       };
+
+      let periodEnd = null;
+      let enrolledCourseIds = [];
+      if (needsPremiumActivation) {
+        lockUpdates.premiumActivatedAt = nowIso;
+        if (userRef) {
+          const existingUser = userSnap?.exists ? userSnap.data() : null;
+          const activationPlan = buildPremiumActivationUpdate(existingUser, {
+            initRecurringTransId: preservedInitRecurringId || undefined,
+            nowMs,
+            extendFromExisting: true
+          });
+          periodEnd = activationPlan.periodEnd;
+          enrolledCourseIds = activationPlan.enrolledCourseIds;
+          tx.set(userRef, activationPlan.updateData, { merge: true });
+        }
+      }
+
       tx.set(orderRef, lockUpdates, { merge: true });
-      return { action: 'PAID', order: { ...order, ...lockUpdates } };
+      return {
+        action: 'PAID',
+        premiumActivatedNow: needsPremiumActivation,
+        periodEnd,
+        enrolledCourseIds,
+        isRenewal,
+        preservedInitRecurringId,
+        order: { ...order, ...lockUpdates }
+      };
     }
 
     if (status === 'CANCELLED') {
@@ -2421,20 +3133,23 @@ async function applyComgatePaymentTransition({
   }
 
   if (txOutcome.action === 'PAID') {
-    const isRenewal = Boolean(txOutcome.order.isRecurringRenewal);
-    // Dle dokumentace Comgate musí initRecurringId pro všechna další stržení vždy zůstat transId PRVNÍ (iniciační) platby.
-    const preservedInitRecurringId = isRenewal
-      ? (txOutcome.order.initRecurringTransId || null)
-      : (transId || txOutcome.order.comgateTransId || null);
+    if (txOutcome.premiumActivatedNow && txOutcome.order.userId) {
+      await syncCustomClaimsIfNeeded(txOutcome.order.userId, 'premium', txOutcome.enrolledCourseIds);
+      userRoleCache.delete(txOutcome.order.userId);
+      console.log(`[Premium Activation] Úspěšně atomicky aktivováno pro ${txOutcome.order.userId} (do ${txOutcome.periodEnd})`);
+    }
 
     const finalized = await finalizePaidOrderAndInvoice({
       orderId,
       order: txOutcome.order,
       comgateTransId: transId || txOutcome.order.comgateTransId || null,
-      initRecurringTransId: preservedInitRecurringId,
+      initRecurringTransId: txOutcome.preservedInitRecurringId,
       isSandbox: Boolean(isSandbox) || Boolean(txOutcome.order.isSandbox),
-      isRecurringRenewal: isRenewal,
-      extendFromExisting: isRenewal
+      isRecurringRenewal: txOutcome.isRenewal,
+      extendFromExisting: true,
+      skipPremiumActivation: true,
+      periodEnd: txOutcome.periodEnd,
+      premiumActivatedNow: txOutcome.premiumActivatedNow
     });
     return { ...txOutcome, finalized };
   }
@@ -2448,7 +3163,9 @@ async function applyComgatePaymentTransition({
         lastRecurringFailedAt: new Date().toISOString()
       }).catch(() => {});
     }
-    const notifyEmail = txOutcome.order.invoiceEmail || txOutcome.order.userEmail;
+    const notifyEmail = [txOutcome.order.userEmail, txOutcome.order.invoiceEmail]
+      .map((e) => String(e || '').trim())
+      .find((e) => isStrictSingleEmail(e));
     if (notifyEmail) {
       sendRecurringChargeFailedEmail({
         to: notifyEmail,
@@ -2463,14 +3180,15 @@ async function applyComgatePaymentTransition({
 }
 
 // 2. Comgate Push URL Notifikace (Webhook)
-app.post('/api/payments/comgate/notify', async (req, res) => {
+// SEC-24: Striktně pouze req.body (bez req.query), rate limiter a live server-to-server doověření stavu přes Comgate API
+app.post('/api/payments/comgate/notify', comgateWebhookLimiter, async (req, res) => {
   try {
     if (!hasComgateCredentials()) {
       console.error('[Comgate Webhook] COMGATE_SECRET nebo COMGATE_MERCHANT_ID není nastaveno.');
       return res.status(503).send('code=1&message=Payment webhook not configured');
     }
 
-    const payload = (req.body && Object.keys(req.body).length > 0 ? req.body : req.query) || {};
+    const payload = req.body && typeof req.body === 'object' ? req.body : {};
     const { merchant, test, price, curr, refId, transId, secret, status } = payload;
 
     if (!constantTimeSecretEqual(String(secret || ''), COMGATE_SECRET)) {
@@ -2493,12 +3211,80 @@ app.post('/api/payments/comgate/notify', async (req, res) => {
       return res.status(403).send('code=1&message=Test mode not allowed in live environment');
     }
 
+    const normalizedStatus = String(status || '').toUpperCase();
+    const cleanTransId = typeof transId === 'string' ? transId.trim() : '';
+    let verifiedPrice = price;
+    let verifiedCurr = curr;
+    let verifiedTransId = cleanTransId || null;
+
+    // SEC-24: V živém režimu před aktivací Premium ověřit stav PAID server-to-server proti Comgate API
+    if (!COMGATE_TEST_MODE && normalizedStatus === 'PAID') {
+      if (!cleanTransId) {
+        return res.status(400).send('code=1&message=Missing transId');
+      }
+      const storedOrder = await getOrderDoc(refId);
+      if (!storedOrder) {
+        return res.status(404).send('code=1&message=Order not found');
+      }
+      if (storedOrder.comgateTransId && String(storedOrder.comgateTransId).trim() !== cleanTransId) {
+        return res.status(409).send('code=1&message=Transaction ID mismatch');
+      }
+
+      let statusCheck;
+      try {
+        statusCheck = await fetchComgatePaymentStatus(cleanTransId);
+      } catch (verifyErr) {
+        console.error('[Comgate Webhook Status Verify Error]:', verifyErr?.message || verifyErr);
+        return res.status(502).send('code=1&message=Comgate status verification failed');
+      }
+
+      const statusJson = statusCheck?.statusJson;
+      if (!statusCheck?.ok || !statusJson || statusJson.code !== 0) {
+        console.warn('[Comgate Webhook Status Verify Invalid Response]:', statusJson);
+        return res.status(502).send('code=1&message=Comgate status verification failed');
+      }
+
+      const remoteStatus = String(statusJson.status || '').toUpperCase();
+      if (remoteStatus !== 'PAID') {
+        console.warn(`[Comgate Webhook] Server-to-server stav pro ${refId} není PAID (vráceno: ${remoteStatus}).`);
+        return res.status(409).send('code=1&message=Payment not PAID on Comgate');
+      }
+
+      const remoteTest =
+        statusJson.test === true ||
+        statusJson.test === 'true' ||
+        statusJson.test === '1' ||
+        statusJson.test === 1;
+      if (remoteTest) {
+        return res.status(403).send('code=1&message=Test mode not allowed in live environment');
+      }
+
+      if (statusJson.refId && String(statusJson.refId) !== refId) {
+        return res.status(409).send('code=1&message=Order refId mismatch');
+      }
+
+      const expectedPriceHaler = Math.round(Number(storedOrder.amount) * 100);
+      const remotePrice = Number(statusJson.price);
+      const remoteCurr = String(statusJson.curr || '').toUpperCase();
+      const expectedCurr = String(storedOrder.currency || 'CZK').toUpperCase();
+      if (!Number.isFinite(remotePrice) || remotePrice !== expectedPriceHaler) {
+        return res.status(400).send('code=1&message=Verified price mismatch');
+      }
+      if (remoteCurr !== expectedCurr) {
+        return res.status(400).send('code=1&message=Verified currency mismatch');
+      }
+
+      verifiedPrice = remotePrice;
+      verifiedCurr = remoteCurr;
+      verifiedTransId = statusJson.transId || cleanTransId;
+    }
+
     const outcome = await applyComgatePaymentTransition({
       orderId: refId,
-      transId: transId || null,
-      status,
-      price,
-      curr,
+      transId: verifiedTransId,
+      status: normalizedStatus || status,
+      price: verifiedPrice,
+      curr: verifiedCurr,
       isSandbox: webhookIsSandbox
     });
 
@@ -2796,13 +3582,14 @@ app.post('/api/orders/:orderId/cancel', requireAuth, async (req, res) => {
   }
 });
 
-// 3. Sandbox simulace platby Comgate (STRICT dev/sandbox gate pouze pro pending sandbox objednávky)
-app.post('/api/payments/comgate/sandbox-simulate-pay', requireAuth, async (req, res) => {
+// 3. Sandbox simulace platby Comgate (STRICT dev/sandbox gate PŘED requireAuth, shodně s /api/dev/set-role)
+app.post('/api/payments/comgate/sandbox-simulate-pay', (req, res, next) => {
+  if (!isSandboxSimulationAllowed()) {
+    return res.status(404).json({ error: 'Endpoint nenalezen.' });
+  }
+  return next();
+}, requireAuth, async (req, res) => {
   try {
-    if (!isSandboxSimulationAllowed()) {
-      return res.status(404).json({ error: 'Endpoint nenalezen.' });
-    }
-
     const { orderId } = req.body || {};
     if (!orderId || typeof orderId !== 'string' || !orderId.trim()) {
       return res.status(400).json({ error: 'Chybí identifikátor objednávky (orderId).' });
@@ -2873,17 +3660,39 @@ app.get('/api/orders/all', requireAuth, requireTeacher, async (req, res) => {
 });
 
 // 5. Moje objednávky (pro přihlášeného studenta)
-app.get('/api/orders/my', requireAuth, async (req, res) => {
+// SEC-26 & SEC-34: Per-user rate limit, max 5 pending Comgate synchronizací s 60s cooldownem a explicitní allowlist polí
+app.get('/api/orders/my', requireAuth, ordersMyLimiter, async (req, res) => {
   try {
     const userId = req.user.uid;
-    const snap = await db.collection('orders').where('userId', '==', userId).limit(50).get();
-    const rawOrders = snap.docs.map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }));
+    const snap = await db
+      .collection('orders')
+      .where('userId', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(50)
+      .get();
+    const rawOrders = snap.docs
+      .map((doc) => ({ id: doc.id, ...serializeTimestampFields(doc.data()) }))
+      .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+
     const nowMs = Date.now();
+    const eligibleSyncOrderIds = new Set();
+    for (const ord of rawOrders) {
+      if (eligibleSyncOrderIds.size >= ORDERS_MY_MAX_COMGATE_SYNC) break;
+      if (ord.status !== 'pending') continue;
+      const lastChecked = lastComgateCheckAt.get(ord.id) || 0;
+      if (nowMs - lastChecked >= ORDER_COMGATE_SYNC_COOLDOWN_MS) {
+        eligibleSyncOrderIds.add(ord.id);
+        setBoundedMapEntry(lastComgateCheckAt, ord.id, nowMs, DEFAULT_MAP_MAX_ENTRIES);
+      }
+    }
+
     const orders = await Promise.all(
-      rawOrders.map((o) => (o.status === 'pending' ? reconcilePendingOrderWithComgate(o, nowMs) : Promise.resolve(o)))
+      rawOrders.map((o) =>
+        eligibleSyncOrderIds.has(o.id) ? reconcilePendingOrderWithComgate(o, nowMs) : Promise.resolve(o)
+      )
     );
     orders.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-    return res.json({ success: true, orders });
+    return res.json({ success: true, orders: orders.map((o) => sanitizeOrderForStudent(o)) });
   } catch (err) {
     console.error('Chyba při načítání mých objednávek:', err);
     return res.status(500).json({ error: 'Nepodařilo se načíst objednávky.' });
@@ -2891,7 +3700,7 @@ app.get('/api/orders/my', requireAuth, async (req, res) => {
 });
 
 // 5b. Zrušení předplatného (pouze pro aktivní placené Premium)
-app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
+app.post('/api/subscription/cancel', requireAuth, subscriptionCancelLimiter, async (req, res) => {
   try {
     const userId = req.user.uid;
     const { reason, immediate } = req.body || {};
@@ -2920,6 +3729,9 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
     const enrolledCourseIds = normalizeEnrolledCourseIds(userDoc);
     const fallbackRole = enrolledCourseIds.length > 0 ? 'course' : 'free';
 
+    // SEC-23: Při zrušení na konci období (immediate=false) zachováváme initRecurringTransId,
+    // aby případná reaktivace před expirací mohla znovu strhnout platbu a nedávala 3 dny zdarma bez karty.
+    // initRecurringTransId se maže pouze při immediate=true, expiraci nebo refundaci.
     const updateData = immediate
       ? {
           role: fallbackRole,
@@ -2939,7 +3751,6 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason,
           subscriptionPeriodEnd: periodEnd,
-          initRecurringTransId: FieldValue.delete(),
           recurringCancelled: true,
           recurringCancelledAt: nowIso
         };
@@ -2947,10 +3758,16 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
     await userRef.set(updateData, { merge: true });
     if (immediate) {
       await syncCustomClaimsIfNeeded(userId, fallbackRole, enrolledCourseIds);
+      await revokeUserTokensSafe(userId, 'subscription-cancel-immediate');
     }
     userRoleCache.delete(userId);
 
-    const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
+    // SEC-22: Notifikaci o zrušení posíláme VÝHRADNĚ na ověřený e-mail z Firebase Auth (nikoli na libovolný billingDetails.invoiceEmail)
+    const verifiedAuthEmail = String(req.decodedToken?.email || '').trim();
+    const isAuthEmailVerified =
+      req.decodedToken?.email_verified === true ||
+      (req.decodedToken?.firebase?.sign_in_provider && req.decodedToken.firebase.sign_in_provider !== 'password');
+    const notifyEmail = isAuthEmailVerified && isStrictSingleEmail(verifiedAuthEmail) ? verifiedAuthEmail : null;
     // E-mail s potvrzením o zrušení se odesílá pouze při standardním zrušení členství (vypnutí opakovaných plateb ke konci období),
     // při předčasném/okamžitém ukončení se duplicitní e-mail již neodesílá.
     if (notifyEmail && !immediate) {
@@ -2984,8 +3801,8 @@ app.post('/api/subscription/cancel', requireAuth, async (req, res) => {
   }
 });
 
-// 5c. Obnovení zrušeného předplatného (pouze cancelled_at_period_end v platném zaplaceném období, nikdy +30d zdarma)
-app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
+// 5c. Obnovení zrušeného předplatného (pouze cancelled_at_period_end v platném zaplaceném období a s platným initRecurringTransId)
+app.post('/api/subscription/reactivate', requireAuth, subscriptionReactivateLimiter, async (req, res) => {
   try {
     const userId = req.user.uid;
     const userRef = db.collection('users').doc(userId);
@@ -3006,6 +3823,13 @@ app.post('/api/subscription/reactivate', requireAuth, async (req, res) => {
     ) {
       return res.status(400).json({
         error: 'Obnovit lze pouze probíhající předplatné ve výpovědní lhůtě před koncem zaplaceného období.'
+      });
+    }
+
+    // SEC-23: Bez uloženého platebního tokenu nelze zapnout automatické obnovení (zamezuje získání 3 dnů Grace Period zdarma)
+    if (typeof userDoc.initRecurringTransId !== 'string' || !userDoc.initRecurringTransId.trim()) {
+      return res.status(400).json({
+        error: 'Předplatné nelze znovu aktivovat bez uložené platební karty. Založte prosím novou objednávku.'
       });
     }
 
@@ -3054,6 +3878,7 @@ app.post('/api/subscription/check-expiry', requireAuth, async (req, res) => {
     }
     if (computed.downgraded) {
       await syncCustomClaimsIfNeeded(userId, computed.role, computed.enrolledCourseIds);
+      await revokeUserTokensSafe(userId, 'subscription-expired');
       userRoleCache.delete(userId);
       return res.json({
         expired: true,
@@ -3079,248 +3904,298 @@ app.post('/api/subscription/check-expiry', requireAuth, async (req, res) => {
 });
 
 async function processRecurringChargeForUser(targetUserId, existingUserDoc = null) {
-  const userDoc = existingUserDoc || (await getUserDocServer(targetUserId));
-  if (!userDoc) {
-    const err = new Error('Uživatelský profil nenalezen.');
-    err.statusCode = 404;
+  // SEC-10: Atomický transakční zámek recurringChargeLockUntil (5 min) na users/{uid},
+  // aby manuální /charge-recurring a automatický CRON nikdy nemohly strhnout kartu dvakrát.
+  const userRef = db.collection('users').doc(targetUserId);
+  const lockOwner = crypto.randomUUID();
+
+  const leaseResult = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    if (!snap.exists) {
+      return { errorStatus: 404, error: 'Uživatelský profil nenalezen.' };
+    }
+    const fresh = snap.data() || {};
+    if (!fresh.initRecurringTransId) {
+      return {
+        errorStatus: 400,
+        error: 'Uživatel nemá zaznamenanou žádnou iniciační platbu (initRecurringTransId).'
+      };
+    }
+    if (
+      fresh.subscriptionStatus === 'cancelled_at_period_end' ||
+      fresh.subscriptionStatus === 'inactive' ||
+      fresh.subscriptionStatus === 'expired' ||
+      fresh.recurringCancelled === true ||
+      Boolean(fresh.subscriptionCancelledAt)
+    ) {
+      return {
+        errorStatus: 400,
+        error: 'Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.'
+      };
+    }
+    const nowMs = Date.now();
+    if (Number(fresh.recurringChargeLockUntil || 0) > nowMs) {
+      return {
+        errorStatus: 409,
+        error: 'Opakovaná platba pro tohoto uživatele právě probíhá. Zkuste to za chvíli.'
+      };
+    }
+
+    tx.set(
+      userRef,
+      {
+        recurringChargeLockUntil: nowMs + RECURRING_CHARGE_LEASE_MS,
+        recurringChargeLockOwner: lockOwner
+      },
+      { merge: true }
+    );
+    return { ok: true, userDoc: { ...(existingUserDoc || {}), ...fresh } };
+  });
+
+  if (!leaseResult.ok) {
+    const err = new Error(leaseResult.error);
+    err.statusCode = leaseResult.errorStatus;
     throw err;
   }
 
-  if (!userDoc.initRecurringTransId) {
-    const err = new Error('Uživatel nemá zaznamenanou žádnou iniciační platbu (initRecurringTransId).');
-    err.statusCode = 400;
-    throw err;
-  }
+  const userDoc = leaseResult.userDoc;
+  try {
+    const plan = PREMIUM_PLANS['premium-monthly'];
+    const amount = plan.amount;
+    const hasCreds = hasComgateCredentials();
+    const isTest = Boolean(COMGATE_TEST_MODE);
+    const useComgateRecurringApi = hasCreds && isRealComgateTransId(userDoc.initRecurringTransId);
 
-  if (
-    userDoc.subscriptionStatus === 'cancelled_at_period_end' ||
-    userDoc.subscriptionStatus === 'inactive' ||
-    userDoc.subscriptionStatus === 'expired' ||
-    userDoc.recurringCancelled === true ||
-    Boolean(userDoc.subscriptionCancelledAt)
-  ) {
-    const err = new Error('Předplatné je zrušeno nebo neaktivní. Opakované strhávání nelze provést.');
-    err.statusCode = 400;
-    throw err;
-  }
-
-  const plan = PREMIUM_PLANS['premium-monthly'];
-  const amount = plan.amount;
-  const hasCreds = hasComgateCredentials();
-  const isTest = Boolean(COMGATE_TEST_MODE);
-  const useComgateRecurringApi = hasCreds && isRealComgateTransId(userDoc.initRecurringTransId);
-
-  // Pokud již existuje čekající (PENDING) opakovaná objednávka z předchozího pokusu, nejprve ověříme její stav u Comgate,
-  // abychom nikdy nestrhli platbu dvakrát ani nevystavili fakturu před potvrzením PAID.
-  if (userDoc.lastRecurringOrderId) {
-    const prevOrder = await getOrderDoc(userDoc.lastRecurringOrderId);
-    if (prevOrder && prevOrder.isRecurringRenewal && prevOrder.status === 'pending') {
-      if (hasCreds && isRealComgateTransId(prevOrder.comgateTransId)) {
-        try {
-          const prevCheck = await fetchComgatePaymentStatus(prevOrder.comgateTransId);
-          const prevRemoteStatus = String(prevCheck.statusJson?.status || '').toUpperCase();
-          if (prevCheck.ok && prevCheck.statusJson?.code === 0) {
-            if (prevRemoteStatus === 'PAID') {
-              const outcome = await applyComgatePaymentTransition({
-                orderId: prevOrder.id,
-                transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
-                status: 'PAID',
-                price: prevCheck.statusJson.price,
-                curr: prevCheck.statusJson.curr,
-                isSandbox: Boolean(prevOrder.isSandbox || isTest)
-              });
-              return {
-                orderId: prevOrder.id,
-                status: 'paid',
-                subscriptionPeriodEnd: outcome.finalized?.periodEnd || userDoc.subscriptionPeriodEnd || null,
-                iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || prevOrder.iuctoInvoiceNumber || null
-              };
+    // Pokud již existuje čekající (PENDING) opakovaná objednávka z předchozího pokusu, nejprve ověříme její stav u Comgate,
+    // abychom nikdy nestrhli platbu dvakrát ani nevystavili fakturu před potvrzením PAID.
+    if (userDoc.lastRecurringOrderId) {
+      const prevOrder = await getOrderDoc(userDoc.lastRecurringOrderId);
+      if (prevOrder && prevOrder.isRecurringRenewal && prevOrder.status === 'pending') {
+        if (hasCreds && isRealComgateTransId(prevOrder.comgateTransId)) {
+          try {
+            const prevCheck = await fetchComgatePaymentStatus(prevOrder.comgateTransId);
+            const prevRemoteStatus = String(prevCheck.statusJson?.status || '').toUpperCase();
+            if (prevCheck.ok && prevCheck.statusJson?.code === 0) {
+              if (prevRemoteStatus === 'PAID') {
+                const outcome = await applyComgatePaymentTransition({
+                  orderId: prevOrder.id,
+                  transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
+                  status: 'PAID',
+                  price: prevCheck.statusJson.price,
+                  curr: prevCheck.statusJson.curr,
+                  isSandbox: Boolean(prevOrder.isSandbox || isTest)
+                });
+                return {
+                  orderId: prevOrder.id,
+                  status: 'paid',
+                  subscriptionPeriodEnd: outcome.finalized?.periodEnd || userDoc.subscriptionPeriodEnd || null,
+                  iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || prevOrder.iuctoInvoiceNumber || null
+                };
+              }
+              if (prevRemoteStatus === 'PENDING' || prevRemoteStatus === 'AUTHORIZED') {
+                return {
+                  orderId: prevOrder.id,
+                  status: 'pending',
+                  subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
+                  iuctoInvoiceNumber: null
+                };
+              }
+              if (prevRemoteStatus === 'CANCELLED') {
+                await applyComgatePaymentTransition({
+                  orderId: prevOrder.id,
+                  transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
+                  status: 'CANCELLED',
+                  isSandbox: Boolean(prevOrder.isSandbox || isTest)
+                });
+              }
             }
-            if (prevRemoteStatus === 'PENDING' || prevRemoteStatus === 'AUTHORIZED') {
-              return {
-                orderId: prevOrder.id,
-                status: 'pending',
-                subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
-                iuctoInvoiceNumber: null
-              };
-            }
-            if (prevRemoteStatus === 'CANCELLED') {
-              await applyComgatePaymentTransition({
-                orderId: prevOrder.id,
-                transId: prevCheck.statusJson.transId || prevOrder.comgateTransId,
-                status: 'CANCELLED',
-                isSandbox: Boolean(prevOrder.isSandbox || isTest)
-              });
-            }
+          } catch (prevErr) {
+            console.warn('[Comgate Pending Recurring Status Check Warning]:', prevErr?.message || prevErr);
           }
-        } catch (prevErr) {
-          console.warn('[Comgate Pending Recurring Status Check Warning]:', prevErr?.message || prevErr);
         }
       }
     }
-  }
 
-  const newOrderId = `ORD_REC_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-  const variableSymbol = String(Date.now()).slice(-9);
-  let comgateTransId = null;
+    const newOrderId = `ORD_REC_${Date.now()}_${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
+    const variableSymbol = String(Date.now()).slice(-9);
+    let comgateTransId = null;
 
-  if (useComgateRecurringApi) {
-    // Dle Comgate API v2.0 dokumentace (/v2.0/recurring.json):
-    // - povinný parametr iniciační transakce je `initRecurringId` (vždy transId 1. platby s initRecurring=true)
-    // - `label` musí mít délku 1–16 znaků ('ProEdu Premium' = 14 znaků)
-    const response = await fetch('https://payments.comgate.cz/v2.0/recurring.json', {
-      method: 'POST',
-      headers: {
-        Authorization: getComgateAuthHeader(),
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        merchant: COMGATE_MERCHANT_ID,
-        initRecurringId: userDoc.initRecurringTransId,
-        price: Math.round(amount * 100),
-        curr: 'CZK',
-        label: 'ProEdu Premium',
-        refId: newOrderId,
-        test: isTest
-      })
-    });
+    if (useComgateRecurringApi) {
+      // Dle Comgate API v2.0 dokumentace (/v2.0/recurring.json):
+      // - povinný parametr iniciační transakce je `initRecurringId` (vždy transId 1. platby s initRecurring=true)
+      // - `label` musí mít délku 1–16 znaků ('ProEdu Premium' = 14 znaků)
+      const response = await fetch('https://payments.comgate.cz/v2.0/recurring.json', {
+        method: 'POST',
+        headers: {
+          Authorization: getComgateAuthHeader(),
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          merchant: COMGATE_MERCHANT_ID,
+          initRecurringId: userDoc.initRecurringTransId,
+          price: Math.round(amount * 100),
+          curr: 'CZK',
+          label: 'ProEdu Premium',
+          refId: newOrderId,
+          test: isTest
+        })
+      });
 
-    const json = await response.json().catch(() => null);
-    if (response.ok && json && json.code === 0 && json.transId) {
-      comgateTransId = json.transId;
-    } else {
-      console.warn('[Comgate Recurring Charge Failed]:', json);
-      const failureReason = json?.extraMessage || json?.message || 'Platba byla zamítnuta vydavatelem karty';
-      await updateUserDocServer(targetUserId, {
-        lastRecurringPaymentFailed: true,
-        lastRecurringFailureReason: String(failureReason).slice(0, 300),
-        lastRecurringFailedAt: new Date().toISOString()
-      }).catch(() => {});
-      const notifyEmail = userDoc.billingDetails?.invoiceEmail || userDoc.email;
-      if (notifyEmail) {
-        sendRecurringChargeFailedEmail({
-          to: notifyEmail,
-          name: userDoc.billingDetails?.clientName || userDoc.displayName || userDoc.name,
-          amount,
-          reason: failureReason
-        }).catch(console.warn);
+      const json = await response.json().catch(() => null);
+      if (response.ok && json && json.code === 0 && json.transId) {
+        comgateTransId = json.transId;
+      } else {
+        console.warn('[Comgate Recurring Charge Failed]:', json);
+        const failureReason = json?.extraMessage || json?.message || 'Platba byla zamítnuta vydavatelem karty';
+        await updateUserDocServer(targetUserId, {
+          lastRecurringPaymentFailed: true,
+          lastRecurringFailureReason: String(failureReason).slice(0, 300),
+          lastRecurringFailedAt: new Date().toISOString()
+        }).catch(() => {});
+        const notifyEmail = [userDoc.email, userDoc.billingDetails?.invoiceEmail]
+          .map((e) => String(e || '').trim())
+          .find((e) => isStrictSingleEmail(e));
+        if (notifyEmail) {
+          sendRecurringChargeFailedEmail({
+            to: notifyEmail,
+            name: userDoc.billingDetails?.clientName || userDoc.displayName || userDoc.name,
+            amount,
+            reason: failureReason
+          }).catch(console.warn);
+        }
+        const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
+        err.statusCode = 400;
+        throw err;
       }
-      const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
+    } else if (isSandboxSimulationAllowed()) {
+      comgateTransId = `SANDBOX_REC_${Date.now()}`;
+      console.log(`[Comgate Recurring Simulation] Testovací opakované stržení ${amount} Kč pro ${targetUserId}`);
+    } else {
+      const err = new Error('Opakované stržení nelze provést bez platné iniciační transakce Comgate.');
       err.statusCode = 400;
       throw err;
     }
-  } else if (isSandboxSimulationAllowed()) {
-    comgateTransId = `SANDBOX_REC_${Date.now()}`;
-    console.log(`[Comgate Recurring Simulation] Testovací opakované stržení ${amount} Kč pro ${targetUserId}`);
-  } else {
-    const err = new Error('Opakované stržení nelze provést bez platné iniciační transakce Comgate.');
-    err.statusCode = 400;
-    throw err;
-  }
 
-  const orderIsSandbox = isTest || !useComgateRecurringApi;
-  const billing = userDoc.billingDetails || {};
-  const recOrderData = {
-    id: newOrderId,
-    orderId: newOrderId,
-    userId: targetUserId,
-    userEmail: userDoc.email || '',
-    clientName: billing.clientName || userDoc.displayName || userDoc.name || 'Zákazník ProEdu',
-    billingAddress: {
-      street: billing.street || '-',
-      city: billing.city || '-',
-      zip: billing.zip || '00000',
-      country: billing.country || 'Česká republika'
-    },
-    invoiceEmail: billing.invoiceEmail || userDoc.email || '',
-    ico: billing.ico || '',
-    dic: billing.dic || '',
-    amount,
-    currency: plan.currency,
-    planId: 'premium-monthly',
-    planTitle: 'ProEducator Premium (opakované předplatné)',
-    paymentMethod: 'comgate',
-    status: 'pending',
-    isSandbox: orderIsSandbox,
-    termsAccepted: true,
-    newsletterConsent: false,
-    variableSymbol,
-    comgateTransId,
-    initRecurringTransId: userDoc.initRecurringTransId,
-    isRecurringRenewal: true,
-    createdAt: new Date().toISOString()
-  };
+    const orderIsSandbox = isTest || !useComgateRecurringApi;
+    const billing = userDoc.billingDetails || {};
+    const recOrderData = {
+      id: newOrderId,
+      orderId: newOrderId,
+      userId: targetUserId,
+      userEmail: userDoc.email || '',
+      clientName: billing.clientName || userDoc.displayName || userDoc.name || 'Zákazník ProEdu',
+      billingAddress: {
+        street: billing.street || '-',
+        city: billing.city || '-',
+        zip: billing.zip || '00000',
+        country: billing.country || 'Česká republika'
+      },
+      invoiceEmail: billing.invoiceEmail || userDoc.email || '',
+      ico: billing.ico || '',
+      dic: billing.dic || '',
+      amount,
+      currency: plan.currency,
+      planId: 'premium-monthly',
+      planTitle: 'ProEducator Premium (opakované předplatné)',
+      paymentMethod: 'comgate',
+      status: 'pending',
+      isSandbox: orderIsSandbox,
+      termsAccepted: true,
+      newsletterConsent: false,
+      variableSymbol,
+      comgateTransId,
+      initRecurringTransId: userDoc.initRecurringTransId,
+      isRecurringRenewal: true,
+      createdAt: new Date().toISOString()
+    };
 
-  await saveOrderDoc(newOrderId, recOrderData);
-  await updateUserDocServer(targetUserId, { lastRecurringOrderId: newOrderId }).catch(() => {});
+    await saveOrderDoc(newOrderId, recOrderData);
+    await updateUserDocServer(targetUserId, { lastRecurringOrderId: newOrderId }).catch(() => {});
 
-  // U reálné Comgate brány code=0 z /v2.0/recurring.json znamená přijetí požadavku (transakce vzniká jako PENDING).
-  // Fakturu v iÚčtu vystavujeme a předplatné o 30 dní prodlužujeme VÝHRADNĚ až po potvrzení stavu PAID
-  // (buď při okamžitém ověření stavu, nebo asynchronně přes Comgate Push URL webhook /api/payments/comgate/notify).
-  if (useComgateRecurringApi) {
-    try {
-      const statusCheck = await fetchComgatePaymentStatus(comgateTransId);
-      const remoteStatus = String(statusCheck.statusJson?.status || '').toUpperCase();
-      if (statusCheck.ok && statusCheck.statusJson?.code === 0) {
-        if (remoteStatus === 'PAID') {
-          const outcome = await applyComgatePaymentTransition({
-            orderId: newOrderId,
-            transId: comgateTransId,
-            status: 'PAID',
-            price: statusCheck.statusJson.price,
-            curr: statusCheck.statusJson.curr,
-            isSandbox: orderIsSandbox
-          });
-          return {
-            orderId: newOrderId,
-            status: 'paid',
-            subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
-            iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
-          };
+    // U reálné Comgate brány code=0 z /v2.0/recurring.json znamená přijetí požadavku (transakce vzniká jako PENDING).
+    // Fakturu v iÚčtu vystavujeme a předplatné o 30 dní prodlužujeme VÝHRADNĚ až po potvrzení stavu PAID
+    // (buď při okamžitém ověření stavu, nebo asynchronně přes Comgate Push URL webhook /api/payments/comgate/notify).
+    if (useComgateRecurringApi) {
+      try {
+        const statusCheck = await fetchComgatePaymentStatus(comgateTransId);
+        const remoteStatus = String(statusCheck.statusJson?.status || '').toUpperCase();
+        if (statusCheck.ok && statusCheck.statusJson?.code === 0) {
+          if (remoteStatus === 'PAID') {
+            const outcome = await applyComgatePaymentTransition({
+              orderId: newOrderId,
+              transId: comgateTransId,
+              status: 'PAID',
+              price: statusCheck.statusJson.price,
+              curr: statusCheck.statusJson.curr,
+              isSandbox: orderIsSandbox
+            });
+            return {
+              orderId: newOrderId,
+              status: 'paid',
+              subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
+              iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
+            };
+          }
+          if (remoteStatus === 'CANCELLED') {
+            await applyComgatePaymentTransition({
+              orderId: newOrderId,
+              transId: comgateTransId,
+              status: 'CANCELLED',
+              isSandbox: orderIsSandbox
+            });
+            const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
+            err.statusCode = 400;
+            throw err;
+          }
         }
-        if (remoteStatus === 'CANCELLED') {
-          await applyComgatePaymentTransition({
-            orderId: newOrderId,
-            transId: comgateTransId,
-            status: 'CANCELLED',
-            isSandbox: orderIsSandbox
-          });
-          const err = new Error('Opakovaná platba byla platební bránou zamítnuta.');
-          err.statusCode = 400;
-          throw err;
+      } catch (verifyErr) {
+        if (verifyErr?.statusCode === 400) {
+          throw verifyErr;
         }
+        console.warn('[Comgate Recurring Immediate Status Verify Warning]:', verifyErr?.message || verifyErr);
       }
-    } catch (verifyErr) {
-      if (verifyErr?.statusCode === 400) {
-        throw verifyErr;
-      }
-      console.warn('[Comgate Recurring Immediate Status Verify Warning]:', verifyErr?.message || verifyErr);
+
+      return {
+        orderId: newOrderId,
+        status: 'pending',
+        subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
+        iuctoInvoiceNumber: null
+      };
     }
+
+    // Lokální sandbox simulace (bez živého Comgate) rovnou přechází do PAID
+    const outcome = await applyComgatePaymentTransition({
+      orderId: newOrderId,
+      transId: comgateTransId,
+      status: 'PAID',
+      price: Math.round(amount * 100),
+      curr: plan.currency,
+      isSandbox: true
+    });
 
     return {
       orderId: newOrderId,
-      status: 'pending',
-      subscriptionPeriodEnd: userDoc.subscriptionPeriodEnd || null,
-      iuctoInvoiceNumber: null
+      status: 'paid',
+      subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
+      iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
     };
+  } finally {
+    await db
+      .runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (snap.exists && snap.data()?.recurringChargeLockOwner === lockOwner) {
+          tx.set(
+            userRef,
+            {
+              recurringChargeLockUntil: FieldValue.delete(),
+              recurringChargeLockOwner: FieldValue.delete()
+            },
+            { merge: true }
+          );
+        }
+      })
+      .catch(() => {});
   }
-
-  // Lokální sandbox simulace (bez živého Comgate) rovnou přechází do PAID
-  const outcome = await applyComgatePaymentTransition({
-    orderId: newOrderId,
-    transId: comgateTransId,
-    status: 'PAID',
-    price: Math.round(amount * 100),
-    curr: plan.currency,
-    isSandbox: true
-  });
-
-  return {
-    orderId: newOrderId,
-    status: 'paid',
-    subscriptionPeriodEnd: outcome.finalized?.periodEnd || null,
-    iuctoInvoiceNumber: outcome.finalized?.iuctoRes?.invoiceNumber || null
-  };
 }
 
 /**
@@ -3398,18 +4273,37 @@ async function runDueRecurringSubscriptions() {
         const iuctoRes = await syncIuctoForPaidOrder({ orderId: ord.id, order: ord });
         if (!iuctoRes.failed && !iuctoRes.skipped && iuctoRes.invoiceNumber) {
           summary.iuctoOutboxSynced += 1;
-          const targetEmail = ord.invoiceEmail || ord.userEmail;
-          if (targetEmail && Array.isArray(iuctoRes.attachments) && iuctoRes.attachments.length > 0) {
-            const uDoc = ord.userId ? await getUserDocServer(ord.userId) : null;
-            sendPaymentConfirmedEmail({
-              to: targetEmail,
-              name: ord.clientName || uDoc?.displayName || uDoc?.name || 'zákazníku',
-              orderId: ord.id,
-              amount: ord.amount || 99,
-              periodEnd: uDoc?.subscriptionPeriodEnd || undefined,
-              invoiceNumber: iuctoRes.invoiceNumber,
-              attachments: iuctoRes.attachments
-            }).catch((err) => console.warn('[iÚčto Outbox Email Warning]:', err?.message || err));
+          const targetEmail = String(ord.invoiceEmail || ord.userEmail || '').trim();
+          if (targetEmail && isStrictSingleEmail(targetEmail) && Array.isArray(iuctoRes.attachments) && iuctoRes.attachments.length > 0) {
+            const emailClaimed = await db
+              .runTransaction(async (tx) => {
+                const oRef = db.collection('orders').doc(ord.id);
+                const oSnap = await tx.get(oRef);
+                if (!oSnap.exists || oSnap.data()?.invoiceEmailSentAt) return false;
+                const sentAt = new Date().toISOString();
+                tx.set(
+                  oRef,
+                  {
+                    confirmationEmailSentAt: oSnap.data()?.confirmationEmailSentAt || sentAt,
+                    invoiceEmailSentAt: sentAt
+                  },
+                  { merge: true }
+                );
+                return true;
+              })
+              .catch(() => false);
+            if (emailClaimed) {
+              const uDoc = ord.userId ? await getUserDocServer(ord.userId) : null;
+              sendPaymentConfirmedEmail({
+                to: targetEmail,
+                name: ord.clientName || uDoc?.displayName || uDoc?.name || 'zákazníku',
+                orderId: ord.id,
+                amount: ord.amount || 99,
+                periodEnd: uDoc?.subscriptionPeriodEnd || undefined,
+                invoiceNumber: iuctoRes.invoiceNumber,
+                attachments: iuctoRes.attachments
+              }).catch((err) => console.warn('[iÚčto Outbox Email Warning]:', err?.message || err));
+            }
           }
         }
       }
@@ -3432,6 +4326,7 @@ async function runDueRecurringSubscriptions() {
           console.warn(`[Subscription Expiry Error] ${uid}:`, err?.message || err);
         });
         await syncCustomClaimsIfNeeded(uid, computed.role, computed.enrolledCourseIds);
+        await revokeUserTokensSafe(uid, 'subscription-expired-cron');
         userRoleCache.delete(uid);
         summary.expired += 1;
         continue;
@@ -3462,6 +4357,7 @@ async function runDueRecurringSubscriptions() {
           if (fresh.role !== 'premium' || fresh.subscriptionStatus !== 'active') return null;
           if (fresh.recurringCancelled === true || fresh.subscriptionCancelledAt) return null;
           if (!fresh.initRecurringTransId) return null;
+          if (Number(fresh.recurringChargeLockUntil || 0) > Date.now()) return null;
           if (fresh.lastRecurringAttemptDate === todayPrague) return null;
           tx.update(userRef, { lastRecurringAttemptDate: todayPrague });
           return { uid, ...fresh };
@@ -3520,7 +4416,7 @@ app.post('/api/payments/comgate/charge-recurring', requireAuth, requireTeacher, 
 });
 
 // 5d. Uložení fakturačních údajů (pro iÚčto) a preferované platební metody
-app.put('/api/subscription/billing', requireAuth, async (req, res) => {
+app.put('/api/subscription/billing', requireAuth, subscriptionBillingLimiter, async (req, res) => {
   try {
     const userId = req.user.uid;
     const { billingDetails, preferredPaymentMethod } = req.body || {};
@@ -3536,9 +4432,24 @@ app.put('/api/subscription/billing', requireAuth, async (req, res) => {
     }
 
     if (billingDetails && typeof billingDetails === 'object') {
+      const rawInvoiceEmail =
+        billingDetails.invoiceEmail === undefined || billingDetails.invoiceEmail === null
+          ? ''
+          : String(billingDetails.invoiceEmail);
+      const cleanInvoiceEmail = rawInvoiceEmail.trim();
+      // SEC-22: Striktní validace jediné e-mailové adresy (zamezení relay/spam přes čárky, středníky, CR/LF)
+      if (
+        cleanInvoiceEmail &&
+        (/[\r\n\0]/.test(rawInvoiceEmail) || !isStrictSingleEmail(cleanInvoiceEmail))
+      ) {
+        return res.status(400).json({
+          error: 'Zadejte prosím jednu platnou e-mailovou adresu pro zasílání faktur.'
+        });
+      }
+
       updateData.billingDetails = {
         clientName: String(billingDetails.clientName || '').trim().slice(0, 128),
-        invoiceEmail: String(billingDetails.invoiceEmail || '').trim().slice(0, 256),
+        invoiceEmail: cleanInvoiceEmail.slice(0, 254),
         street: String(billingDetails.street || '').trim().slice(0, 150),
         city: String(billingDetails.city || '').trim().slice(0, 100),
         zip: String(billingDetails.zip || '').trim().slice(0, 20),
@@ -3578,25 +4489,85 @@ app.put('/api/subscription/billing', requireAuth, async (req, res) => {
 });
 
 // 6. Manuální potvrzení přijetí platby (pro učitele)
+// SEC-10: Atomický přechod v Firestore transakci, odmítá již zaplacené / refundované / zrušené objednávky s 409
 app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, async (req, res) => {
   try {
     const { orderId } = req.params;
-    const order = await getOrderDoc(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Objednávka nenalezena.' });
+    const orderRef = db.collection('orders').doc(orderId);
+    const confirmedBy = req.user.email || req.user.uid;
+
+    const txResult = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(orderRef);
+      if (!snap.exists) {
+        return { errorStatus: 404, error: 'Objednávka nenalezena.' };
+      }
+      const order = { id: snap.id, ...snap.data() };
+      if (order.status === 'paid') {
+        return { errorStatus: 409, error: 'Tato objednávka již byla potvrzena jako zaplacená.' };
+      }
+      if (order.status === 'refunded') {
+        return { errorStatus: 409, error: 'Refundovanou objednávku nelze potvrdit.' };
+      }
+      if (order.status === 'cancelled') {
+        return { errorStatus: 409, error: 'Zrušenou objednávku nelze potvrdit.' };
+      }
+
+      const needsPremiumActivation = !order.premiumActivatedAt;
+      const userRef = needsPremiumActivation && order.userId ? db.collection('users').doc(order.userId) : null;
+      const userSnap = userRef ? await tx.get(userRef) : null;
+      const existingUser = userSnap?.exists ? userSnap.data() : null;
+
+      const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
+      const orderUpdate = {
+        status: 'paid',
+        paidAt: order.paidAt || nowIso,
+        confirmedBy,
+        isSandbox: Boolean(order.isSandbox)
+      };
+
+      let periodEnd = null;
+      let enrolledCourseIds = [];
+      if (needsPremiumActivation) {
+        orderUpdate.premiumActivatedAt = nowIso;
+        if (userRef) {
+          const activationPlan = buildPremiumActivationUpdate(existingUser, {
+            nowMs,
+            extendFromExisting: true
+          });
+          periodEnd = activationPlan.periodEnd;
+          enrolledCourseIds = activationPlan.enrolledCourseIds;
+          tx.set(userRef, activationPlan.updateData, { merge: true });
+        }
+      }
+
+      tx.set(orderRef, orderUpdate, { merge: true });
+      return {
+        ok: true,
+        order: { ...order, ...orderUpdate },
+        premiumActivatedNow: needsPremiumActivation,
+        periodEnd,
+        enrolledCourseIds
+      };
+    });
+
+    if (!txResult.ok) {
+      return res.status(txResult.errorStatus).json({ error: txResult.error });
     }
-    if (order.status === 'refunded') {
-      return res.status(409).json({ error: 'Refundovanou objednávku nelze potvrdit.' });
-    }
-    if (order.status === 'cancelled') {
-      return res.status(409).json({ error: 'Zrušenou objednávku nelze potvrdit.' });
+
+    if (txResult.premiumActivatedNow && txResult.order.userId) {
+      await syncCustomClaimsIfNeeded(txResult.order.userId, 'premium', txResult.enrolledCourseIds);
+      userRoleCache.delete(txResult.order.userId);
     }
 
     const { iuctoRes } = await finalizePaidOrderAndInvoice({
       orderId,
-      order,
-      confirmedBy: req.user.email || req.user.uid,
-      isSandbox: Boolean(order.isSandbox)
+      order: txResult.order,
+      confirmedBy,
+      isSandbox: Boolean(txResult.order.isSandbox),
+      skipPremiumActivation: true,
+      periodEnd: txResult.periodEnd,
+      premiumActivatedNow: txResult.premiumActivatedNow
     });
 
     return res.json({
@@ -3611,7 +4582,8 @@ app.post('/api/orders/:orderId/confirm-manual', requireAuth, requireTeacher, asy
 });
 
 // 6c. Stažení PDF faktury z iÚčta přes autorizovaný backend proxy (vlastník objednávky nebo učitel)
-app.get('/api/orders/:orderId/invoice.pdf', requireAuth, async (req, res) => {
+// SEC-26: Per-user rate limit + omezená 5min in-memory cache PDF bufferů (max 50 položek) proti vyčerpání kvóty iÚčta
+app.get('/api/orders/:orderId/invoice.pdf', requireAuth, orderInvoicePdfLimiter, async (req, res) => {
   try {
     const { orderId } = req.params;
     const order = await getOrderDoc(orderId);
@@ -3628,7 +4600,14 @@ app.get('/api/orders/:orderId/invoice.pdf', requireAuth, async (req, res) => {
       return res.status(404).json({ error: 'K této objednávce zatím nebyla vystavena faktura v iÚčtu.' });
     }
 
-    const pdfBuffer = await iuctoService.downloadInvoicePdf(order.iuctoInvoiceId);
+    const cacheKey = `${orderId}:${order.iuctoInvoiceId}`;
+    let pdfBuffer = getCachedInvoicePdf(cacheKey);
+    if (!pdfBuffer) {
+      pdfBuffer = await iuctoService.downloadInvoicePdf(order.iuctoInvoiceId);
+      if (Buffer.isBuffer(pdfBuffer) && pdfBuffer.length > 0) {
+        setCachedInvoicePdf(cacheKey, pdfBuffer);
+      }
+    }
     const safeFilename = String(order.iuctoInvoiceNumber || order.variableSymbol || orderId).replace(/[^a-zA-Z0-9_-]/g, '_');
 
     res.setHeader('Content-Type', 'application/pdf');
@@ -3658,6 +4637,18 @@ app.post('/api/orders/:orderId/iucto-retry', requireAuth, requireTeacher, async 
     if (iuctoRes.failed) {
       return res.status(502).json({ error: iuctoRes.error || 'Synchronizace s iÚčtem selhala.' });
     }
+    if (iuctoRes.locked) {
+      return res.status(409).json({ error: 'Synchronizace faktury s iÚčtem právě probíhá. Zkuste to za chvíli.' });
+    }
+    if (iuctoRes.alreadySynced) {
+      return res.json({
+        success: true,
+        alreadySynced: true,
+        iuctoInvoiceId: iuctoRes.iuctoInvoiceId,
+        iuctoInvoiceNumber: iuctoRes.invoiceNumber,
+        message: `Faktura ${iuctoRes.invoiceNumber || ''} již byla v iÚčtu vystavena.`
+      });
+    }
     if (iuctoRes.skipped) {
       return res.status(400).json({
         error: iuctoRes.reason === 'sandbox_skipped'
@@ -3682,8 +4673,8 @@ app.post('/api/orders/:orderId/iucto-retry', requireAuth, requireTeacher, async 
     return res.json({
       success: true,
       iuctoInvoiceId: iuctoRes.iuctoInvoiceId,
-      iuctoInvoiceNumber: iuctoRes.iuctoInvoiceNumber,
-      message: `Faktura ${iuctoRes.iuctoInvoiceNumber} byla úspěšně vystavena v iÚčtu.`
+      iuctoInvoiceNumber: iuctoRes.invoiceNumber,
+      message: `Faktura ${iuctoRes.invoiceNumber} byla úspěšně vystavena v iÚčtu.`
     });
   } catch (err) {
     console.error('Chyba při iÚčto retry:', err);
@@ -3691,23 +4682,71 @@ app.post('/api/orders/:orderId/iucto-retry', requireAuth, requireTeacher, async 
   }
 });
 
-// 6e. Storno / refundace zaplacené objednávky + Comgate refund + dobropis v iÚčtu + odebrání Premium (pro učitele)
+// 6e. Storno / refundace zaplacené objednávky + Comgate refund + okamžité odebrání Premium + dobropis v iÚčtu (pro učitele)
+// SEC-10 & SEC-11: Transakční zámek refundLockUntil, uložení status='refunded' a odebrání Premium + revokeRefreshTokens PŘED voláním iÚčto dobropisu
 app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req, res) => {
+  const { orderId } = req.params;
+  const orderRef = db.collection('orders').doc(orderId);
+  const refundLockOwner = crypto.randomUUID();
+  let lockHeld = false;
+
+  const releaseRefundLock = async () => {
+    if (!lockHeld) return;
+    lockHeld = false;
+    await db
+      .runTransaction(async (tx) => {
+        const snap = await tx.get(orderRef);
+        if (snap.exists && snap.data()?.refundLockOwner === refundLockOwner) {
+          tx.set(
+            orderRef,
+            {
+              refundLockUntil: FieldValue.delete(),
+              refundLockOwner: FieldValue.delete()
+            },
+            { merge: true }
+          );
+        }
+      })
+      .catch(() => {});
+  };
+
   try {
-    const { orderId } = req.params;
     const { reason, sendEmailViaIucto = true } = req.body || {};
-    const order = await getOrderDoc(orderId);
-    if (!order) {
-      return res.status(404).json({ error: 'Objednávka nenalezena.' });
-    }
-    if (order.status !== 'paid') {
-      return res.status(order.status === 'refunded' ? 409 : 400).json({
-        error: order.status === 'refunded'
-          ? 'Tato objednávka již byla refundována.'
-          : 'Dobropis / refund lze provést pouze u zaplacené objednávky.'
-      });
+
+    // 0. Atomický transakční zámek refundace (odmítá již refundovanou nebo právě probíhající refundaci s 409)
+    const lockResult = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(orderRef);
+      if (!snap.exists) {
+        return { errorStatus: 404, error: 'Objednávka nenalezena.' };
+      }
+      const freshOrder = { id: snap.id, ...snap.data() };
+      if (freshOrder.status === 'refunded') {
+        return { errorStatus: 409, error: 'Tato objednávka již byla refundována.' };
+      }
+      if (freshOrder.status !== 'paid') {
+        return { errorStatus: 400, error: 'Dobropis / refund lze provést pouze u zaplacené objednávky.' };
+      }
+      const nowMs = Date.now();
+      if (Number(freshOrder.refundLockUntil || 0) > nowMs) {
+        return { errorStatus: 409, error: 'Refundace této objednávky právě probíhá. Zkuste to za chvíli.' };
+      }
+      tx.set(
+        orderRef,
+        {
+          refundLockUntil: nowMs + REFUND_LOCK_LEASE_MS,
+          refundLockOwner
+        },
+        { merge: true }
+      );
+      return { ok: true, order: freshOrder };
+    });
+
+    if (!lockResult.ok) {
+      return res.status(lockResult.errorStatus).json({ error: lockResult.error });
     }
 
+    lockHeld = true;
+    const order = lockResult.order;
     const safeReason = String(reason || `Storno a vrácení platby objednávky #${orderId}`).trim().slice(0, 500);
 
     // 1. Pokud jde o reálnou Comgate transakci (živou nebo Comgate test=true), provedeme nejdříve refundaci u brány Comgate
@@ -3730,56 +4769,43 @@ app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req,
       const refundJson = await refundRes.json().catch(() => null);
       if (!refundRes.ok || !refundJson || refundJson.code !== 0) {
         console.error('[Comgate Refund Failed]:', refundJson);
+        await releaseRefundLock();
         return res.status(502).json({ error: 'Platební brána Comgate odmítla refundaci platby.' });
       }
     }
 
-    // 2. Vystavení dobropisu v iÚčtu, pokud existuje faktura
-    let creditNoteResult = null;
-    if (order.iuctoInvoiceId) {
-      const userDoc = order.userId ? await getUserDocServer(order.userId) : {};
-      creditNoteResult = await iuctoService.issueCreditNote({
-        orderId,
-        order,
-        userDoc: userDoc || {},
-        reason: safeReason,
-        sendEmailViaIucto: Boolean(sendEmailViaIucto)
-      });
-    }
-
+    // 2. OKAMŽITĚ po úspěšném Comgate refundu uložíme status='refunded', odebereme Premium,
+    // synchronizujeme custom claims a zneplatníme refresh tokeny JEŠTĚ PŘED voláním iÚčto dobropisu!
     const nowIso = new Date().toISOString();
-    const orderUpdate = {
+    await updateOrderDoc(orderId, {
       status: 'refunded',
       refundedAt: nowIso,
       refundReason: safeReason,
-      refundedBy: req.user.email || req.user.uid
-    };
+      refundedBy: req.user.email || req.user.uid,
+      refundLockUntil: FieldValue.delete(),
+      refundLockOwner: FieldValue.delete()
+    });
+    lockHeld = false;
 
-    if (creditNoteResult && !creditNoteResult.skipped) {
-      orderUpdate.iuctoCreditNoteId = creditNoteResult.iuctoCreditNoteId;
-      orderUpdate.iuctoCreditNoteNumber = creditNoteResult.iuctoCreditNoteNumber;
-      orderUpdate.iuctoCreditNoteShareUrl = creditNoteResult.iuctoCreditNoteShareUrl || null;
-      orderUpdate.iuctoSyncStatus = 'refunded';
-      orderUpdate.iuctoError = null;
-    }
-
-    await updateOrderDoc(orderId, orderUpdate);
-
-    // 3. Odebrání Premium oprávnění, zrušení initRecurringTransId a synchronizace custom claims
+    let cachedUserDocForIucto = {};
     if (order.userId) {
       const uRef = db.collection('users').doc(order.userId);
       const uSnap = await uRef.get();
       if (uSnap.exists) {
         const uData = uSnap.data() || {};
+        cachedUserDocForIucto = uData;
         const enrolledCourseIds = normalizeEnrolledCourseIds(uData);
         const revertedRole = uData.role === 'teacher'
           ? 'teacher'
           : (enrolledCourseIds.length > 0 ? 'course' : 'free');
         const userUpdates = {
-          initRecurringTransId: null,
+          initRecurringTransId: FieldValue.delete(),
+          recurringCancelled: true,
+          recurringCancelledAt: nowIso,
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason
         };
+        const isDowngradingRole = uData.role === 'premium' && revertedRole !== 'premium';
         if (uData.role === 'premium') {
           userUpdates.role = revertedRole;
           userUpdates.subscriptionStatus = 'inactive';
@@ -3788,18 +4814,60 @@ app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req,
         }
         await uRef.set(userUpdates, { merge: true });
         await syncCustomClaimsIfNeeded(order.userId, revertedRole, enrolledCourseIds);
+        if (isDowngradingRole) {
+          await revokeUserTokensSafe(order.userId, 'refund');
+        }
         userRoleCache.delete(order.userId);
+      }
+    }
+
+    // 3. Vystavení dobropisu v iÚčtu (izolováno v try/catch — chyba iÚčta nesmí vrátit 500 ani ponechat Premium)
+    let creditNoteResult = null;
+    let iuctoWarning = null;
+    if (order.iuctoInvoiceId) {
+      try {
+        creditNoteResult = await iuctoService.issueCreditNote({
+          orderId,
+          order,
+          userDoc: cachedUserDocForIucto || {},
+          reason: safeReason,
+          sendEmailViaIucto: Boolean(sendEmailViaIucto)
+        });
+        if (creditNoteResult && !creditNoteResult.skipped) {
+          await updateOrderDoc(orderId, {
+            iuctoCreditNoteId: creditNoteResult.iuctoCreditNoteId,
+            iuctoCreditNoteNumber: creditNoteResult.iuctoCreditNoteNumber,
+            iuctoCreditNoteShareUrl: creditNoteResult.iuctoCreditNoteShareUrl || null,
+            iuctoCreditNoteStatus: 'issued',
+            iuctoCreditNoteError: null,
+            iuctoSyncStatus: 'refunded',
+            iuctoError: null
+          });
+        }
+      } catch (iuctoErr) {
+        const iuctoErrMsg = String(iuctoErr?.message || iuctoErr).slice(0, 500);
+        console.warn(`[iÚčto Credit Note Error] Objednávka ${orderId}:`, iuctoErrMsg);
+        iuctoWarning = 'Objednávka byla stornována a Premium bylo odebráno, ale vystavení dobropisu v iÚčtu selhalo. Vystavte prosím dobropis ručně.';
+        await updateOrderDoc(orderId, {
+          iuctoCreditNoteStatus: 'failed',
+          iuctoCreditNoteError: iuctoErrMsg,
+          iuctoError: iuctoErrMsg
+        }).catch(() => {});
       }
     }
 
     return res.json({
       success: true,
       creditNote: creditNoteResult && !creditNoteResult.skipped ? creditNoteResult : null,
-      message: creditNoteResult && !creditNoteResult.skipped
-        ? `Objednávka byla stornována a v iÚčtu byl vystaven dobropis ${creditNoteResult.iuctoCreditNoteNumber}.`
-        : 'Objednávka byla stornována, platba refundována a Premium přístup odebrán.'
+      ...(iuctoWarning ? { iuctoWarning } : {}),
+      message: iuctoWarning
+        ? iuctoWarning
+        : creditNoteResult && !creditNoteResult.skipped
+          ? `Objednávka byla stornována a v iÚčtu byl vystaven dobropis ${creditNoteResult.iuctoCreditNoteNumber}.`
+          : 'Objednávka byla stornována, platba refundována a Premium přístup odebrán.'
     });
   } catch (err) {
+    await releaseRefundLock();
     console.error('Chyba při refundaci objednávky / dobropisu:', err);
     return res.status(err.statusCode || 500).json({ error: 'Nepodařilo se refundovat objednávku.' });
   }
@@ -3886,6 +4954,8 @@ app.delete('/api/orders/:orderId', requireAuth, requireTeacher, async (req, res)
 });
 
 // 7. Správa přístupu studenta (role, status a přiřazené kurzy učitelem/adminem)
+// SEC-25 & SEC-11: Atomicky synchronizuje courses/{courseId}.studentIds + studentCount, invaliduje cache,
+// čistí předplatné při snížení na 'free' i 'student' a revokuje refresh tokeny při snížení role nebo odebrání kurzu.
 app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, async (req, res) => {
   try {
     const { studentId } = req.params;
@@ -3900,61 +4970,144 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
       return res.status(400).json({ error: 'Neplatná role studenta.' });
     }
 
-    const userRef = db.collection('users').doc(studentId);
-    const existingSnap = await userRef.get();
-    if (!existingSnap.exists) {
-      return res.status(404).json({ error: 'Student nebyl nalezen.' });
-    }
-    if (existingSnap.data()?.role === 'teacher') {
-      return res.status(403).json({ error: 'Roli učitele nelze měnit tímto endpointem.' });
-    }
-
     const safeCourseIds = Array.isArray(enrolledCourseIds)
-      ? Array.from(new Set(enrolledCourseIds.filter((id) => typeof id === 'string' && id.trim().length > 0).map((id) => id.trim())))
+      ? Array.from(
+          new Set(
+            enrolledCourseIds
+              .filter((id) => typeof id === 'string' && id.trim().length > 0 && isValidMaterialId(id.trim()))
+              .map((id) => id.trim())
+          )
+        ).slice(0, 50)
       : [];
 
     const effectiveRole = role === 'course' && safeCourseIds.length === 0 ? 'free' : role;
+    const userRef = db.collection('users').doc(studentId);
 
-    const updateData = {
-      role: effectiveRole,
-      enrolledCourseIds: safeCourseIds,
-      courseId: safeCourseIds.length > 0 ? safeCourseIds[0] : null,
-      updatedAt: new Date().toISOString()
-    };
-
-    if (effectiveRole === 'premium') {
-      updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
-      updateData.subscriptionStatus = 'active';
-      updateData.subscriptionCancelledAt = null;
-      updateData.subscriptionCancelReason = null;
-      updateData.recurringCancelled = false;
-      updateData.recurringCancelledAt = null;
-      updateData.subscriptionExpiredAt = FieldValue.delete();
-      updateData.subscriptionGraceUntil = FieldValue.delete();
-
-      const existingEndMs = parseIsoMillis(existingSnap.data()?.subscriptionPeriodEnd);
-      if (!existingEndMs || existingEndMs < Date.now()) {
-        updateData.subscriptionPeriodEnd = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+    const txResult = await db.runTransaction(async (tx) => {
+      const existingSnap = await tx.get(userRef);
+      if (!existingSnap.exists) {
+        return { errorStatus: 404, error: 'Student nebyl nalezen.' };
       }
-    } else if (effectiveRole === 'course') {
-      updateData.premiumSince = existingSnap.data()?.premiumSince || new Date().toISOString();
-    } else if (effectiveRole === 'free') {
-      updateData.subscriptionStatus = 'inactive';
-      updateData.subscriptionExpiredAt = new Date().toISOString();
-      updateData.subscriptionGraceUntil = FieldValue.delete();
-      updateData.initRecurringTransId = FieldValue.delete();
-      updateData.recurringCancelled = true;
-      updateData.recurringCancelledAt = new Date().toISOString();
+      const existingData = existingSnap.data() || {};
+      if (existingData.role === 'teacher') {
+        return { errorStatus: 403, error: 'Roli učitele nelze měnit tímto endpointem.' };
+      }
+
+      const previousRole = existingData.role || 'free';
+      const previousCourseIds = normalizeEnrolledCourseIds(existingData);
+      const addedCourseIds = safeCourseIds.filter((id) => !previousCourseIds.includes(id));
+      const removedCourseIds = previousCourseIds.filter((id) => !safeCourseIds.includes(id));
+      const affectedCourseIds = Array.from(new Set([...addedCourseIds, ...removedCourseIds]));
+
+      const courseSnaps = await Promise.all(
+        affectedCourseIds.map((cid) => tx.get(db.collection('courses').doc(cid)))
+      );
+      const courseSnapById = new Map(affectedCourseIds.map((cid, idx) => [cid, courseSnaps[idx]]));
+
+      const nowIso = new Date().toISOString();
+      const updateData = {
+        role: effectiveRole,
+        enrolledCourseIds: safeCourseIds,
+        courseId: safeCourseIds.length > 0 ? safeCourseIds[0] : null,
+        updatedAt: nowIso
+      };
+
+      if (effectiveRole === 'premium') {
+        updateData.premiumSince = existingData.premiumSince || nowIso;
+        updateData.subscriptionStatus = 'active';
+        updateData.subscriptionCancelledAt = null;
+        updateData.subscriptionCancelReason = null;
+        updateData.recurringCancelled = false;
+        updateData.recurringCancelledAt = null;
+        updateData.subscriptionExpiredAt = FieldValue.delete();
+        updateData.subscriptionGraceUntil = FieldValue.delete();
+
+        const existingEndMs = parseIsoMillis(existingData.subscriptionPeriodEnd);
+        if (!existingEndMs || existingEndMs < Date.now()) {
+          updateData.subscriptionPeriodEnd = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+        }
+      } else if (effectiveRole === 'course') {
+        updateData.premiumSince = existingData.premiumSince || nowIso;
+      } else if (effectiveRole === 'free' || effectiveRole === 'student') {
+        updateData.subscriptionStatus = 'inactive';
+        updateData.subscriptionExpiredAt = nowIso;
+        updateData.subscriptionGraceUntil = FieldValue.delete();
+        updateData.initRecurringTransId = FieldValue.delete();
+        updateData.recurringCancelled = true;
+        updateData.recurringCancelledAt = nowIso;
+      }
+
+      tx.set(userRef, updateData, { merge: true });
+
+      const nowTs = Timestamp.now();
+      for (const cid of addedCourseIds) {
+        const cRef = db.collection('courses').doc(cid);
+        const cSnap = courseSnapById.get(cid);
+        if (cSnap && cSnap.exists) {
+          const existingIds = Array.isArray(cSnap.data()?.studentIds) ? cSnap.data().studentIds : [];
+          const nextCount = existingIds.includes(studentId) ? existingIds.length : existingIds.length + 1;
+          tx.update(cRef, {
+            studentIds: FieldValue.arrayUnion(studentId),
+            studentCount: nextCount,
+            updatedAt: nowTs
+          });
+        } else {
+          const flagshipFallback = DEFAULT_FLAGSHIP_COURSES.find((c) => c.id === cid);
+          if (flagshipFallback) {
+            tx.set(cRef, {
+              ...flagshipFallback,
+              studentIds: [studentId],
+              studentCount: 1,
+              createdAt: nowTs,
+              updatedAt: nowTs
+            });
+          }
+        }
+      }
+
+      for (const cid of removedCourseIds) {
+        const cRef = db.collection('courses').doc(cid);
+        const cSnap = courseSnapById.get(cid);
+        if (cSnap && cSnap.exists) {
+          const existingIds = Array.isArray(cSnap.data()?.studentIds) ? cSnap.data().studentIds : [];
+          const nextCount = existingIds.filter((id) => id !== studentId).length;
+          tx.update(cRef, {
+            studentIds: FieldValue.arrayRemove(studentId),
+            studentCount: nextCount,
+            updatedAt: nowTs
+          });
+        }
+      }
+
+      return {
+        ok: true,
+        previousRole,
+        effectiveRole,
+        addedCourseIds,
+        removedCourseIds
+      };
+    });
+
+    if (!txResult.ok) {
+      return res.status(txResult.errorStatus).json({ error: txResult.error });
     }
 
-    await userRef.set(updateData, { merge: true });
-    await syncCustomClaimsIfNeeded(studentId, effectiveRole, safeCourseIds);
+    await syncCustomClaimsIfNeeded(studentId, txResult.effectiveRole, safeCourseIds);
     userRoleCache.delete(studentId);
+    if (txResult.addedCourseIds.length > 0 || txResult.removedCourseIds.length > 0) {
+      invalidateCoursesListCache();
+    }
+
+    const isRoleDowngrade =
+      (ROLE_PRIVILEGE_RANK[txResult.effectiveRole] ?? 0) < (ROLE_PRIVILEGE_RANK[txResult.previousRole] ?? 0);
+    if (isRoleDowngrade || txResult.removedCourseIds.length > 0) {
+      await revokeUserTokensSafe(studentId, 'update-access');
+    }
 
     return res.json({
       success: true,
       message: 'Přístup studenta byl úspěšně aktualizován.',
-      role: effectiveRole,
+      role: txResult.effectiveRole,
       enrolledCourseIds: safeCourseIds,
       courseId: safeCourseIds.length > 0 ? safeCourseIds[0] : null
     });
@@ -3989,7 +5142,8 @@ async function cleanupStudentDataServer(uid) {
     db.collection('focusSessions').where('userId', '==', uid),
     db.collection('questionInquiries').where('studentId', '==', uid),
     db.collection('surveyResponses').where('userId', '==', uid),
-    db.collection('bugReports').where('userId', '==', uid)
+    db.collection('bugReports').where('userId', '==', uid),
+    db.collection('verifiedPracticeChecks').where('uid', '==', uid)
   ];
 
   await Promise.all(queries.map((q) => deleteQueryDocsInBatches(q)));
@@ -4004,6 +5158,9 @@ async function cleanupStudentDataServer(uid) {
       studentCount: nextIds.length
     });
   }
+  if (!coursesSnap.empty) {
+    invalidateCoursesListCache();
+  }
 
   const lessonsSnap = await db.collection('liveLessons').where('studentIds', 'array-contains', uid).get();
   for (const lDoc of lessonsSnap.docs) {
@@ -4012,11 +5169,12 @@ async function cleanupStudentDataServer(uid) {
     });
   }
 
-  // Smazání souborů uživatele ze Storage (pokud bucket existuje)
+  // Smazání souborů uživatele ze Storage (včetně legacy prefixu bug-reports/{uid}/)
   try {
     const bucket = storage.bucket();
     await bucket.deleteFiles({ prefix: `users/${uid}/` }).catch(() => {});
     await bucket.deleteFiles({ prefix: `bugReports/${uid}/` }).catch(() => {});
+    await bucket.deleteFiles({ prefix: `bug-reports/${uid}/` }).catch(() => {});
   } catch {
     // Storage bucket nemusí být v lokálním emulátoru dostupný
   }
@@ -4051,6 +5209,7 @@ app.delete('/api/students/:studentId', requireAuth, requireTeacher, async (req, 
       return res.status(403).json({ error: 'Účet učitele/administrátora nelze smazat.' });
     }
 
+    await revokeUserTokensSafe(studentId, 'student-deleted');
     try {
       await auth.deleteUser(studentId);
     } catch (authErr) {
@@ -4263,6 +5422,85 @@ function decodeAndValidateMaterialPayload({ fileData, pdfDataUrl, fileType, svgC
   };
 }
 
+const LEARNING_SHEETS_CACHE_TTL_MS = 60 * 1000;
+const learningSheetsCache = {
+  docs: null,
+  expiresAt: 0,
+  pendingPromise: null,
+};
+
+function invalidateLearningSheetsCache() {
+  learningSheetsCache.docs = null;
+  learningSheetsCache.expiresAt = 0;
+  learningSheetsCache.pendingPromise = null;
+}
+
+async function loadLearningSheetsFromFirestore(options = {}) {
+  const now = Date.now();
+  if (!options.forceRefresh && learningSheetsCache.docs && learningSheetsCache.expiresAt > now) {
+    return learningSheetsCache.docs;
+  }
+  if (!options.forceRefresh && learningSheetsCache.pendingPromise) {
+    return learningSheetsCache.pendingPromise;
+  }
+  const promise = db
+    .collection('learningSheets')
+    .get()
+    .then((snap) => {
+      const docs = snap.docs.map((d) => serializeTimestampFields({ id: d.id, ...d.data() }));
+      learningSheetsCache.docs = docs;
+      learningSheetsCache.expiresAt = Date.now() + LEARNING_SHEETS_CACHE_TTL_MS;
+      learningSheetsCache.pendingPromise = null;
+      return docs;
+    })
+    .catch((err) => {
+      learningSheetsCache.pendingPromise = null;
+      throw err;
+    });
+  learningSheetsCache.pendingPromise = promise;
+  return promise;
+}
+
+const QUESTION_COUNTS_CACHE_TTL_MS = 60 * 1000;
+const questionCountsCache = {
+  map: null,
+  expiresAt: 0,
+  pendingPromise: null,
+};
+
+async function loadQuestionCountsBySubtopic() {
+  const now = Date.now();
+  if (questionCountsCache.map && questionCountsCache.expiresAt > now) {
+    return questionCountsCache.map;
+  }
+  if (questionCountsCache.pendingPromise) {
+    return questionCountsCache.pendingPromise;
+  }
+  const promise = db
+    .collection('questions')
+    .select('subtopicId')
+    .get()
+    .then((qSnap) => {
+      const counts = new Map();
+      qSnap.docs.forEach((qd) => {
+        const sid = qd.data()?.subtopicId;
+        if (typeof sid === 'string' && sid) {
+          counts.set(sid, (counts.get(sid) || 0) + 1);
+        }
+      });
+      questionCountsCache.map = counts;
+      questionCountsCache.expiresAt = Date.now() + QUESTION_COUNTS_CACHE_TTL_MS;
+      questionCountsCache.pendingPromise = null;
+      return counts;
+    })
+    .catch((err) => {
+      questionCountsCache.pendingPromise = null;
+      throw err;
+    });
+  questionCountsCache.pendingPromise = promise;
+  return promise;
+}
+
 async function createMaterialDoc(materialId, data) {
   const adminData = {
     ...data,
@@ -4270,6 +5508,7 @@ async function createMaterialDoc(materialId, data) {
     updatedAt: data.updatedAt ? new Date(data.updatedAt) : Timestamp.now(),
   };
   await db.collection('learningSheets').doc(materialId).set(adminData);
+  invalidateLearningSheetsCache();
   return true;
 }
 
@@ -4288,6 +5527,7 @@ async function updateMaterialDoc(materialId, updates) {
     },
     { merge: true }
   );
+  invalidateLearningSheetsCache();
   return true;
 }
 
@@ -4351,13 +5591,14 @@ async function deleteMaterialChunksOnly(materialId, options = {}) {
 async function deleteMaterialWithChunks(materialId) {
   await deleteMaterialChunksOnly(materialId);
   await db.collection('learningSheets').doc(materialId).delete();
+  invalidateLearningSheetsCache();
   return true;
 }
 
 async function processMaterialInBackground(materialId, options) {
   const { cleanFileBase64, fileByteLength, thumbBase64, thumbContentType, generation, detectedPageCount } = options;
   const chunkPrefix = `${generation}_chunk_`;
-  console.log(`[MaterialProcessor] Zahajuji asynchronní zpracování materiálu ${materialId} (${generation})...`);
+  console.log(`[MaterialProcessor] Zahajuji zpracování materiálu ${materialId} (${generation})...`);
   try {
     if (thumbBase64 && thumbContentType) {
       await saveMaterialChunk(materialId, 'thumbnail', {
@@ -4400,9 +5641,16 @@ async function processMaterialInBackground(materialId, options) {
       keepPrefix: chunkPrefix,
       keepIds: ['thumbnail'],
     });
+    invalidateLearningSheetsCache();
     console.log(`[MaterialProcessor] Materiál ${materialId} byl úspěšně zpracován (${generation}).`);
+    return {
+      status: 'ready',
+      errorMessage: null,
+      fileSize: readyUpdates.fileSize,
+      pageCount: readyUpdates.pageCount ?? null,
+    };
   } catch (err) {
-    console.error(`[MaterialProcessor] Chyba při asynchronním zpracování materiálu ${materialId}:`, err);
+    console.error(`[MaterialProcessor] Chyba při zpracování materiálu ${materialId}:`, err);
     try {
       await updateMaterialDoc(materialId, {
         status: 'error',
@@ -4411,20 +5659,28 @@ async function processMaterialInBackground(materialId, options) {
     } catch (saveErr) {
       console.error(`[MaterialProcessor] Selhalo uložení chybového stavu pro ${materialId}:`, saveErr);
     }
+    invalidateLearningSheetsCache();
+    return {
+      status: 'error',
+      errorMessage: 'Chyba při zpracování souboru.',
+    };
   }
 }
 
 const MATERIAL_FILE_RATE_WINDOW_MS = 10 * 60 * 1000;
 const MATERIAL_FILE_RATE_MAX = 45;
+const MATERIAL_FILE_DAILY_UNIQUE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MATERIAL_FILE_DAILY_UNIQUE_MAX = 20;
 const materialFileViewRateMap = new Map(); // key -> { timestamps: number[] }
+const materialFileDailyUniqueMap = new Map(); // key -> { windowStart: number, materialIds: Set<string> }
 
-function checkMaterialFileRateLimit(req) {
+function checkMaterialFileRateLimit(req, materialId = null) {
   if (req.user?.role === 'teacher') return { allowed: true };
   const key = req.user?.uid ? `uid:${req.user.uid}` : `ip:${getClientIp(req)}`;
   const now = Date.now();
   const cutoff = now - MATERIAL_FILE_RATE_WINDOW_MS;
 
-  if (materialFileViewRateMap.size > 2000) {
+  if (materialFileViewRateMap.size >= DEFAULT_MAP_MAX_ENTRIES) {
     for (const [k, entry] of materialFileViewRateMap.entries()) {
       const fresh = entry.timestamps.filter((t) => t > cutoff);
       if (fresh.length === 0) materialFileViewRateMap.delete(k);
@@ -4438,12 +5694,40 @@ function checkMaterialFileRateLimit(req) {
     const oldest = recent[0];
     const retryAfterSec = Math.max(1, Math.ceil((oldest + MATERIAL_FILE_RATE_WINDOW_MS - now) / 1000));
     entry.timestamps = recent;
-    materialFileViewRateMap.set(key, entry);
-    return { allowed: false, retryAfterSec };
+    setBoundedMapEntry(materialFileViewRateMap, key, entry, DEFAULT_MAP_MAX_ENTRIES);
+    return { allowed: false, retryAfterSec, reason: 'burst_limit' };
   }
+
+  // SEC-06: Denní strop unikátních materiálů na uživatele/IP (brání automatizovanému scrapování přes /file)
+  if (materialId) {
+    if (materialFileDailyUniqueMap.size >= DEFAULT_MAP_MAX_ENTRIES) {
+      for (const [k, daily] of materialFileDailyUniqueMap.entries()) {
+        if (now - daily.windowStart >= MATERIAL_FILE_DAILY_UNIQUE_WINDOW_MS) {
+          materialFileDailyUniqueMap.delete(k);
+        }
+      }
+    }
+    let daily = materialFileDailyUniqueMap.get(key);
+    if (!daily || now - daily.windowStart >= MATERIAL_FILE_DAILY_UNIQUE_WINDOW_MS) {
+      daily = { windowStart: now, materialIds: new Set() };
+    }
+    if (!daily.materialIds.has(materialId)) {
+      if (daily.materialIds.size >= MATERIAL_FILE_DAILY_UNIQUE_MAX) {
+        const retryAfterSec = Math.max(
+          1,
+          Math.ceil((daily.windowStart + MATERIAL_FILE_DAILY_UNIQUE_WINDOW_MS - now) / 1000)
+        );
+        setBoundedMapEntry(materialFileDailyUniqueMap, key, daily, DEFAULT_MAP_MAX_ENTRIES);
+        return { allowed: false, retryAfterSec, reason: 'daily_unique_limit' };
+      }
+      daily.materialIds.add(materialId);
+    }
+    setBoundedMapEntry(materialFileDailyUniqueMap, key, daily, DEFAULT_MAP_MAX_ENTRIES);
+  }
+
   recent.push(now);
   entry.timestamps = recent;
-  materialFileViewRateMap.set(key, entry);
+  setBoundedMapEntry(materialFileViewRateMap, key, entry, DEFAULT_MAP_MAX_ENTRIES);
   return { allowed: true };
 }
 
@@ -4728,10 +6012,11 @@ app.get('/api/materials', optionalAuth, async (req, res) => {
     const isTeacher = req.user?.role === 'teacher';
     const hasPremiumAccess = isUserPaidOrTeacher(req.user);
     const includeHidden = isTeacher && (req.query.includeHidden === '1' || req.query.includeHidden === 'true');
+    const forceRefresh = isTeacher && (req.query.refresh === '1' || req.query.refresh === 'true');
 
-    const [snap, catalog, quota] = await Promise.all([
-      db.collection('learningSheets').get(),
-      fetchPracticeCatalogUncached().catch(() => ({ rawSubtopics: [], visibleSubtopics: [] })),
+    const [allSheetDocs, catalog, quota] = await Promise.all([
+      loadLearningSheetsFromFirestore({ forceRefresh }),
+      loadPracticeCatalogFromFirestore({ forceRefresh }).catch(() => ({ rawSubtopics: [], visibleSubtopics: [] })),
       getMaterialQuotaSummaryForUser(req.user),
     ]);
 
@@ -4746,16 +6031,10 @@ app.get('/api/materials', optionalAuth, async (req, res) => {
       return !cfg && !s.questionCount;
     });
 
-    const questionCountBySubtopic = new Map();
+    let questionCountBySubtopic = new Map();
     if (needsQuestionCount) {
       try {
-        const qSnap = await db.collection('questions').select('subtopicId').get();
-        qSnap.docs.forEach((qd) => {
-          const sid = qd.data()?.subtopicId;
-          if (typeof sid === 'string' && sid) {
-            questionCountBySubtopic.set(sid, (questionCountBySubtopic.get(sid) || 0) + 1);
-          }
-        });
+        questionCountBySubtopic = await loadQuestionCountsBySubtopic();
       } catch (qErr) {
         console.warn('[Materials Catalog] Nepodařilo se načíst počty otázek:', qErr?.message || qErr);
       }
@@ -4763,8 +6042,7 @@ app.get('/api/materials', optionalAuth, async (req, res) => {
 
     const linkedSubtopicLookup = buildLinkedSubtopicLookup(catalogSubtopics, questionCountBySubtopic);
 
-    const docs = snap.docs
-      .map((d) => serializeTimestampFields({ id: d.id, ...d.data() }))
+    const docs = allSheetDocs
       .filter((mat) => {
         if (!isTeacher) {
           if (mat.hiddenFromLibrary === true) return false;
@@ -4886,6 +6164,7 @@ app.get('/api/materials', optionalAuth, async (req, res) => {
       };
     });
 
+    setPublicCatalogCacheHeaders(req, res);
     return res.json({ materials, locked: !hasPremiumAccess, quota });
   } catch (err) {
     console.error('[Materials Catalog Error]:', err);
@@ -5024,6 +6303,8 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
 
     await createMaterialDoc(materialId, initialDoc);
 
+    let finalStatus = initialDoc.status;
+    let finalErrorMessage = null;
     if (hasFile || validated.thumbBase64) {
       if (!hasFile && validated.thumbBase64) {
         await saveMaterialChunk(materialId, 'thumbnail', {
@@ -5033,21 +6314,25 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
           createdAt: new Date().toISOString(),
         });
       } else {
-        processMaterialInBackground(materialId, {
+        // SEC-15: Zpracování chunků dokončíme před odesláním odpovědi (Cloud Functions v2 po odpovědi přiškrtí CPU)
+        const procResult = await processMaterialInBackground(materialId, {
           cleanFileBase64: validated.cleanFileBase64,
           fileByteLength: validated.fileByteLength,
           thumbBase64: validated.thumbBase64,
           thumbContentType: validated.thumbContentType,
           generation,
           detectedPageCount: cleanPageCount,
-        }).catch((err) => console.error('[Background process unhandled error]:', err));
+        });
+        finalStatus = procResult?.status || 'ready';
+        finalErrorMessage = procResult?.errorMessage || null;
       }
     }
 
-    return res.status(202).json({
-      success: true,
+    return res.status(201).json({
+      success: finalStatus !== 'error',
       materialId,
-      status: initialDoc.status,
+      status: finalStatus,
+      ...(finalErrorMessage ? { errorMessage: finalErrorMessage } : {}),
       thumbnailUrl: initialDoc.thumbnailUrl,
       fileUrl: initialDoc.fileUrl,
       pdfUrl: initialDoc.pdfUrl,
@@ -5056,9 +6341,10 @@ app.post('/api/materials/upload', requireAuth, requireTeacher, async (req, res) 
       fileType: initialDoc.fileType,
       originalName: initialDoc.originalName,
       pageCount: initialDoc.pageCount,
-      message: hasFile
-        ? 'Materiál byl zařazen ke zpracování na pozadí.'
-        : 'Materiál byl úspěšně vytvořen.',
+      message:
+        finalStatus === 'error'
+          ? 'Materiál byl vytvořen, ale zpracování souboru selhalo.'
+          : 'Materiál byl úspěšně nahrán a zpracován.',
     });
   } catch (err) {
     if (err?.status && err.status < 500) {
@@ -5177,20 +6463,24 @@ app.put('/api/materials/:id', requireAuth, requireTeacher, async (req, res) => {
 
       await updateMaterialDoc(id, updates);
 
-      processMaterialInBackground(id, {
+      // SEC-15: Zpracování chunků dokončíme před odesláním odpovědi (Cloud Functions v2 po odpovědi přiškrtí CPU)
+      const procResult = await processMaterialInBackground(id, {
         cleanFileBase64: validated.cleanFileBase64,
         fileByteLength: validated.fileByteLength,
         thumbBase64: validated.thumbBase64,
         thumbContentType: validated.thumbContentType,
         generation,
         detectedPageCount: effectivePageCount,
-      }).catch((err) => console.error('[Background replace process unhandled error]:', err));
+      });
+      const finalStatus = procResult?.status || 'ready';
+      const finalErrorMessage = procResult?.errorMessage || null;
 
-      return res.status(202).json({
-        success: true,
+      return res.status(200).json({
+        success: finalStatus !== 'error',
         materialId: id,
-        status: 'processing',
         ...updates,
+        status: finalStatus,
+        ...(finalErrorMessage ? { errorMessage: finalErrorMessage } : {}),
       });
     }
 
@@ -5359,12 +6649,14 @@ async function serveMaterialFile(req, res, asDownload = false) {
         }
         return res.status(403).json({ error: 'Tento materiál vyžaduje předplatné ProEducator Premium.' });
       }
-      const rateCheck = checkMaterialFileRateLimit(req);
+      const rateCheck = checkMaterialFileRateLimit(req, id);
       if (!rateCheck.allowed) {
         res.setHeader('Retry-After', String(rateCheck.retryAfterSec));
-        return res.status(429).json({
-          error: 'Příliš mnoho načtených materiálů za krátkou dobu. Zkuste to prosím za několik minut.',
-        });
+        const rateMsg =
+          rateCheck.reason === 'daily_unique_limit'
+            ? 'Dosáhli jste denního limitu zobrazených studijních materiálů. Zkuste to prosím zítra.'
+            : 'Příliš mnoho načtených materiálů za krátkou dobu. Zkuste to prosím za několik minut.';
+        return res.status(429).json({ error: rateMsg });
       }
     }
 
@@ -5421,8 +6713,21 @@ async function serveMaterialFile(req, res, asDownload = false) {
     const asciiFilename = filename.replace(/[^\x20-\x7e]/g, '_') || fallbackName;
     const dispositionType = asDownload ? 'attachment' : 'inline';
 
-    const watermarkText = buildWatermarkText(req.user);
+    const watermarkText =
+      req.user?.role === 'teacher'
+        ? null
+        : req.user
+          ? buildWatermarkText(req.user)
+          : 'ProEducator.eu — Ukázka';
+
+    // SEC-06: Serverové forenzní vodoznaky přímo do bajtů SVG i PDF pro všechny neučitelské uživatele (/file i /download)
     if (watermarkText) {
+      if (contentType === 'image/svg+xml') {
+        const watermarkedSvg = embedWatermarkIntoSvg(buf.toString('utf8'), watermarkText);
+        buf = Buffer.from(watermarkedSvg, 'utf8');
+      } else if (contentType === 'application/pdf') {
+        buf = await embedWatermarkIntoPdf(buf, watermarkText);
+      }
       res.setHeader('X-Watermark-Text', encodeURIComponent(watermarkText));
     }
     if (quotaInfo) {
@@ -5430,6 +6735,7 @@ async function serveMaterialFile(req, res, asDownload = false) {
       res.setHeader('X-Quota-Limit', String(quotaInfo.limit));
     }
     res.setHeader('Access-Control-Expose-Headers', 'X-Watermark-Text, X-Quota-Remaining, X-Quota-Limit');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
 
     res.setHeader('Content-Type', contentType === 'image/svg+xml' ? 'image/svg+xml; charset=utf-8' : contentType);
     if (contentType === 'image/svg+xml') {
@@ -5491,7 +6797,10 @@ function getGuestDemoSecret() {
   const configured = (process.env.GUEST_DEMO_SECRET || '').trim();
   if (configured.length >= 16) return configured;
   const regConfigured = (process.env.REGISTRATION_ENCRYPTION_SECRET || '').trim();
-  if (regConfigured.length >= 16) return regConfigured;
+  if (regConfigured.length >= 16) {
+    // SEC-37: Doménově oddělený záložní klíč místo přímého sdílení REGISTRATION_ENCRYPTION_SECRET
+    return deriveDomainSeparatedSecret(regConfigured, 'proedu:guest-demo:v1');
+  }
   if (process.env.NODE_ENV === 'production' && !isEmulatorMode) {
     throw new Error('GUEST_DEMO_SECRET / REGISTRATION_ENCRYPTION_SECRET není nakonfigurováno.');
   }
@@ -5568,7 +6877,7 @@ function verifyGuestDemoCookieValue(rawCookie) {
 }
 
 function pruneGuestIpQuota(today) {
-  if (guestDemoIpDailyQuota.size < 2000) return;
+  if (guestDemoIpDailyQuota.size < DEFAULT_MAP_MAX_ENTRIES) return;
   for (const [ip, entry] of guestDemoIpDailyQuota.entries()) {
     if (!entry || entry.date !== today) {
       guestDemoIpDailyQuota.delete(ip);
@@ -5609,15 +6918,39 @@ function writeGuestDemoCookie(req, res, state) {
   });
 }
 
-function consumeGuestDemoAttempt(req, res) {
+async function consumeGuestDemoAttempt(req, res) {
   const current = getEffectiveGuestDemoState(req);
   if (current.state.u >= GUEST_DEMO_MAX_ATTEMPTS) {
     writeGuestDemoCookie(req, res, current.state);
     return { allowed: false, remaining: 0 };
   }
-  const nextUsed = current.state.u + 1;
+
+  // SEC-09: Sdílená denní demo kvóta přes Firestore (brání obejití přes více instancí nebo smazání cookie)
+  const distributedDaily = await checkDistributedRateLimit({
+    key: `guest-demo-daily:${current.today}:${current.ip}`,
+    windowMs: 24 * 60 * 60 * 1000,
+    max: GUEST_DEMO_MAX_ATTEMPTS,
+  });
+  if (!distributedDaily.allowed) {
+    const maxedState = { ...current.state, u: GUEST_DEMO_MAX_ATTEMPTS };
+    setBoundedMapEntry(
+      guestDemoIpDailyQuota,
+      current.ip,
+      { date: current.today, count: GUEST_DEMO_MAX_ATTEMPTS },
+      DEFAULT_MAP_MAX_ENTRIES
+    );
+    writeGuestDemoCookie(req, res, maxedState);
+    return { allowed: false, remaining: 0 };
+  }
+
+  const nextUsed = Math.min(GUEST_DEMO_MAX_ATTEMPTS, Math.max(current.state.u + 1, distributedDaily.count || 1));
   const nextState = { ...current.state, u: nextUsed };
-  guestDemoIpDailyQuota.set(current.ip, { date: current.today, count: nextUsed });
+  setBoundedMapEntry(
+    guestDemoIpDailyQuota,
+    current.ip,
+    { date: current.today, count: nextUsed },
+    DEFAULT_MAP_MAX_ENTRIES
+  );
   writeGuestDemoCookie(req, res, nextState);
   return { allowed: true, remaining: Math.max(0, GUEST_DEMO_MAX_ATTEMPTS - nextUsed) };
 }
@@ -5627,6 +6960,29 @@ const practiceGuestCheckLimiter = createRateLimiter({
   max: 60,
   keyFn: (req) => `practice-guest:${getClientIp(req)}`,
   message: 'Příliš mnoho pokusů v demo režimu. Zkuste to za chvíli nebo se přihlaste.',
+});
+
+async function checkDistributedGuestBurstLimit(req, res) {
+  const rate = await checkDistributedRateLimit({
+    key: `practice-guest:${getClientIp(req)}`,
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+  });
+  if (!rate.allowed) {
+    res.setHeader('Retry-After', String(rate.retryAfterSec));
+    res.status(429).json({
+      error: 'Příliš mnoho pokusů v demo režimu. Zkuste to za chvíli nebo se přihlaste.',
+    });
+    return false;
+  }
+  return true;
+}
+
+const practiceFinishLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  keyFn: (req) => `practice-finish:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho pokusů o dokončení procvičování. Zkuste to prosím za chvíli.',
 });
 
 function normalizePracticeSubjectId(val) {
@@ -5693,13 +7049,37 @@ function stripSubtopicStudyContent(subtopic) {
 
 function sanitizeStudySubtopicFields(subtopic) {
   const copy = { ...subtopic };
+  // SEC-19: Sanitizujeme top-level subtopic.svgContent i vnořené SVG v sampleProblem a studySteps
+  if (typeof copy.svgContent === 'string') {
+    copy.svgContent = copy.svgContent.trim() ? sanitizeSvg(copy.svgContent) : '';
+  }
   if (copy.sampleProblem && typeof copy.sampleProblem === 'object' && typeof copy.sampleProblem.svgContent === 'string') {
     copy.sampleProblem = {
       ...copy.sampleProblem,
       svgContent: sanitizeSvg(copy.sampleProblem.svgContent),
     };
   }
+  if (Array.isArray(copy.studySteps)) {
+    copy.studySteps = copy.studySteps.map((step) => {
+      if (!step || typeof step !== 'object') return step;
+      const nextStep = { ...step };
+      if (typeof nextStep.svgContent === 'string') {
+        nextStep.svgContent = nextStep.svgContent.trim() ? sanitizeSvg(nextStep.svgContent) : '';
+      }
+      if (typeof nextStep.solutionSvgContent === 'string') {
+        nextStep.solutionSvgContent = nextStep.solutionSvgContent.trim() ? sanitizeSvg(nextStep.solutionSvgContent) : '';
+      }
+      return nextStep;
+    });
+  }
   return copy;
+}
+
+// SEC-34: Skrytí interních UID učitelů/autorů pro neučitelské klienty v katalogu procvičování
+function stripInternalOwnershipFields(item, isTeacher) {
+  if (!item || typeof item !== 'object' || isTeacher) return item;
+  const { teacherId: _tid, createdBy: _cb, ...rest } = item;
+  return rest;
 }
 
 const PRACTICE_CATALOG_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -5715,25 +7095,129 @@ function invalidatePracticeCatalogCache() {
   practiceCatalogCache.pendingPromise = null;
 }
 
-const recentCheckedPracticeByUser = new Map(); // "${uid}:${subtopicId}" -> { count, updatedAt }
+const SUBTOPIC_QUESTIONS_CACHE_TTL_MS = 60 * 1000;
+const SUBTOPIC_QUESTIONS_CACHE_MAX_ENTRIES = 500;
+const subtopicQuestionsCache = new Map(); // subtopicId -> { questions, expiresAt }
 
-function recordPracticeCheckForUser(uid, subtopicId) {
-  if (!uid || !subtopicId) return;
-  const now = Date.now();
-  // Prune stale entries older than 6 hours when map grows
-  if (recentCheckedPracticeByUser.size > 1000) {
-    for (const [k, v] of recentCheckedPracticeByUser.entries()) {
-      if (now - v.updatedAt > 6 * 60 * 60 * 1000) {
-        recentCheckedPracticeByUser.delete(k);
-      }
-    }
+function invalidateSubtopicQuestionsCache(subtopicId = null) {
+  if (subtopicId) {
+    subtopicQuestionsCache.delete(subtopicId);
+  } else {
+    subtopicQuestionsCache.clear();
   }
-  const key = `${uid}:${subtopicId}`;
-  const prev = recentCheckedPracticeByUser.get(key);
-  recentCheckedPracticeByUser.set(key, {
-    count: (prev?.count || 0) + 1,
-    updatedAt: now,
-  });
+}
+
+async function loadPublicSubtopicQuestions(subtopicId, options = {}) {
+  const now = Date.now();
+  const cached = !options.forceRefresh ? subtopicQuestionsCache.get(subtopicId) : null;
+  if (cached && cached.expiresAt > now) {
+    return cached.questions;
+  }
+
+  const qSnap = await db.collection('questions').where('subtopicId', '==', subtopicId).get();
+  const questions = qSnap.docs
+    .map((d) => {
+      const raw = serializeTimestampFields({ id: d.id, ...d.data() });
+      const {
+        correctAnswer: _ca,
+        explanation: _ex,
+        solutionImageUrl: _si,
+        solutionSvgContent: _ss,
+        expectedAnswer: _ea,
+        sampleSolution: _sol,
+        ...publicQuestion
+      } = raw;
+      if (typeof publicQuestion.svgContent === 'string' && publicQuestion.svgContent.trim()) {
+        publicQuestion.svgContent = sanitizeSvg(publicQuestion.svgContent);
+      }
+      return publicQuestion;
+    })
+    .sort((a, b) => {
+      const aOrd = Number.isFinite(Number(a.order)) ? Number(a.order) : 9999;
+      const bOrd = Number.isFinite(Number(b.order)) ? Number(b.order) : 9999;
+      if (aOrd !== bOrd) return aOrd - bOrd;
+      return (parseIsoMillis(a.createdAt) ?? 0) - (parseIsoMillis(b.createdAt) ?? 0);
+    });
+
+  setBoundedMapEntry(
+    subtopicQuestionsCache,
+    subtopicId,
+    { questions, expiresAt: now + SUBTOPIC_QUESTIONS_CACHE_TTL_MS },
+    SUBTOPIC_QUESTIONS_CACHE_MAX_ENTRIES
+  );
+  return questions;
+}
+
+// SEC-05: Server-side evidence ověřených/odhalených otázek ve Firestore (server-only kolekce verifiedPracticeChecks)
+function getVerifiedPracticeCheckDocId(uid, questionId) {
+  return `${uid}_${questionId}`;
+}
+
+async function recordVerifiedPracticeCheck(uid, questionId, subtopicId, source = 'check-answer') {
+  if (!uid || !questionId) return;
+  try {
+    const docId = getVerifiedPracticeCheckDocId(uid, questionId);
+    await db.collection('verifiedPracticeChecks').doc(docId).set(
+      {
+        uid,
+        questionId,
+        subtopicId: subtopicId || '',
+        verifiedAt: Timestamp.now(),
+        source,
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    console.warn(`[VerifiedPracticeCheck Warning] (${uid}/${questionId}):`, err?.message || err);
+  }
+}
+
+async function deductMultiplePracticeJokers(uid, count) {
+  const needed = Math.max(1, Math.floor(Number(count) || 0));
+  const userRef = db.collection('users').doc(uid);
+  try {
+    const result = await db.runTransaction(async (tx) => {
+      const userSnap = await tx.get(userRef);
+      if (!userSnap.exists) {
+        throw createMaterialHttpError(404, 'Uživatelský profil nebyl nalezen.');
+      }
+      const userData = userSnap.data() || {};
+      const currentJokers =
+        typeof userData.jokers === 'number' && Number.isFinite(userData.jokers) ? userData.jokers : 0;
+      if (currentJokers < needed) {
+        const insufficientErr = createMaterialHttpError(
+          403,
+          `Nemáte dostatek žolíků pro vyhodnocení neověřených otázek (potřeba: ${needed}, k dispozici: ${currentJokers}).`
+        );
+        insufficientErr.code = 'INSUFFICIENT_JOKERS';
+        insufficientErr.requiredJokers = needed;
+        insufficientErr.availableJokers = currentJokers;
+        throw insufficientErr;
+      }
+      const nextJokers = currentJokers - needed;
+      tx.update(userRef, {
+        jokers: nextJokers,
+        updatedAt: Timestamp.now(),
+      });
+      return { jokersRemaining: nextJokers };
+    });
+    return { ok: true, jokersRemaining: result.jokersRemaining };
+  } catch (err) {
+    if (err?.code === 'INSUFFICIENT_JOKERS') {
+      return {
+        ok: false,
+        status: 403,
+        code: 'INSUFFICIENT_JOKERS',
+        error: err.message,
+        requiredJokers: err.requiredJokers,
+        availableJokers: err.availableJokers,
+      };
+    }
+    if (err?.status) {
+      return { ok: false, status: err.status, error: err.message };
+    }
+    throw err;
+  }
 }
 
 async function fetchPracticeCatalogUncached() {
@@ -5852,9 +7336,14 @@ app.get('/api/practice/catalog', optionalAuth, async (req, res) => {
     const forceRefresh = isTeacher && (req.query.refresh === '1' || req.query.refresh === 'true');
     const catalog = await loadPracticeCatalogFromFirestore({ forceRefresh });
 
-    const topics = includeHidden ? catalog.rawTopics : catalog.visibleTopics;
-    const subtopics = (includeHidden ? catalog.rawSubtopics : catalog.visibleSubtopics).map(stripSubtopicStudyContent);
+    const topics = (includeHidden ? catalog.rawTopics : catalog.visibleTopics).map((t) =>
+      stripInternalOwnershipFields(t, isTeacher)
+    );
+    const subtopics = (includeHidden ? catalog.rawSubtopics : catalog.visibleSubtopics).map((s) =>
+      stripInternalOwnershipFields(stripSubtopicStudyContent(s), isTeacher)
+    );
 
+    setPublicCatalogCacheHeaders(req, res);
     return res.json({
       topics,
       subtopics,
@@ -5883,12 +7372,15 @@ app.get('/api/practice/study/:subtopicId', requireAuth, requirePremiumOrTeacher,
     }
     const subtopic = serializeTimestampFields({ id: subSnap.id, ...subSnap.data() });
     subtopic.subjectId = normalizePracticeSubjectId(subtopic.subjectId || subtopic.subject);
-    if (req.user.role !== 'teacher') {
+    const isTeacher = req.user.role === 'teacher';
+    if (!isTeacher) {
       if (subtopic.isHidden === true || (subtopic.topicId && catalog.hiddenTopicKeys.has(subtopic.topicId))) {
         return res.status(404).json({ error: 'Podtéma nenalezeno.' });
       }
     }
-    return res.json({ subtopic: sanitizeStudySubtopicFields(subtopic) });
+    return res.json({
+      subtopic: stripInternalOwnershipFields(sanitizeStudySubtopicFields(subtopic), isTeacher),
+    });
   } catch (err) {
     console.error('[Practice Study Error]:', err);
     return res.status(500).json({ error: 'Nepodařilo se načíst studijní obsah.' });
@@ -5932,30 +7424,8 @@ app.get('/api/practice/subtopics/:subtopicId/questions', optionalAuth, async (re
       guestRemaining = guestState.remaining;
     }
 
-    const qSnap = await db.collection('questions').where('subtopicId', '==', subtopicId).get();
-    const questions = qSnap.docs
-      .map((d) => {
-        const raw = serializeTimestampFields({ id: d.id, ...d.data() });
-        const {
-          correctAnswer: _ca,
-          explanation: _ex,
-          solutionImageUrl: _si,
-          solutionSvgContent: _ss,
-          expectedAnswer: _ea,
-          sampleSolution: _sol,
-          ...publicQuestion
-        } = raw;
-        if (typeof publicQuestion.svgContent === 'string' && publicQuestion.svgContent.trim()) {
-          publicQuestion.svgContent = sanitizeSvg(publicQuestion.svgContent);
-        }
-        return publicQuestion;
-      })
-      .sort((a, b) => {
-        const aOrd = Number.isFinite(Number(a.order)) ? Number(a.order) : 9999;
-        const bOrd = Number.isFinite(Number(b.order)) ? Number(b.order) : 9999;
-        if (aOrd !== bOrd) return aOrd - bOrd;
-        return (parseIsoMillis(a.createdAt) ?? 0) - (parseIsoMillis(b.createdAt) ?? 0);
-      });
+    const forceRefresh = isTeacher && (req.query.refresh === '1' || req.query.refresh === 'true');
+    const questions = await loadPublicSubtopicQuestions(subtopicId, { forceRefresh });
 
     return res.json({
       questions,
@@ -5973,7 +7443,7 @@ async function deductPracticeCheckQuota(req, res, isDemo) {
     if (!isDemo) {
       return { ok: false, status: 403, code: 'DEMO_RESTRICTED', error: 'Tento okruh je dostupný až po přihlášení.' };
     }
-    const guestResult = consumeGuestDemoAttempt(req, res);
+    const guestResult = await consumeGuestDemoAttempt(req, res);
     if (!guestResult.allowed) {
       return {
         ok: false,
@@ -6069,9 +7539,12 @@ function evaluateQuestionAnswerServer(question, studentAnswer, selfCheckStatus) 
 }
 
 // 8.4 Vyhodnocení odpovědi na serveru s atomickým odečtem žolíku / demo pokusu
-app.post('/api/practice/check-answer', optionalAuth, async (req, res, next) => {
+app.post('/api/practice/check-answer', optionalAuth, async (req, res) => {
   if (!req.user) {
-    return practiceGuestCheckLimiter(req, res, () => handleCheckPracticeAnswer(req, res));
+    return practiceGuestCheckLimiter(req, res, async () => {
+      if (!(await checkDistributedGuestBurstLimit(req, res))) return;
+      return handleCheckPracticeAnswer(req, res);
+    });
   }
   return handleCheckPracticeAnswer(req, res);
 });
@@ -6128,7 +7601,7 @@ async function handleCheckPracticeAnswer(req, res) {
     }
 
     if (req.user?.uid) {
-      recordPracticeCheckForUser(req.user.uid, subtopicId);
+      await recordVerifiedPracticeCheck(req.user.uid, questionId, subtopicId, 'check-answer');
     }
 
     const evaluated = evaluateQuestionAnswerServer(question, studentAnswer ?? '', selfCheckStatus);
@@ -6155,7 +7628,10 @@ async function handleCheckPracticeAnswer(req, res) {
 // 8.5 Odhalení vzorového řešení (odečte žolík/demo pokus, NEuděluje body ani streak)
 app.post('/api/practice/reveal-solution', optionalAuth, async (req, res) => {
   if (!req.user) {
-    return practiceGuestCheckLimiter(req, res, () => handleRevealPracticeSolution(req, res));
+    return practiceGuestCheckLimiter(req, res, async () => {
+      if (!(await checkDistributedGuestBurstLimit(req, res))) return;
+      return handleRevealPracticeSolution(req, res);
+    });
   }
   return handleRevealPracticeSolution(req, res);
 });
@@ -6203,7 +7679,7 @@ async function handleRevealPracticeSolution(req, res) {
     }
 
     if (req.user?.uid) {
-      recordPracticeCheckForUser(req.user.uid, subtopicId);
+      await recordVerifiedPracticeCheck(req.user.uid, questionId, subtopicId, 'reveal-solution');
     }
 
     return res.json({
@@ -6225,7 +7701,7 @@ async function handleRevealPracticeSolution(req, res) {
 }
 
 // 8.6 Autoritativní ukončení procvičování (uloží výsledek do tests, smaže aktivní relaci, aktualizuje Prague streak a splní naplánované todos)
-app.post('/api/practice/finish', requireAuth, async (req, res) => {
+app.post('/api/practice/finish', requireAuth, practiceFinishLimiter, async (req, res) => {
   try {
     const uid = req.user.uid;
     const { subtopicId, topicId, subjectId, answers, durationSeconds } = req.body || {};
@@ -6235,6 +7711,9 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
     }
     if (!Array.isArray(answers) || answers.length === 0) {
       return res.status(400).json({ error: 'Nelze dokončit procvičování bez alespoň jedné odevzdané odpovědi.' });
+    }
+    if (answers.length > 200) {
+      return res.status(400).json({ error: 'Příliš mnoho odevzdaných odpovědí v jednom požadavku.' });
     }
 
     const catalog = await loadPracticeCatalogFromFirestore();
@@ -6252,6 +7731,7 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
     const seenQuestionIds = new Set();
     const evaluatedQuestions = [];
     let totalScore = 0;
+    let nonEmptyAnsweredCount = 0;
 
     for (const item of answers) {
       if (!item || typeof item !== 'object') continue;
@@ -6267,6 +7747,13 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
         if (item.selfScore >= 1) selfCheckStatus = 'correct';
         else if (item.selfScore >= 0.5) selfCheckStatus = 'partial';
         else selfCheckStatus = 'wrong';
+      }
+
+      const hasNonEmptyAnswer =
+        userAnswer.trim().length > 0 ||
+        (qDoc.type === 'self_check' && ['correct', 'partial', 'wrong'].includes(selfCheckStatus));
+      if (hasNonEmptyAnswer) {
+        nonEmptyAnsweredCount += 1;
       }
 
       const evalRes = evaluateQuestionAnswerServer(qDoc, userAnswer, selfCheckStatus);
@@ -6292,7 +7779,8 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Žádná z odevzdaných odpovědí nepatří do vybraného podtématu.' });
     }
 
-    // Ochrana proti obejití žolíků přímým voláním POST /api/practice/finish bez check-answer
+    // SEC-05: Ověření žolíků výhradně proti server-only kolekci verifiedPracticeChecks
+    // (nikdy nevěříme klientem zapisovatelnému activePracticeSessions.answeredCount; platí i pro demo podtémata u přihlášených free uživatelů).
     const isUnlimitedUser =
       req.user.role === 'premium' ||
       req.user.role === 'teacher' ||
@@ -6300,28 +7788,56 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
 
     const sessionRef = db.collection('activePracticeSessions').doc(`${uid}_${subtopicId}`);
     if (!isUnlimitedUser) {
-      const checkKey = `${uid}:${subtopicId}`;
-      const recentCheck = recentCheckedPracticeByUser.get(checkKey);
-      let hadVerifiedCheck = Boolean(recentCheck && recentCheck.count > 0);
-      if (!hadVerifiedCheck) {
-        const sessionSnap = await sessionRef.get().catch(() => null);
-        if (sessionSnap && sessionSnap.exists) {
-          const sData = sessionSnap.data() || {};
-          if (typeof sData.answeredCount === 'number' && sData.answeredCount > 0) {
-            hadVerifiedCheck = true;
+      const submittedIds = evaluatedQuestions.map((q) => q.id);
+      const verifiedIdSet = new Set();
+      for (let i = 0; i < submittedIds.length; i += 100) {
+        const chunkIds = submittedIds.slice(i, i + 100);
+        const refs = chunkIds.map((qId) =>
+          db.collection('verifiedPracticeChecks').doc(getVerifiedPracticeCheckDocId(uid, qId))
+        );
+        const snaps = await db.getAll(...refs);
+        snaps.forEach((snap, idx) => {
+          if (snap && snap.exists) {
+            verifiedIdSet.add(chunkIds[idx]);
           }
-        }
+        });
       }
-      if (!hadVerifiedCheck) {
-        const quota = await deductPracticeCheckQuota(req, res, false);
-        if (!quota.ok) {
-          return res.status(quota.status).json({
-            error: quota.error,
-            ...(quota.code ? { code: quota.code } : {}),
+
+      const unverifiedIds = submittedIds.filter((qId) => !verifiedIdSet.has(qId));
+      const unverifiedCount = unverifiedIds.length;
+      if (unverifiedCount > 0) {
+        const deductResult = await deductMultiplePracticeJokers(uid, unverifiedCount);
+        if (!deductResult.ok) {
+          return res.status(deductResult.status).json({
+            error: deductResult.error,
+            ...(deductResult.code ? { code: deductResult.code } : {}),
+            ...(deductResult.requiredJokers !== undefined ? { requiredJokers: deductResult.requiredJokers } : {}),
+            ...(deductResult.availableJokers !== undefined ? { availableJokers: deductResult.availableJokers } : {}),
           });
         }
+        // Zapsat čerstvě uhrazené otázky do verifiedPracticeChecks
+        try {
+          const batch = db.batch();
+          const nowTs = Timestamp.now();
+          for (const qId of unverifiedIds) {
+            const vRef = db.collection('verifiedPracticeChecks').doc(getVerifiedPracticeCheckDocId(uid, qId));
+            batch.set(
+              vRef,
+              {
+                uid,
+                questionId: qId,
+                subtopicId,
+                verifiedAt: nowTs,
+                source: 'finish',
+              },
+              { merge: true }
+            );
+          }
+          await batch.commit();
+        } catch (vErr) {
+          console.warn('[Practice Finish VerifiedCheck Batch Warning]:', vErr?.message || vErr);
+        }
       }
-      recentCheckedPracticeByUser.delete(checkKey);
     }
 
     const totalQuestions = evaluatedQuestions.length;
@@ -6363,67 +7879,80 @@ app.post('/api/practice/finish', requireAuth, async (req, res) => {
     // Odstranění rozpracované relace
     await sessionRef.delete().catch(() => {});
 
-    // Atomická aktualizace Prague-time streaku (pouze při >= 1 odevzdané odpovědi)
+    // Atomická aktualizace Prague-time streaku (SEC-05: pouze při >= 1 neprázdné odevzdané odpovědi)
     const todayPrague = getPragueDateString();
     const yesterdayPrague = getPreviousPragueDateString(todayPrague);
     const userRef = db.collection('users').doc(uid);
 
-    const streakResult = await db.runTransaction(async (tx) => {
-      const userSnap = await tx.get(userRef);
-      if (!userSnap.exists) {
-        return { streak: 0 };
-      }
-      const uData = userSnap.data() || {};
-      const currentStreak = Number(uData.streak) || 0;
-      const lastDate = uData.lastStreakPracticeDate || null;
+    let streakResult = { streak: 0 };
+    if (nonEmptyAnsweredCount >= 1) {
+      streakResult = await db.runTransaction(async (tx) => {
+        const userSnap = await tx.get(userRef);
+        if (!userSnap.exists) {
+          return { streak: 0 };
+        }
+        const uData = userSnap.data() || {};
+        const currentStreak = Number(uData.streak) || 0;
+        const lastDate = uData.lastStreakPracticeDate || null;
 
-      let nextStreak = currentStreak;
-      if (lastDate === todayPrague) {
-        nextStreak = Math.max(1, currentStreak);
-      } else if (lastDate === yesterdayPrague) {
-        nextStreak = currentStreak + 1;
-      } else {
-        nextStreak = 1;
-      }
+        let nextStreak = currentStreak;
+        if (lastDate === todayPrague) {
+          nextStreak = Math.max(1, currentStreak);
+        } else if (lastDate === yesterdayPrague) {
+          nextStreak = currentStreak + 1;
+        } else {
+          nextStreak = 1;
+        }
 
-      if (nextStreak !== currentStreak || lastDate !== todayPrague) {
-        tx.update(userRef, {
-          streak: nextStreak,
-          lastStreakPracticeDate: todayPrague,
-          updatedAt: Timestamp.now(),
-        });
-      }
-      return { streak: nextStreak };
-    });
+        if (nextStreak !== currentStreak || lastDate !== todayPrague) {
+          tx.update(userRef, {
+            streak: nextStreak,
+            lastStreakPracticeDate: todayPrague,
+            updatedAt: Timestamp.now(),
+          });
+        }
+        return { streak: nextStreak };
+      });
+    } else {
+      const userSnap = await userRef.get().catch(() => null);
+      streakResult = { streak: Number(userSnap?.data()?.streak) || 0 };
+    }
 
-    // Automatické označení naplánovaného TODO v kalendáři (studentId)
+    // Automatické označení naplánovaného TODO v kalendáři (SEC-05: vyžaduje splnění minimálního prahu odpovědí)
     const isPremiumUser = isUnlimitedUser;
-    let completedTodoId = null;
-    try {
-      const todosSnap = await db.collection('todos').where('studentId', '==', uid).get();
-      const matching = todosSnap.docs
-        .map((d) => ({ ref: d.ref, id: d.id, ...d.data() }))
-        .filter((t) => {
-          if (t.completed === true) return false;
-          if (t.type !== 'practice' && t.type !== 'course_practice') return false;
-          if (t.referenceId !== subtopicId) return false;
-          if (isPremiumUser) return true;
-          return Boolean(t.addedBy && t.addedBy !== uid);
-        });
+    const subtopicQuestionCount = questionById.size;
+    const minTodoAnsweredRequired = Math.min(3, Math.max(1, subtopicQuestionCount));
+    const meetsTodoCompletionThreshold =
+      subtopicQuestionCount >= 1 && nonEmptyAnsweredCount >= minTodoAnsweredRequired;
 
-      const todayTodo = matching.find((t) => t.date === todayPrague);
-      const overdueTodos = matching.filter((t) => typeof t.date === 'string' && t.date < todayPrague).sort((a, b) => a.date.localeCompare(b.date));
-      const futureTodos = matching.filter((t) => typeof t.date === 'string' && t.date > todayPrague).sort((a, b) => a.date.localeCompare(b.date));
-      const targetTodo = todayTodo || overdueTodos[0] || futureTodos[0] || matching[0] || null;
-      if (targetTodo) {
-        await targetTodo.ref.update({
-          completed: true,
-          completedAt: Timestamp.now(),
-        });
-        completedTodoId = targetTodo.id;
+    let completedTodoId = null;
+    if (meetsTodoCompletionThreshold) {
+      try {
+        const todosSnap = await db.collection('todos').where('studentId', '==', uid).get();
+        const matching = todosSnap.docs
+          .map((d) => ({ ref: d.ref, id: d.id, ...d.data() }))
+          .filter((t) => {
+            if (t.completed === true) return false;
+            if (t.type !== 'practice' && t.type !== 'course_practice') return false;
+            if (t.referenceId !== subtopicId) return false;
+            if (isPremiumUser) return true;
+            return Boolean(t.addedBy && t.addedBy !== uid);
+          });
+
+        const todayTodo = matching.find((t) => t.date === todayPrague);
+        const overdueTodos = matching.filter((t) => typeof t.date === 'string' && t.date < todayPrague).sort((a, b) => a.date.localeCompare(b.date));
+        const futureTodos = matching.filter((t) => typeof t.date === 'string' && t.date > todayPrague).sort((a, b) => a.date.localeCompare(b.date));
+        const targetTodo = todayTodo || overdueTodos[0] || futureTodos[0] || matching[0] || null;
+        if (targetTodo) {
+          await targetTodo.ref.update({
+            completed: true,
+            completedAt: Timestamp.now(),
+          });
+          completedTodoId = targetTodo.id;
+        }
+      } catch (todoErr) {
+        console.warn('[Practice Finish Todo Update Warning]:', todoErr?.message || todoErr);
       }
-    } catch (todoErr) {
-      console.warn('[Practice Finish Todo Update Warning]:', todoErr?.message || todoErr);
     }
 
     return res.json({
@@ -6450,43 +7979,79 @@ app.get('/api/inquiries/question/:questionId', requireAuth, async (req, res) => 
     }
 
     const isTeacher = req.user?.role === 'teacher';
-    if (!isTeacher) {
-      const inquirySnap = await db
-        .collection('questionInquiries')
-        .where('studentId', '==', req.user.uid)
-        .where('questionId', '==', questionId)
-        .limit(1)
-        .get();
-      if (inquirySnap.empty) {
-        return res.status(403).json({ error: 'K detailu této otázky nemáte oprávnění.' });
-      }
+    const isPaidRole = isUserPaidOrTeacher(req.user);
+
+    const [qSnap, catalog, inquirySnap, verifiedCheckSnap] = await Promise.all([
+      db.collection('questions').doc(questionId).get(),
+      loadPracticeCatalogFromFirestore(),
+      isTeacher
+        ? Promise.resolve(null)
+        : db
+            .collection('questionInquiries')
+            .where('studentId', '==', req.user.uid)
+            .where('questionId', '==', questionId)
+            .limit(20)
+            .get(),
+      isTeacher || isPaidRole
+        ? Promise.resolve(null)
+        : db
+            .collection('verifiedPracticeChecks')
+            .doc(getVerifiedPracticeCheckDocId(req.user.uid, questionId))
+            .get(),
+    ]);
+
+    if (!isTeacher && (!inquirySnap || inquirySnap.empty)) {
+      return res.status(403).json({ error: 'K detailu této otázky nemáte oprávnění.' });
     }
 
-    const qSnap = await db.collection('questions').doc(questionId).get();
     if (!qSnap.exists) {
       return res.status(404).json({ error: 'Otázka nenalezena.' });
     }
     const data = qSnap.data() || {};
+
+    // SEC-05: Skryté otázky / podtémata / témata jsou pro neučitele nedostupné (404)
+    if (!isTeacher) {
+      const subtopicId = typeof data.subtopicId === 'string' ? data.subtopicId : '';
+      const subtopic = subtopicId ? catalog.rawSubtopics.find((s) => s.id === subtopicId) : null;
+      const isHiddenQuestion = Boolean(
+        data.isHidden === true ||
+          (subtopic &&
+            (subtopic.isHidden === true ||
+              (subtopic.topicId && catalog.hiddenTopicKeys.has(subtopic.topicId)))) ||
+          (data.topicId && catalog.hiddenTopicKeys.has(data.topicId))
+      );
+      if (isHiddenQuestion) {
+        return res.status(404).json({ error: 'Otázka nenalezena.' });
+      }
+    }
+
+    // SEC-05: Odhalit řešení pouze učiteli, platícímu uživateli, po serverovém ověření nebo po zodpovězení dotazu
+    const hasAnsweredInquiry = Boolean(
+      inquirySnap && inquirySnap.docs.some((docSnap) => docSnap.data()?.status === 'answered')
+    );
+    const hasVerifiedCheck = Boolean(verifiedCheckSnap && verifiedCheckSnap.exists);
+    const canRevealSolution = isTeacher || isPaidRole || hasVerifiedCheck || hasAnsweredInquiry;
+
     return res.json({
       question: {
         id: qSnap.id,
         question: data.question || '',
         type: data.type || (Array.isArray(data.options) && data.options.length > 0 ? 'choice' : 'open'),
         options: Array.isArray(data.options) ? data.options : [],
-        correctAnswer: data.correctAnswer || '',
+        correctAnswer: canRevealSolution ? data.correctAnswer || '' : null,
         hint: data.hint || '',
-        explanation: data.explanation || '',
+        explanation: canRevealSolution ? data.explanation || '' : null,
         difficulty: data.difficulty || 'Střední',
         subjectId: normalizePracticeSubjectId(data.subjectId || 'Matematika'),
         topicId: data.topicId || data.topic || '',
         subtopicId: data.subtopicId || '',
         imageUrl: data.imageUrl || '',
         svgContent: typeof data.svgContent === 'string' && data.svgContent.trim() ? sanitizeSvg(data.svgContent) : '',
-        solutionImageUrl: data.solutionImageUrl || '',
+        solutionImageUrl: canRevealSolution ? data.solutionImageUrl || '' : null,
         solutionSvgContent:
-          typeof data.solutionSvgContent === 'string' && data.solutionSvgContent.trim()
+          canRevealSolution && typeof data.solutionSvgContent === 'string' && data.solutionSvgContent.trim()
             ? sanitizeSvg(data.solutionSvgContent)
-            : '',
+            : null,
         caseSensitive: Boolean(data.caseSensitive),
       },
     });
@@ -6497,15 +8062,24 @@ app.get('/api/inquiries/question/:questionId', requireAuth, async (req, res) => 
 });
 
 // 8.8 Bezpečné načítání a odevzdání zadaných testů (assignedTests) bez úniku correctAnswer před odevzdáním
+// SEC-19: Sanitizujeme svgContent i solutionSvgContent u všech otázek v assignedTests
 function sanitizeAssignedTestForClient(rawTest, isTeacher) {
   const test = serializeTimestampFields(rawTest);
   const isCompleted = test.status === 'submitted' || test.status === 'graded';
-  if (isTeacher || isCompleted) {
-    return test;
-  }
+  const includeSolutions = Boolean(isTeacher || isCompleted);
   const safeQuestions = Array.isArray(test.questions)
     ? test.questions.map((q) => {
         if (!q || typeof q !== 'object') return q;
+        if (includeSolutions) {
+          const nextQ = { ...q };
+          if (typeof nextQ.svgContent === 'string' && nextQ.svgContent.trim()) {
+            nextQ.svgContent = sanitizeSvg(nextQ.svgContent);
+          }
+          if (typeof nextQ.solutionSvgContent === 'string' && nextQ.solutionSvgContent.trim()) {
+            nextQ.solutionSvgContent = sanitizeSvg(nextQ.solutionSvgContent);
+          }
+          return nextQ;
+        }
         const {
           correctAnswer: _ca,
           explanation: _ex,
@@ -6515,6 +8089,9 @@ function sanitizeAssignedTestForClient(rawTest, isTeacher) {
           sampleSolution: _sol,
           ...publicQ
         } = q;
+        if (typeof publicQ.svgContent === 'string' && publicQ.svgContent.trim()) {
+          publicQ.svgContent = sanitizeSvg(publicQ.svgContent);
+        }
         return publicQ;
       })
     : [];
@@ -6522,6 +8099,22 @@ function sanitizeAssignedTestForClient(rawTest, isTeacher) {
     ...test,
     questions: safeQuestions,
   };
+}
+
+// SEC-38: 2minutová tolerance zpoždění sítě pro kontrolu dueDate při odevzdání testu
+const ASSIGNED_TEST_DUE_GRACE_MS = 2 * 60 * 1000;
+
+function parseAssignedTestDueDeadlineMs(dueDate) {
+  if (!dueDate) return null;
+  if (typeof dueDate === 'string') {
+    const trimmed = dueDate.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const endOfDayMs = Date.parse(`${trimmed}T23:59:59.999Z`);
+      return Number.isFinite(endOfDayMs) ? endOfDayMs : null;
+    }
+  }
+  return parseIsoMillis(dueDate);
 }
 
 app.get('/api/assigned-tests', requireAuth, async (req, res) => {
@@ -6566,6 +8159,7 @@ app.get('/api/assigned-tests/:testId', requireAuth, async (req, res) => {
   }
 });
 
+// SEC-38: Transakční odevzdání (409 při opakovaném odevzdání), kontrola dueDate (+2min grace) a ochrana self_check
 app.post('/api/assigned-tests/:testId/submit', requireAuth, async (req, res) => {
   try {
     const { testId } = req.params;
@@ -6573,92 +8167,121 @@ app.post('/api/assigned-tests/:testId/submit', requireAuth, async (req, res) => 
       return res.status(400).json({ error: 'Neplatné ID testu.' });
     }
     const docRef = db.collection('assignedTests').doc(testId);
-    const snap = await docRef.get();
-    if (!snap.exists) {
-      return res.status(404).json({ error: 'Zadaný test nebyl nalezen.' });
-    }
-    const testData = snap.data() || {};
-    if (testData.studentId !== req.user.uid) {
-      return res.status(403).json({ error: 'Tento test vám nebyl přiřazen.' });
-    }
-    if (testData.status === 'submitted' || testData.status === 'graded') {
-      return res.status(400).json({ error: 'Tento test již byl odevzdán.' });
-    }
-
     const rawAnswers = req.body?.answers;
     const timeSpentSeconds =
       typeof req.body?.timeSpentSeconds === 'number' && Number.isFinite(req.body.timeSpentSeconds) && req.body.timeSpentSeconds >= 0
         ? Math.min(86400, Math.round(req.body.timeSpentSeconds))
         : 0;
+    const nowMs = Date.now();
 
-    const questions = Array.isArray(testData.questions) ? testData.questions : [];
-    const answersMap = {};
-    if (rawAnswers && typeof rawAnswers === 'object' && !Array.isArray(rawAnswers)) {
-      for (const [k, v] of Object.entries(rawAnswers)) {
-        if (typeof k === 'string' && typeof v === 'string') {
-          answersMap[k] = v.slice(0, 2000);
-        }
+    const submitOutcome = await db.runTransaction(async (tx) => {
+      const snap = await tx.get(docRef);
+      if (!snap.exists) {
+        throw createMaterialHttpError(404, 'Zadaný test nebyl nalezen.');
       }
-    } else if (Array.isArray(rawAnswers)) {
-      questions.forEach((q, idx) => {
-        const key = q?.id || String(idx);
-        const val = rawAnswers[idx];
-        if (typeof val === 'string') {
-          answersMap[key] = val.slice(0, 2000);
-        } else if (val && typeof val === 'object' && typeof val.userAnswer === 'string') {
-          answersMap[val.questionId || key] = val.userAnswer.slice(0, 2000);
-        }
-      });
-    }
+      const testData = snap.data() || {};
+      if (testData.studentId !== req.user.uid) {
+        throw createMaterialHttpError(403, 'Tento test vám nebyl přiřazen.');
+      }
+      if (testData.status === 'submitted' || testData.status === 'graded') {
+        throw createMaterialHttpError(409, 'Tento test již byl odevzdán.');
+      }
 
-    let score = 0;
-    const evaluatedQuestions = questions.map((q, idx) => {
-      const qKey = q?.id || String(idx);
-      const studentAns = answersMap[qKey] ?? answersMap[String(idx)] ?? '';
-      const evalRes = evaluateQuestionAnswerServer(
-        {
-          type: q?.type || (Array.isArray(q?.options) && q.options.length > 0 ? 'choice' : 'open'),
-          correctAnswer: q?.correctAnswer ?? '',
-          caseSensitive: Boolean(q?.caseSensitive),
-        },
-        studentAns
-      );
-      score += evalRes.pointsEarned;
-      return {
-        ...q,
-        userAnswer: studentAns,
-        isCorrect: evalRes.isCorrect,
-        pointsEarned: evalRes.pointsEarned,
+      const dueDeadlineMs = parseAssignedTestDueDeadlineMs(testData.dueDate);
+      if (dueDeadlineMs !== null && nowMs > dueDeadlineMs + ASSIGNED_TEST_DUE_GRACE_MS) {
+        throw createMaterialHttpError(400, 'Termín pro odevzdání tohoto testu již vypršel.');
+      }
+
+      const questions = Array.isArray(testData.questions) ? testData.questions : [];
+      const answersMap = {};
+      if (rawAnswers && typeof rawAnswers === 'object' && !Array.isArray(rawAnswers)) {
+        for (const [k, v] of Object.entries(rawAnswers)) {
+          if (typeof k === 'string' && typeof v === 'string') {
+            answersMap[k] = v.slice(0, 2000);
+          }
+        }
+      } else if (Array.isArray(rawAnswers)) {
+        questions.forEach((q, idx) => {
+          const key = q?.id || String(idx);
+          const val = rawAnswers[idx];
+          if (typeof val === 'string') {
+            answersMap[key] = val.slice(0, 2000);
+          } else if (val && typeof val === 'object' && typeof val.userAnswer === 'string') {
+            answersMap[val.questionId || key] = val.userAnswer.slice(0, 2000);
+          }
+        });
+      }
+
+      let score = 0;
+      let hasTeacherReviewItems = false;
+      const evaluatedQuestions = questions.map((q, idx) => {
+        const qKey = q?.id || String(idx);
+        const studentAns = answersMap[qKey] ?? answersMap[String(idx)] ?? '';
+        const qType = q?.type || (Array.isArray(q?.options) && q.options.length > 0 ? 'choice' : 'open');
+
+        // SEC-38: U zadaných testů nespoléháme slepě na klientské "correct" u self_check otázek — vyžadují kontrolu učitelem
+        if (qType === 'self_check') {
+          hasTeacherReviewItems = true;
+          return {
+            ...q,
+            userAnswer: studentAns,
+            isCorrect: null,
+            pointsEarned: 0,
+            requiresTeacherReview: true,
+          };
+        }
+
+        const evalRes = evaluateQuestionAnswerServer(
+          {
+            type: qType,
+            correctAnswer: q?.correctAnswer ?? '',
+            caseSensitive: Boolean(q?.caseSensitive),
+          },
+          studentAns
+        );
+        score += evalRes.pointsEarned;
+        return {
+          ...q,
+          userAnswer: studentAns,
+          isCorrect: evalRes.isCorrect,
+          pointsEarned: evalRes.pointsEarned,
+        };
+      });
+
+      const maxScore = questions.length;
+      const roundedScore = Math.round(score * 2) / 2;
+
+      const updatePayload = {
+        answers: answersMap,
+        questions: evaluatedQuestions,
+        score: roundedScore,
+        maxScore,
+        status: 'submitted',
+        submittedAt: Timestamp.fromMillis(nowMs),
+        updatedAt: Timestamp.fromMillis(nowMs),
+        timeSpentSeconds,
+        ...(hasTeacherReviewItems ? { requiresTeacherReview: true } : {}),
       };
+
+      tx.update(docRef, updatePayload);
+      return { snapId: snap.id, testData, updatePayload, roundedScore, maxScore, hasTeacherReviewItems };
     });
 
-    const maxScore = questions.length;
-    const roundedScore = Math.round(score * 2) / 2;
-
-    const updatePayload = {
-      answers: answersMap,
-      questions: evaluatedQuestions,
-      score: roundedScore,
-      maxScore,
-      status: 'submitted',
-      submittedAt: Timestamp.now(),
-      updatedAt: Timestamp.now(),
-      timeSpentSeconds,
-    };
-
-    await docRef.update(updatePayload);
-
     const updatedTest = sanitizeAssignedTestForClient(
-      { id: snap.id, ...testData, ...updatePayload },
+      { id: submitOutcome.snapId, ...submitOutcome.testData, ...submitOutcome.updatePayload },
       true
     );
     return res.json({
       ok: true,
       test: updatedTest,
-      score: roundedScore,
-      maxScore,
+      score: submitOutcome.roundedScore,
+      maxScore: submitOutcome.maxScore,
+      ...(submitOutcome.hasTeacherReviewItems ? { requiresTeacherReview: true } : {}),
     });
   } catch (err) {
+    if (err?.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
     console.error('[Submit Assigned Test Error]:', err);
     return res.status(500).json({ error: 'Nepodařilo se odevzdat test.' });
   }
@@ -6674,7 +8297,15 @@ const MAX_STREAK_DAYS = 10;
 const DAILY_VIDEO_LIMIT = 3;
 const VIDEO_REWARD_AMOUNT = 5;
 const MIN_VIDEO_WATCH_MS = 14000;
+const VIDEO_SESSION_TTL_MS = 24 * 60 * 60 * 1000; // SEC-26: +24h TTL pro automatické mazání Firestore TTL politikou
 const DEV_EPHEMERAL_VIDEO_SECRET = crypto.randomBytes(32).toString('hex');
+
+const jokerVideoSessionLimiter = createRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyFn: (req) => `video-session:${req.user?.uid || getClientIp(req)}`,
+  message: 'Příliš mnoho pokusů o spuštění video relace. Zkuste to prosím za chvíli.',
+});
 
 function calculateMaxJokersCapServer(streak = 0) {
   return (Number(streak) || 0) >= MAX_STREAK_DAYS ? MAX_JOKER_CAP : BASE_JOKER_CAP;
@@ -6684,7 +8315,10 @@ function getVideoTokenSecret() {
   const configured = (process.env.VIDEO_TOKEN_SECRET || '').trim();
   if (configured.length >= 16) return configured;
   const regConfigured = (process.env.REGISTRATION_ENCRYPTION_SECRET || '').trim();
-  if (regConfigured.length >= 16) return regConfigured;
+  if (regConfigured.length >= 16) {
+    // SEC-37: Doménově oddělený záložní klíč místo přímého sdílení REGISTRATION_ENCRYPTION_SECRET
+    return deriveDomainSeparatedSecret(regConfigured, 'proedu:video-token:v1');
+  }
   if (process.env.NODE_ENV === 'production' && !isEmulatorMode) {
     throw new Error('VIDEO_TOKEN_SECRET / REGISTRATION_ENCRYPTION_SECRET není nakonfigurováno.');
   }
@@ -6804,7 +8438,7 @@ app.post('/api/jokers/daily-reset', requireAuth, async (req, res) => {
 });
 
 // 9.2 Zahájení odměněného 15s videa (vystavení podepsaného jednorázového videoTokenu)
-app.post('/api/jokers/video-session', requireAuth, async (req, res) => {
+app.post('/api/jokers/video-session', requireAuth, jokerVideoSessionLimiter, async (req, res) => {
   try {
     const uid = req.user.uid;
     const userSnap = await db.collection('users').doc(uid).get();
@@ -6831,12 +8465,14 @@ app.post('/api/jokers/video-session', requireAuth, async (req, res) => {
     }
 
     const { token, nonce, iat, exp } = createSignedVideoToken(uid);
+    const nowMs = Date.now();
     await db.collection('videoSessions').doc(nonce).set({
       uid,
       consumed: false,
       iat,
       exp,
-      createdAt: Timestamp.now(),
+      createdAt: Timestamp.fromMillis(nowMs),
+      expiresAt: Timestamp.fromMillis(nowMs + VIDEO_SESSION_TTL_MS),
     });
 
     return res.json({ ok: true, videoToken: token });
@@ -6945,6 +8581,9 @@ app.post('/api/jokers/video-reward', requireAuth, async (req, res) => {
 // 10. ZAHRÁDKA SOUSTŘEDĚNÍ (GARDEN FOCUS SESSION)
 // =========================================================================
 
+const MAX_DAILY_FOCUS_MINUTES = 720; // SEC-38: max 12 hodin soustředění denně
+const MIN_FOCUS_ELAPSED_RATIO = 0.75; // SEC-38: od předchozího bloku musí uplynout alespoň 75 % nárokované délky
+
 app.post('/api/garden/record-focus', requireAuth, async (req, res) => {
   try {
     const uid = req.user.uid;
@@ -6967,6 +8606,7 @@ app.post('/api/garden/record-focus', requireAuth, async (req, res) => {
     const userRef = db.collection('users').doc(uid);
     const nowMs = Date.now();
     const minCooldownMs = 4 * 60 * 1000;
+    const todayPrague = getPragueDateString(new Date(nowMs));
 
     const result = await db.runTransaction(async (tx) => {
       const snap = await tx.get(userRef);
@@ -6974,12 +8614,42 @@ app.post('/api/garden/record-focus', requireAuth, async (req, res) => {
         throw createMaterialHttpError(404, 'Uživatelský profil nenalezen.');
       }
       const data = snap.data() || {};
-      const lastFocusMs = parseIsoMillis(data.lastGardenFocusAt) || 0;
-      if (lastFocusMs > 0 && nowMs - lastFocusMs < minCooldownMs) {
-        throw createMaterialHttpError(429, 'Soustředění lze uložit nejdříve 4 minuty po předchozím bloku.');
+      const lastFocusMs = parseIsoMillis(data.lastFocusRecordedAt || data.lastGardenFocusAt) || 0;
+      const requiredElapsedMs = Math.max(
+        minCooldownMs,
+        Math.round(durationMinutes * 60 * 1000 * MIN_FOCUS_ELAPSED_RATIO)
+      );
+      if (lastFocusMs > 0 && nowMs - lastFocusMs < requiredElapsedMs) {
+        throw createMaterialHttpError(
+          429,
+          'Od předchozího bloku soustředění neuplynulo dostatek času pro uložení této délky.'
+        );
       }
 
       const existingHistory = Array.isArray(data.focusSessionsHistory) ? data.focusSessionsHistory : [];
+      let dailyFocusMinutesSoFar = 0;
+      if (
+        data.dailyFocusDate === todayPrague &&
+        typeof data.dailyFocusMinutes === 'number' &&
+        Number.isFinite(data.dailyFocusMinutes)
+      ) {
+        dailyFocusMinutesSoFar = Math.max(0, data.dailyFocusMinutes);
+      } else {
+        for (const item of existingHistory) {
+          const itemMs = parseIsoMillis(item?.completedAt);
+          if (itemMs && getPragueDateString(new Date(itemMs)) === todayPrague) {
+            dailyFocusMinutesSoFar += Number(item?.durationMinutes) || 0;
+          }
+        }
+      }
+
+      if (dailyFocusMinutesSoFar + durationMinutes > MAX_DAILY_FOCUS_MINUTES) {
+        throw createMaterialHttpError(
+          429,
+          `Byl dosažen maximální denní limit soustředění (${MAX_DAILY_FOCUS_MINUTES} minut za den).`
+        );
+      }
+
       const newEntry = {
         id: `focus_${nowMs}_${crypto.randomBytes(3).toString('hex')}`,
         plantType: safePlantType,
@@ -6995,16 +8665,25 @@ app.post('/api/garden/record-focus', requireAuth, async (req, res) => {
       const nextHistory = [newEntry, ...existingHistory].slice(0, 100);
       const nextPlants = (Number(data.gardenPlants) || 0) + 1;
       const nextFocusMinutes = (Number(data.totalFocusMinutes) || 0) + durationMinutes;
+      const nextDailyFocusMinutes = dailyFocusMinutesSoFar + durationMinutes;
 
       tx.update(userRef, {
         focusSessionsHistory: nextHistory,
         gardenPlants: nextPlants,
         totalFocusMinutes: nextFocusMinutes,
+        dailyFocusDate: todayPrague,
+        dailyFocusMinutes: nextDailyFocusMinutes,
+        lastFocusRecordedAt: Timestamp.fromMillis(nowMs),
         lastGardenFocusAt: Timestamp.fromMillis(nowMs),
         updatedAt: Timestamp.now(),
       });
 
-      return { entry: newEntry, gardenPlants: nextPlants, totalFocusMinutes: nextFocusMinutes };
+      return {
+        entry: newEntry,
+        gardenPlants: nextPlants,
+        totalFocusMinutes: nextFocusMinutes,
+        dailyFocusMinutes: nextDailyFocusMinutes,
+      };
     });
 
     return res.json({ ok: true, ...result });
@@ -7117,23 +8796,67 @@ function sanitizeCourseForViewer(courseDoc, user) {
     Array.isArray(serialized.studentIds) && Boolean(user?.uid) && serialized.studentIds.includes(user.uid);
   const isEnrolled = Boolean(isTeacher || enrolledViaProfile || enrolledViaCourse);
 
-  const { meetUrl, studentIds, ...publicCourse } = serialized;
+  // SEC-34: teacherId a createdBy vracíme pouze učitelům (ne veřejným/žákovským klientům)
+  const { meetUrl, studentIds, teacherId, createdBy, ...publicCourse } = serialized;
   return {
     ...publicCourse,
     isEnrolled,
     ...(isEnrolled && meetUrl ? { meetUrl } : {}),
     ...(isTeacher ? { studentIds: Array.isArray(studentIds) ? studentIds : [] } : {}),
+    ...(isTeacher && teacherId !== undefined ? { teacherId } : {}),
+    ...(isTeacher && createdBy !== undefined ? { createdBy } : {}),
   };
+}
+
+const COURSES_CACHE_TTL_MS = 60 * 1000;
+const coursesListCache = {
+  courses: null,
+  expiresAt: 0,
+  pendingPromise: null,
+};
+
+function invalidateCoursesListCache() {
+  coursesListCache.courses = null;
+  coursesListCache.expiresAt = 0;
+  coursesListCache.pendingPromise = null;
+}
+
+async function loadCoursesListFromFirestore(options = {}) {
+  const now = Date.now();
+  if (!options.forceRefresh && coursesListCache.courses && coursesListCache.expiresAt > now) {
+    return coursesListCache.courses;
+  }
+  if (!options.forceRefresh && coursesListCache.pendingPromise) {
+    return coursesListCache.pendingPromise;
+  }
+  const promise = db
+    .collection('courses')
+    .get()
+    .then((snap) => {
+      const rawCourses = snap.empty
+        ? DEFAULT_FLAGSHIP_COURSES
+        : snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      coursesListCache.courses = rawCourses;
+      coursesListCache.expiresAt = Date.now() + COURSES_CACHE_TTL_MS;
+      coursesListCache.pendingPromise = null;
+      return rawCourses;
+    })
+    .catch((err) => {
+      coursesListCache.pendingPromise = null;
+      throw err;
+    });
+  coursesListCache.pendingPromise = promise;
+  return promise;
 }
 
 // 11.1 Veřejný seznam kurzů (meetUrl pouze pro zapsané / učitele, studentIds pouze pro učitele)
 app.get('/api/courses', optionalAuth, async (req, res) => {
   try {
-    const snap = await db.collection('courses').get();
-    const rawCourses = snap.empty
-      ? DEFAULT_FLAGSHIP_COURSES
-      : snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const isTeacher = req.user?.role === 'teacher';
+    const forceRefresh = isTeacher && (req.query.refresh === '1' || req.query.refresh === 'true');
+    const rawCourses = await loadCoursesListFromFirestore({ forceRefresh });
     const courses = rawCourses.map((c) => sanitizeCourseForViewer(c, req.user));
+    setPublicCatalogCacheHeaders(req, res);
     return res.json({ courses });
   } catch (err) {
     console.error('[Courses List Error]:', err);
@@ -7263,6 +8986,7 @@ app.post('/api/courses/:courseId/enroll', requireAuth, requireTeacher, async (re
 
     await syncCustomClaimsIfNeeded(cleanStudentUid, txResult.role, txResult.enrolledCourseIds);
     userRoleCache.delete(cleanStudentUid);
+    invalidateCoursesListCache();
 
     return res.json({
       ok: true,
@@ -7327,7 +9051,9 @@ app.delete('/api/courses/:courseId/enroll/:studentUid', requireAuth, requireTeac
     });
 
     await syncCustomClaimsIfNeeded(cleanStudentUid, txResult.role, txResult.enrolledCourseIds);
+    await revokeUserTokensSafe(cleanStudentUid, 'course-unenroll');
     userRoleCache.delete(cleanStudentUid);
+    invalidateCoursesListCache();
 
     return res.json({
       ok: true,
@@ -7448,6 +9174,7 @@ export const api = onRequest(
     region: 'europe-west1',
     cors: getAllowedCorsOrigins(),
     maxInstances: 10,
+    memory: '512MiB',
     timeoutSeconds: 60,
   },
   app

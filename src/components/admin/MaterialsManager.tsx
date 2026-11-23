@@ -17,6 +17,7 @@ import {
   ExistingMaterialItem, PREDEFINED_SUBJECTS, LEARNING_SHEETS_COLLECTION 
 } from '../../services/practiceService';
 import { sanitizeSvg } from '../../utils/svgUtils';
+import { sanitizeMaterialPreviewUrl } from '../../utils/urlSecurity';
 import { downloadMaterialAsPdf, isPdfResource } from '../../utils/pdfToSvg';
 import { auth, db } from '../../lib/firebase';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
@@ -35,7 +36,12 @@ function ProtectedAdminThumbnail({ material }: { material: ExistingMaterialItem 
       return;
     }
     if (sourceUrl.startsWith('data:') || sourceUrl.startsWith('blob:')) {
-      setBlobUrl(sourceUrl);
+      const safeThumbUrl = sanitizeMaterialPreviewUrl(sourceUrl, { allowRasterImages: true });
+      setBlobUrl(safeThumbUrl);
+      return;
+    }
+    if (!sanitizeMaterialPreviewUrl(sourceUrl, { allowRasterImages: true })) {
+      setBlobUrl(null);
       return;
     }
 
@@ -190,11 +196,29 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
       });
       return;
     }
+    const isPdfPreview = isPdfResource(previewMaterial);
     if (fileSrc.startsWith('data:') || fileSrc.startsWith('blob:')) {
+      const safeDirectUrl = sanitizeMaterialPreviewUrl(fileSrc, {
+        allowRasterImages: !isPdfPreview,
+      });
+      if (!safeDirectUrl) {
+        setPreviewResource({
+          loading: false,
+          error: 'Nepodporovaný nebo nebezpečný formát odkazu materiálu.',
+        });
+        return;
+      }
       setPreviewResource({
         loading: false,
-        blobUrl: fileSrc,
+        blobUrl: safeDirectUrl,
         svgMarkup: previewMaterial.svgContent ? sanitizeSvg(previewMaterial.svgContent) : undefined,
+      });
+      return;
+    }
+    if (!sanitizeMaterialPreviewUrl(fileSrc, { allowRasterImages: !isPdfPreview })) {
+      setPreviewResource({
+        loading: false,
+        error: 'Nepodporovaný nebo nebezpečný formát odkazu materiálu.',
       });
       return;
     }
@@ -1564,6 +1588,8 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
         const isPdf = isPdfResource(previewMaterial);
         const fileSrc = previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
         const downloadSrc = previewMaterial.downloadUrl || previewMaterial.fileUrl || previewMaterial.pdfUrl || previewMaterial.svgUrl;
+        const safePreviewHref = sanitizeMaterialPreviewUrl(previewResource.blobUrl);
+        const safePreviewImageSrc = sanitizeMaterialPreviewUrl(previewResource.blobUrl, { allowRasterImages: true });
 
         return (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
@@ -1606,16 +1632,16 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                       dangerouslySetInnerHTML={{ __html: previewResource.svgMarkup }}
                     />
                   </div>
-                ) : isPdf && previewResource.blobUrl ? (
+                ) : isPdf && safePreviewHref ? (
                   <iframe
-                    src={`${previewResource.blobUrl}#toolbar=1`}
+                    src={`${safePreviewHref}#toolbar=1`}
                     className="w-full h-[70vh] border-0 rounded-2xl bg-white shadow-inner"
                     title={previewMaterial.title}
                   />
-                ) : previewResource.blobUrl ? (
+                ) : safePreviewImageSrc ? (
                   <div className="w-full h-full flex items-center justify-center overflow-auto p-2">
                     <img
-                      src={previewResource.blobUrl}
+                      src={safePreviewImageSrc}
                       alt={previewMaterial.title || "Náhled"}
                       style={{ transform: `scale(${zoomLevel})`, transformOrigin: 'center center', transition: 'transform 0.15s ease-out' }}
                       className="max-w-full max-h-[70vh] object-contain rounded-xl shadow-md bg-white p-2"
@@ -1703,9 +1729,9 @@ export default function MaterialsManager({ userId }: MaterialsManagerProps) {
                     </Button>
                   )}
 
-                  {previewResource.blobUrl && (
+                  {safePreviewHref && (
                     <a
-                      href={previewResource.blobUrl}
+                      href={safePreviewHref}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="rounded-xl border border-gray-200 hover:border-black text-gray-800 font-bold text-xs h-10 px-4 flex items-center justify-center gap-1.5 cursor-pointer bg-white"

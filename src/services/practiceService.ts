@@ -13,6 +13,7 @@ import {
 export type { ExistingMaterialItem, MaterialStatus, MaterialType, MaterialGrade, MaterialQuotaSummary };
 import { preprocessMathText, validateLatexSyntax } from '../utils/mathPreprocessor';
 import { sanitizeSvg } from '../utils/svgUtils';
+import { isSameOriginApiUrl, sanitizeSafeUrl } from '../utils/urlSecurity';
 
 export const PREDEFINED_SUBJECTS = [
   {
@@ -38,6 +39,25 @@ function getEffectiveUserId(userId?: string): string {
 
 function getCacheScope(): string {
   return auth.currentUser?.uid || 'guest';
+}
+
+async function isCurrentUserTeacher(): Promise<boolean> {
+  const user = auth.currentUser;
+  if (!user) return false;
+  try {
+    const tokenResult = await user.getIdTokenResult();
+    return tokenResult?.claims?.role === 'teacher';
+  } catch {
+    return false;
+  }
+}
+
+async function getCachedPracticeCatalog() {
+  return cacheManager.getOrFetch(
+    `practice:catalog:${getCacheScope()}`,
+    () => fetchPracticeCatalog(),
+    5 * 60 * 1000
+  );
 }
 
 async function getOptionalAuthHeaders(): Promise<Record<string, string>> {
@@ -371,8 +391,16 @@ export async function fetchProtectedMaterialResource(url: string): Promise<{
   svgMarkup?: string;
   contentType: string;
 }> {
-  const headers = await getOptionalAuthHeaders();
-  const res = await fetch(url, { headers, credentials: 'include' });
+  const isSameOriginProtected = isSameOriginApiUrl(url, '/api/materials/');
+  const safeUrl = isSameOriginProtected ? url : sanitizeSafeUrl(url, { httpOnly: true });
+  if (!safeUrl) {
+    throw createApiError('Neplatná adresa studijního materiálu.', 400, 'INVALID_URL');
+  }
+  const headers = isSameOriginProtected ? await getOptionalAuthHeaders() : {};
+  const res = await fetch(safeUrl, {
+    headers,
+    credentials: isSameOriginProtected ? 'include' : 'omit',
+  });
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
     throw createApiError(
@@ -408,8 +436,12 @@ export async function downloadProtectedMaterialFile(material: ExistingMaterialIt
   const targetUrl =
     material.downloadUrl ||
     `/api/materials/${encodeURIComponent(material.id)}/download`;
+  if (!isSameOriginApiUrl(targetUrl, '/api/materials/')) {
+    throw createApiError('Neplatná adresa pro stažení chráněného materiálu.', 400, 'INVALID_URL');
+  }
   const res = await fetch(targetUrl, {
     headers: { Authorization: `Bearer ${token}` },
+    credentials: 'include',
   });
   if (!res.ok) {
     const errData = await res.json().catch(() => ({}));
@@ -464,6 +496,10 @@ export async function downloadProtectedMaterialFile(material: ExistingMaterialIt
 export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
   try {
     const allTopics = await cacheManager.getOrFetch(`topics:all:${getCacheScope()}`, async () => {
+      if (!(await isCurrentUserTeacher())) {
+        const catalog = await getCachedPracticeCatalog();
+        return catalog.topics;
+      }
       try {
         const collRef = collection(db, 'customTopics');
         const snap = await getDocs(collRef);
@@ -481,7 +517,7 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
           } as PracticeTopic;
         });
       } catch {
-        const catalog = await fetchPracticeCatalog();
+        const catalog = await fetchPracticeCatalog({ includeHidden: true });
         return catalog.topics;
       }
     }, 10 * 60 * 1000);
@@ -507,6 +543,10 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
 export async function getTopicById(topicId: string): Promise<PracticeTopic | null> {
   if (!topicId) return null;
   try {
+    if (!(await isCurrentUserTeacher())) {
+      const catalog = await getCachedPracticeCatalog();
+      return catalog.topics.find((t) => t.id === topicId) || null;
+    }
     const docRef = doc(db, 'customTopics', topicId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
@@ -876,12 +916,16 @@ function mapDocToSubtopic(d: any): PracticeSubtopic {
 export async function getSubtopics(topicId?: string, subjectId?: string): Promise<PracticeSubtopic[]> {
   try {
     const allSubtopics = await cacheManager.getOrFetch(`subtopics:all:${getCacheScope()}`, async () => {
+      if (!(await isCurrentUserTeacher())) {
+        const catalog = await getCachedPracticeCatalog();
+        return catalog.subtopics;
+      }
       try {
         const collRef = collection(db, PRACTICE_SUBTOPICS_COLLECTION);
         const snap = await getDocs(collRef);
         return snap.docs.map(mapDocToSubtopic);
       } catch {
-        const catalog = await fetchPracticeCatalog();
+        const catalog = await fetchPracticeCatalog({ includeHidden: true });
         return catalog.subtopics;
       }
     }, 10 * 60 * 1000);
@@ -902,7 +946,14 @@ export async function getSubtopics(topicId?: string, subjectId?: string): Promis
 }
 
 export async function getSubtopicById(subtopicId: string): Promise<PracticeSubtopic | null> {
+  if (!subtopicId) return null;
   try {
+    if (!(await isCurrentUserTeacher())) {
+      const studyRes = await fetchStudySubtopic(subtopicId).catch(() => ({ subtopic: null }));
+      if (studyRes.subtopic) return studyRes.subtopic;
+      const catalog = await getCachedPracticeCatalog();
+      return catalog.subtopics.find((s) => s.id === subtopicId) || null;
+    }
     const docRef = doc(db, PRACTICE_SUBTOPICS_COLLECTION, subtopicId);
     const snap = await getDoc(docRef);
     if (!snap.exists()) return null;
@@ -1546,6 +1597,11 @@ export function mapDocToMaterial(id: string, data: Record<string, any>): Existin
 }
 
 export async function getMaterialById(materialId: string): Promise<ExistingMaterialItem | null> {
+  if (!materialId) return null;
+  if (!(await isCurrentUserTeacher())) {
+    const res = await fetchMaterialsCatalog().catch(() => ({ materials: [] as ExistingMaterialItem[] }));
+    return res.materials.find((m) => m.id === materialId) || null;
+  }
   const docRef = doc(db, LEARNING_SHEETS_COLLECTION, materialId);
   const snap = await getDoc(docRef);
   if (!snap.exists()) return null;
@@ -1556,6 +1612,10 @@ export async function getAllMaterials(options?: { includeHidden?: boolean }): Pr
   const includeHidden = Boolean(options?.includeHidden);
   const items = await cacheManager.getOrFetch(`materials:all:${getCacheScope()}`, async () => {
     try {
+      if (!(await isCurrentUserTeacher())) {
+        const res = await fetchMaterialsCatalog();
+        return res.materials;
+      }
       const collRef = collection(db, LEARNING_SHEETS_COLLECTION);
       const snap = await getDocs(collRef);
       return snap.docs.map(d => mapDocToMaterial(d.id, d.data()));
@@ -1617,6 +1677,9 @@ function mapDocToQuestion(d: any): PracticeQuestion {
  */
 export async function getAllQuestionsGroupedBySubtopic(): Promise<Record<string, PracticeQuestion[]>> {
   try {
+    if (!(await isCurrentUserTeacher())) {
+      return {};
+    }
     const allQuestions = await cacheManager.getOrFetch('questions:all', async () => {
       const collRef = collection(db, 'questions');
       const snap = await getDocs(collRef);
@@ -1640,6 +1703,10 @@ export async function getAllQuestionsGroupedBySubtopic(): Promise<Record<string,
 
 export async function getQuestionsForSubtopic(subtopicId: string): Promise<PracticeQuestion[]> {
   try {
+    if (!(await isCurrentUserTeacher())) {
+      const apiRes = await fetchSubtopicQuestions(subtopicId);
+      return apiRes.questions;
+    }
     return await cacheManager.getOrFetch(`questions:subtopic:${subtopicId}`, async () => {
       const collRef = collection(db, 'questions');
       const q = query(collRef, where('subtopicId', '==', subtopicId));
@@ -1654,25 +1721,29 @@ export async function getQuestionsForSubtopic(subtopicId: string): Promise<Pract
 
 export async function getQuestionById(questionId: string): Promise<PracticeQuestion | null> {
   if (!questionId || questionId === 'question' || questionId === 'general') return null;
-  try {
-    const docRef = doc(db, 'questions', questionId);
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) return null;
-    return mapDocToQuestion(snap);
-  } catch {
+  if (await isCurrentUserTeacher()) {
     try {
-      const headers = await getOptionalAuthHeaders();
-      const res = await fetch(`/api/inquiries/question/${encodeURIComponent(questionId)}`, {
-        headers,
-        credentials: 'include',
-      });
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => null);
-      return (data?.question as PracticeQuestion) || null;
-    } catch (error) {
-      console.error('Error fetching question by ID:', error);
-      return null;
+      const docRef = doc(db, 'questions', questionId);
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        return mapDocToQuestion(snap);
+      }
+    } catch {
+      // Fallback to authenticated API below
     }
+  }
+  try {
+    const headers = await getOptionalAuthHeaders();
+    const res = await fetch(`/api/inquiries/question/${encodeURIComponent(questionId)}`, {
+      headers,
+      credentials: 'include',
+    });
+    if (!res.ok) return null;
+    const data = await res.json().catch(() => null);
+    return (data?.question as PracticeQuestion) || null;
+  } catch (error) {
+    console.error('Error fetching question by ID:', error);
+    return null;
   }
 }
 
@@ -1763,59 +1834,9 @@ export async function deleteQuestionsBulk(questionIds: string[]): Promise<number
 }
 
 // -------------------------------------------------------------
-// PRACTICE ATTEMPTS (Stored in `tests`)
+// PRACTICE ATTEMPTS
+// Stored strictly server-side via POST /api/practice/finish.
 // -------------------------------------------------------------
-
-export async function recordPracticeAttempt(attempt: Omit<PracticeAttempt, 'id' | 'completedAt'>): Promise<string> {
-  try {
-    const effectiveUserId = getEffectiveUserId(attempt.studentId);
-    if (!effectiveUserId) return '';
-
-    const collRef = collection(db, 'tests');
-    const questionsPayload = attempt.detailedAnswers && attempt.detailedAnswers.length > 0
-      ? attempt.detailedAnswers.map(a => ({
-          id: a.questionId || '',
-          question: a.questionText || '',
-          userAnswer: a.userAnswer || '',
-          correctAnswer: a.correctAnswer || '',
-          isCorrect: Boolean(a.isCorrect),
-          correct: Boolean(a.isCorrect),
-          explanation: a.explanation || '',
-          errorCode: a.errorCode || null,
-          timeSpentMs: a.timeSpentMs || null,
-          options: a.options || [],
-          selfScore: typeof a.selfScore === 'number' ? a.selfScore : (a.isCorrect ? 1 : 0)
-        }))
-      : [];
-
-    const newDoc = await addDoc(collRef, {
-      title: `Procvičování (${attempt.percentage}%)`,
-      description: JSON.stringify({
-        subtopicId: attempt.subtopicId,
-        subjectId: attempt.subjectId,
-        topicId: attempt.topicId,
-        score: attempt.score,
-        totalQuestions: attempt.totalQuestions,
-        percentage: attempt.percentage,
-        durationSeconds: attempt.durationSeconds || 0
-      }),
-      topic: attempt.subtopicId,
-      studentId: effectiveUserId,
-      createdBy: effectiveUserId,
-      autoGrade: true,
-      questions: questionsPayload,
-      score: attempt.score,
-      totalQuestions: attempt.totalQuestions,
-      percentage: attempt.percentage,
-      durationSeconds: attempt.durationSeconds || 0,
-      createdAt: Timestamp.now()
-    });
-    return newDoc.id;
-  } catch (error) {
-    console.warn('Practice attempt recording notice:', error);
-    return '';
-  }
-}
 
 // -------------------------------------------------------------
 // ACTIVE PRACTICE SESSIONS (Real-time preservation)
@@ -2246,31 +2267,13 @@ export async function exportPracticeQuestionsToExcel(params: {
     throw new Error('Ve vybraném rozsahu nejsou žádné otázky k exportu.');
   }
 
-  const XLSX = await import('xlsx');
-  const worksheet = XLSX.utils.json_to_sheet(rows, {
-    header: [...PRACTICE_EXPORT_HEADERS],
-  });
-  worksheet['!cols'] = [
-    { wch: 14 }, // Předmět
-    { wch: 24 }, // Téma
-    { wch: 28 }, // Podtéma
-    { wch: 15 }, // Typ
-    { wch: 12 }, // Obtížnost
-    { wch: 48 }, // Otázka
-    { wch: 22 }, // Možnost A
-    { wch: 22 }, // Možnost B
-    { wch: 22 }, // Možnost C
-    { wch: 22 }, // Možnost D
-    { wch: 16 }, // Odpověď (výběr)
-    { wch: 24 }, // Odpověď (volná)
-    { wch: 30 }, // Nápověda
-    { wch: 40 }, // Vysvětlení
-    { wch: 28 }, // Obrázek
-    { wch: 28 }, // Obrázek řešení
-  ];
-
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Procvičování');
+  const { downloadExcelWorkbook } = await import('../utils/excelWorkbook');
+  const headers = [...PRACTICE_EXPORT_HEADERS];
+  const dataRows = rows.map((row) =>
+    headers.map(
+      (header) => (row as Record<string, string | number | boolean | null | undefined>)[header] ?? ''
+    )
+  );
 
   const subjectSlug = normalizeSubjectName(params.subject) === 'Čeština' ? 'cestina' : 'matematika';
   const scopeSlug =
@@ -2278,7 +2281,14 @@ export async function exportPracticeQuestionsToExcel(params: {
   const dateStr = new Date().toISOString().slice(0, 10);
   const fileName = `procvicovani-${subjectSlug}-${scopeSlug}-${dateStr}.xlsx`;
 
-  XLSX.writeFile(workbook, fileName);
+  await downloadExcelWorkbook(fileName, [
+    {
+      name: 'Procvičování',
+      headers,
+      rows: dataRows,
+      colWidths: [14, 24, 28, 15, 12, 48, 22, 22, 22, 22, 16, 24, 30, 40, 28, 28],
+    },
+  ]);
   return { subtopicCount, questionCount, fileName };
 }
 
@@ -2343,19 +2353,17 @@ export interface PracticeImportStats {
 }
 
 export async function parsePracticeQuestionsExcelFile(file: File): Promise<PracticeExcelParseResult> {
-  const XLSX = await import('xlsx');
+  const { readExcelFirstSheetRows } = await import('../utils/excelWorkbook');
   const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data, { type: 'array' });
-
-  const sheetName = workbook.SheetNames.find(n => 
-    n.toLowerCase().includes('procvič') || n.toLowerCase().includes('procvic') || n.toLowerCase().includes('otázk') || n.toLowerCase().includes('otazk')
-  ) || workbook.SheetNames[0];
-
-  if (!sheetName || !workbook.Sheets[sheetName]) {
-    throw new Error('V souboru nebyl nalezen žádný platný list s daty.');
-  }
-
-  const rawRows: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+  const rawRows: any[] = await readExcelFirstSheetRows(data, (n) => {
+    const lower = n.toLowerCase();
+    return (
+      lower.includes('procvič') ||
+      lower.includes('procvic') ||
+      lower.includes('otázk') ||
+      lower.includes('otazk')
+    );
+  });
   if (rawRows.length === 0) {
     throw new Error('Vybraný list je prázdný.');
   }
@@ -2856,19 +2864,17 @@ function hasColHeader(row: any, ...aliases: string[]): boolean {
 }
 
 export async function parseStudyStepsExcelFile(file: File): Promise<StudyExcelParseResult> {
-  const XLSX = await import('xlsx');
+  const { readExcelFirstSheetRows } = await import('../utils/excelWorkbook');
   const data = await file.arrayBuffer();
-  const workbook = XLSX.read(data, { type: 'array' });
-
-  const sheetName = workbook.SheetNames.find(n => 
-    n.toLowerCase().includes('stud') || n.toLowerCase().includes('výklad') || n.toLowerCase().includes('vyklad') || n.toLowerCase().includes('teori')
-  ) || workbook.SheetNames[0];
-
-  if (!sheetName || !workbook.Sheets[sheetName]) {
-    throw new Error('V souboru nebyl nalezen žádný platný list s daty.');
-  }
-
-  const rawRows: any[] = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' });
+  const rawRows: any[] = await readExcelFirstSheetRows(data, (n) => {
+    const lower = n.toLowerCase();
+    return (
+      lower.includes('stud') ||
+      lower.includes('výklad') ||
+      lower.includes('vyklad') ||
+      lower.includes('teori')
+    );
+  });
   if (rawRows.length === 0) {
     throw new Error('Vybraný list je prázdný.');
   }
@@ -3223,13 +3229,12 @@ export async function seedInitialPracticeData(userId?: string): Promise<void> {
     isHidden: false
   }, effectiveUserId);
 
-  // Subtopic with SVG link to /materials/cz-shoda.svg
+  // Seed Czech subtopic with interactive study theory & steps
   const subtopicCzId = await saveSubtopic({
     subjectId: 'Čeština',
     topicId: topicCzId,
     title: 'Vyjmenovaná slova a homofony',
     description: 'Přehled vyjmenovaných slov po B, L, M, P, S, V, Z a časté chytáky u přijímaček.',
-    svgUrl: '/materials/cz-shoda.svg',
     isHidden: false,
     hasStudyMaterial: true,
     studyTheory: 'Vyjmenovaná slova jsou slova domácího původu, v jejichž kořenech se po obojetných souhláskách píše tvrdé Y/Ý. U zkoušek CERMAT se často testují tzv. homofony – slova se stejnou výslovností, ale odlišným významem.',

@@ -7,6 +7,13 @@
 
 const SKIP_SUBTREE_TAGS = new Set([
   'script',
+  'style',
+  'animate',
+  'set',
+  'animatemotion',
+  'animatetransform',
+  'animatecolor',
+  'mpath',
   'foreignobject',
   'iframe',
   'frame',
@@ -78,10 +85,6 @@ const ALLOWED_SVG_TAGS = new Set([
   'image',
   'title',
   'desc',
-  'style',
-  'animate',
-  'animatetransform',
-  'set',
   'switch'
 ]);
 
@@ -127,10 +130,6 @@ const CANONICAL_TAG_NAMES = {
   image: 'image',
   title: 'title',
   desc: 'desc',
-  style: 'style',
-  animate: 'animate',
-  animatetransform: 'animateTransform',
-  set: 'set',
   switch: 'switch'
 };
 
@@ -237,14 +236,6 @@ const ALLOWED_SVG_ATTRS = new Set([
   'startoffset',
   'method',
   'spacing',
-  'attributename',
-  'from',
-  'to',
-  'by',
-  'dur',
-  'begin',
-  'end',
-  'repeatcount',
   'vector-effect',
   'shape-rendering',
   'paint-order',
@@ -270,35 +261,10 @@ const CANONICAL_ATTR_NAMES = {
   spreadmethod: 'spreadMethod',
   stddeviation: 'stdDeviation',
   startoffset: 'startOffset',
-  attributename: 'attributeName',
-  repeatcount: 'repeatCount',
   clippathunits: 'clipPathUnits',
   maskunits: 'maskUnits',
   maskcontentunits: 'maskContentUnits'
 };
-
-const SAFE_ANIMATABLE_ATTRIBUTES = new Set([
-  'opacity',
-  'fill-opacity',
-  'stroke-opacity',
-  'transform',
-  'x',
-  'y',
-  'cx',
-  'cy',
-  'r',
-  'rx',
-  'ry',
-  'width',
-  'height',
-  'stroke-dashoffset',
-  'fill',
-  'stroke',
-  'd',
-  'points',
-  'visibility',
-  'display'
-]);
 
 const SAFE_DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i;
 const SAFE_FRAGMENT_RE = /^#[A-Za-z_][A-Za-z0-9_.:-]*$/;
@@ -379,69 +345,125 @@ export function sanitizeHttpUrl(rawUrl, options = {}) {
   return '';
 }
 
-function stripCssCommentsAndNulls(cssText) {
-  return decodeXmlEntities(cssText)
-    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '');
+function decodeCssEscapes(cssText) {
+  if (!cssText || typeof cssText !== 'string') return '';
+  return cssText
+    .replace(/\\(?:\r\n|[\r\n\f])/g, '')
+    .replace(/\\([0-9a-fA-F]{1,6})[ \t\r\n\f]?/g, (_, hex) => {
+      const cp = Number.parseInt(hex, 16);
+      return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
+    })
+    .replace(/\\([^\r\n\f0-9a-fA-F])/g, '$1');
 }
 
-function sanitizeCssUrlCalls(css) {
-  return css.replace(/url\s*\(([^)]*)\)/gi, (_, inner) => {
-    const clean = inner.trim().replace(/^['"]|['"]$/g, '').trim();
-    if (SAFE_FRAGMENT_RE.test(clean)) {
-      return `url(${clean})`;
+function stripCssCommentsAndNulls(cssText) {
+  let out = decodeXmlEntities(cssText).replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '');
+  let prev;
+  do {
+    prev = out;
+    out = out.replace(/\/\*[\s\S]*?\*\//g, '');
+  } while (out !== prev);
+  // Strip any unclosed trailing comment
+  return out.replace(/\/\*[\s\S]*$/g, '');
+}
+
+function normalizeCssForInspection(cssText) {
+  // Strip comments, decode CSS hex/backslash escapes, then strip comments again in case escapes formed /*...*/
+  let out = stripCssCommentsAndNulls(cssText);
+  out = decodeCssEscapes(out);
+  out = stripCssCommentsAndNulls(out);
+  return out;
+}
+
+export function sanitizeCssUrlCalls(css) {
+  if (typeof css !== 'string') return '';
+  const hasRawCssEscape = /\\/.test(stripCssCommentsAndNulls(css));
+  const normalized = normalizeCssForInspection(css);
+  const urlStartRe = /url\s*\(/gi;
+
+  let out = '';
+  let lastIdx = 0;
+  let match;
+
+  while ((match = urlStartRe.exec(normalized)) !== null) {
+    out += normalized.slice(lastIdx, match.index);
+    let pos = urlStartRe.lastIndex;
+    let depth = 1;
+    let quote = null;
+
+    while (pos < normalized.length && depth > 0) {
+      const ch = normalized[pos];
+      if (quote) {
+        if (ch === quote) quote = null;
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+      } else if (ch === '(') {
+        depth++;
+      } else if (ch === ')') {
+        depth--;
+      }
+      pos++;
     }
-    return 'none';
-  });
+
+    const closed = depth === 0;
+    const inner = closed ? normalized.slice(urlStartRe.lastIndex, pos - 1) : normalized.slice(urlStartRe.lastIndex);
+    const clean = inner.trim().replace(/^(['"])(.*)\1$/, '$2').trim();
+
+    if (closed && !hasRawCssEscape && SAFE_FRAGMENT_RE.test(clean) && !hasUnsafeCssTokens(inner)) {
+      out += `url(${clean})`;
+    } else {
+      out += 'none';
+    }
+
+    lastIdx = pos;
+    urlStartRe.lastIndex = pos;
+  }
+
+  out += normalized.slice(lastIdx);
+  return out;
 }
 
 function hasUnsafeCssTokens(css) {
-  const lowered = css.toLowerCase().replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_, hex) => {
-    const cp = Number.parseInt(hex, 16);
-    return Number.isFinite(cp) && cp > 0 && cp <= 0x10ffff ? String.fromCodePoint(cp) : '';
-  });
+  const normalized = normalizeCssForInspection(css).toLowerCase();
   return (
-    /expression\s*\(/i.test(lowered) ||
-    /javascript\s*:/i.test(lowered) ||
-    /vbscript\s*:/i.test(lowered) ||
-    /data\s*:/i.test(lowered) ||
-    /-moz-binding\s*:/i.test(lowered) ||
-    /behavior\s*:/i.test(lowered) ||
-    /@import\b/i.test(lowered) ||
-    /@charset\b/i.test(lowered)
+    /expression\s*\(/i.test(normalized) ||
+    /javascript\s*:/i.test(normalized) ||
+    /vbscript\s*:/i.test(normalized) ||
+    /data\s*:/i.test(normalized) ||
+    /-moz-binding\s*:/i.test(normalized) ||
+    /behavior\s*:/i.test(normalized) ||
+    /@import\b/i.test(normalized) ||
+    /@charset\b/i.test(normalized) ||
+    /\\/.test(normalized)
   );
 }
 
 function sanitizeInlineStyle(rawStyle) {
-  const cleaned = sanitizeCssUrlCalls(stripCssCommentsAndNulls(rawStyle));
-  if (!cleaned || hasUnsafeCssTokens(cleaned)) {
-    // Filter property by property instead of keeping potentially unsafe rules
-    const parts = cleaned.split(';');
-    const safeParts = [];
-    for (const part of parts) {
-      const idx = part.indexOf(':');
-      if (idx === -1) continue;
-      const prop = part.slice(0, idx).trim().toLowerCase();
-      const val = sanitizeCssUrlCalls(part.slice(idx + 1).trim());
-      if (!/^[a-z-]+$/.test(prop) || !val || hasUnsafeCssTokens(val)) continue;
-      safeParts.push(`${prop}: ${val}`);
+  const stripped = stripCssCommentsAndNulls(rawStyle);
+  if (!stripped) return '';
+  const parts = stripped.split(';');
+  const safeParts = [];
+  for (const part of parts) {
+    const idx = part.indexOf(':');
+    if (idx === -1) continue;
+    const rawProp = part.slice(0, idx).trim();
+    const rawVal = part.slice(idx + 1).trim();
+    // Reject any CSS backslash/hex escape inside property names or values
+    if (/\\/.test(rawProp) || /\\/.test(rawVal)) {
+      const normalizedVal = sanitizeCssUrlCalls(rawVal).trim();
+      const propLower = rawProp.toLowerCase();
+      if (/^[a-z-]+$/.test(propLower) && normalizedVal === 'none' && !hasUnsafeCssTokens(rawVal)) {
+        safeParts.push(`${propLower}: none`);
+      }
+      continue;
     }
-    return safeParts.join('; ');
+    const prop = rawProp.toLowerCase();
+    if (!/^[a-z-]+$/.test(prop) || !rawVal || hasUnsafeCssTokens(rawVal)) continue;
+    const val = sanitizeCssUrlCalls(rawVal).trim();
+    if (!val || hasUnsafeCssTokens(val)) continue;
+    safeParts.push(`${prop}: ${val}`);
   }
-  return cleaned.trim();
-}
-
-function sanitizeStyleElementContent(rawCss) {
-  const cleaned = sanitizeCssUrlCalls(stripCssCommentsAndNulls(rawCss));
-  // Strip @import / @charset / expression / behavior / -moz-binding / javascript / vbscript / data:
-  let out = cleaned
-    .replace(/@import[^;\n]*;?/gi, '')
-    .replace(/@charset[^;\n]*;?/gi, '');
-  if (hasUnsafeCssTokens(out)) {
-    out = out
-      .replace(/[^;{}]*(?:expression|javascript|vbscript|data|-moz-binding|behavior)[^;{}]*(?:;|$)/gi, '');
-  }
-  return out.replace(/<\s*\/\s*style/gi, '').replace(/[<>]/g, '');
+  return safeParts.join('; ');
 }
 
 function sanitizeSvgAttrValue(tagName, attrLower, rawValue) {
@@ -472,17 +494,13 @@ function sanitizeSvgAttrValue(tagName, attrLower, rawValue) {
     return null;
   }
 
-  if (attrLower === 'attributename') {
-    const target = decoded.trim().toLowerCase();
-    return SAFE_ANIMATABLE_ATTRIBUTES.has(target) ? decoded.trim() : null;
-  }
-
   if (attrLower === 'style') {
     const safeStyle = sanitizeInlineStyle(decoded);
     return safeStyle || null;
   }
 
   if (URL_FUNC_ATTRS.has(attrLower)) {
+    if (hasUnsafeCssTokens(decoded)) return null;
     const safeVal = sanitizeCssUrlCalls(decoded);
     if (hasUnsafeCssTokens(safeVal)) return null;
     return safeVal;
@@ -578,8 +596,6 @@ export function sanitizeSvg(rawSvg, { maxBytes = 5 * 1024 * 1024 } = {}) {
   let out = '';
   let i = 0;
   let skipTagStack = [];
-  let inStyleElement = false;
-  let styleBuffer = '';
   let svgDepth = 0;
   const n = rawSvg.length;
 
@@ -587,24 +603,16 @@ export function sanitizeSvg(rawSvg, { maxBytes = 5 * 1024 * 1024 } = {}) {
     const lt = rawSvg.indexOf('<', i);
     if (lt === -1) {
       const text = rawSvg.slice(i);
-      if (skipTagStack.length === 0) {
-        if (inStyleElement) {
-          styleBuffer += text;
-        } else if (svgDepth > 0) {
-          out += escapeXmlText(decodeXmlEntities(text));
-        }
+      if (skipTagStack.length === 0 && svgDepth > 0) {
+        out += escapeXmlText(decodeXmlEntities(text));
       }
       break;
     }
 
     if (lt > i) {
       const text = rawSvg.slice(i, lt);
-      if (skipTagStack.length === 0) {
-        if (inStyleElement) {
-          styleBuffer += text;
-        } else if (svgDepth > 0) {
-          out += escapeXmlText(decodeXmlEntities(text));
-        }
+      if (skipTagStack.length === 0 && svgDepth > 0) {
+        out += escapeXmlText(decodeXmlEntities(text));
       }
     }
 
@@ -618,10 +626,6 @@ export function sanitizeSvg(rawSvg, { maxBytes = 5 * 1024 * 1024 } = {}) {
     // Strip CDATA blocks (do not execute nested markup from CDATA)
     if (rawSvg.startsWith('<![CDATA[', lt)) {
       const cdataEnd = rawSvg.indexOf(']]>', lt + 9);
-      const cdataText = cdataEnd === -1 ? '' : rawSvg.slice(lt + 9, cdataEnd);
-      if (skipTagStack.length === 0 && inStyleElement) {
-        styleBuffer += cdataText;
-      }
       i = cdataEnd === -1 ? n : cdataEnd + 3;
       continue;
     }
@@ -654,13 +658,6 @@ export function sanitizeSvg(rawSvg, { maxBytes = 5 * 1024 * 1024 } = {}) {
         if (idx !== -1) {
           skipTagStack = skipTagStack.slice(0, idx);
         }
-        continue;
-      }
-
-      if (lowerClose === 'style' && inStyleElement) {
-        out += `${sanitizeStyleElementContent(styleBuffer)}</style>`;
-        styleBuffer = '';
-        inStyleElement = false;
         continue;
       }
 
@@ -743,10 +740,6 @@ export function sanitizeSvg(rawSvg, { maxBytes = 5 * 1024 * 1024 } = {}) {
       }
     } else {
       out += `<${canonicalTag}${attrOutput}>`;
-      if (lowerTag === 'style') {
-        inStyleElement = true;
-        styleBuffer = '';
-      }
     }
   }
 

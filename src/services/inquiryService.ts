@@ -56,7 +56,7 @@ export function validateInquiryPayload(input: InquiryInput): ValidatedInquiry {
     questionId: questionId.slice(0, 128),
     questionText,
     topic: topic.slice(0, 128),
-    comment: comment.slice(0, 3000),
+    comment: comment.slice(0, 2000),
     status: 'pending',
     isReadByStudent: false,
     senderRole,

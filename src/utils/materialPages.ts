@@ -10,6 +10,7 @@ import {
   isPdfResource,
 } from './pdfToSvg';
 import { sanitizeSafeUrl, sanitizeSvg } from './svgUtils';
+import { isSameOriginApiUrl } from './urlSecurity';
 
 export interface MaterialPageItem {
   pageNumber: number;
@@ -20,17 +21,7 @@ export interface MaterialPageItem {
 }
 
 export function isProtectedMaterialsApiUrl(url: string): boolean {
-  if (!url) return false;
-  if (url.startsWith('/api/materials/')) return true;
-  if (typeof window !== 'undefined') {
-    try {
-      const parsed = new URL(url, window.location.origin);
-      return parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/materials/');
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  return isSameOriginApiUrl(url, '/api/materials/');
 }
 
 export function extractMaterialIdFromUrls(urls: Array<string | null | undefined>): string | null {
@@ -243,7 +234,7 @@ export async function loadMaterialPages(params: {
 
   const res = await fetch(safeResolvedUrl, {
     headers,
-    credentials: 'include',
+    credentials: isProtected ? 'include' : 'omit',
     signal: params.signal,
   });
 

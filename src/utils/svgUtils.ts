@@ -1,44 +1,32 @@
 import DOMPurify from 'dompurify';
+import {
+  sanitizeSafeUrl,
+  isSameOriginApiUrl,
+  sanitizeMaterialPreviewUrl,
+  type SanitizeUrlOptions,
+} from './urlSecurity';
 
-/**
- * Validates URLs before passing them to href/src/window.open sinks.
- * Allows only http:, https:, same-origin relative /..., or safe raster data:image/*;base64,... URLs.
- */
-export function sanitizeSafeUrl(url?: string | null): string | null {
-  if (typeof url !== 'string') return null;
-  const trimmed = url.trim();
-  if (!trimmed) return null;
-  if (/[\u0000-\u001F\u007F]/.test(trimmed)) return null;
+export {
+  sanitizeSafeUrl,
+  isSameOriginApiUrl,
+  sanitizeMaterialPreviewUrl,
+  type SanitizeUrlOptions,
+};
 
-  // Allow relative paths (but reject protocol-relative //evil.com and /\evil.com)
-  if (trimmed.startsWith('/')) {
-    if (trimmed.startsWith('//') || trimmed.startsWith('/\\')) return null;
-    return trimmed;
-  }
-
-  // Allow strictly safe raster data images
-  if (/^data:image\/(png|jpeg|webp|gif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed)) {
-    return trimmed;
-  }
-
-  // Allow explicit http(s) URLs only
-  if (/^https?:\/\//i.test(trimmed)) {
-    try {
-      const parsed = new URL(trimmed);
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
-        return trimmed;
-      }
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-const FORBIDDEN_SVG_TAGS = new Set([
+export const SVG_FORBID_TAGS = [
   'script',
+  'style',
+  'animate',
+  'set',
+  'animatemotion',
+  'animateMotion',
+  'animatetransform',
+  'animateTransform',
+  'animatecolor',
+  'animateColor',
+  'mpath',
   'foreignobject',
+  'foreignObject',
   'iframe',
   'object',
   'embed',
@@ -54,17 +42,110 @@ const FORBIDDEN_SVG_TAGS = new Set([
   'frame',
   'frameset',
   'applet',
-]);
+] as const;
 
-const ANIMATION_SVG_TAGS = new Set([
-  'animate',
-  'animatemotion',
-  'animatetransform',
-  'set',
-  'mpath',
-]);
+const FORBIDDEN_SVG_TAGS = new Set(SVG_FORBID_TAGS.map((tag) => tag.toLowerCase()));
 
 const URI_ATTRS = new Set(['href', 'xlink:href', 'src', 'action', 'formaction', 'poster', 'data']);
+
+const SVG_CSS_URL_ATTRS = new Set([
+  'fill',
+  'stroke',
+  'filter',
+  'clip-path',
+  'mask',
+  'marker-start',
+  'marker-mid',
+  'marker-end',
+  'cursor',
+]);
+
+export function isForbiddenSvgTag(tagName: string): boolean {
+  return FORBIDDEN_SVG_TAGS.has((tagName || '').toLowerCase().trim());
+}
+
+/**
+ * Checks whether a CSS string (e.g. inline `style` or SVG presentation attribute)
+ * contains unsafe constructs such as external `url(...)`, `@import`, `expression(...)`,
+ * `javascript:`, CSS backslash/hex escape obfuscations (e.g. `\75rl(...)`), or
+ * CSS comment-splitting tricks.
+ */
+export function hasUnsafeCssValue(css: string): boolean {
+  if (typeof css !== 'string' || !css) return false;
+
+  // Reject control chars and CSS backslash/hex escapes (e.g. \75rl(...))
+  if (/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(css) || css.includes('\\')) {
+    return true;
+  }
+
+  // Strip CSS comments (including unclosed /*) so url/**/(...) cannot bypass filtering
+  const stripped = css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, '');
+
+  if (
+    /@\s*import|@\s*charset|expression\s*\(|javascript\s*:|vbscript\s*:|data\s*:\s*text|data\s*:\s*image\/svg|-moz-binding|behavior\s*:/i.test(
+      stripped
+    )
+  ) {
+    return true;
+  }
+
+  // Inspect every url(...) call: only allow local fragment references like url(#grad1)
+  const urlCallRegex = /url\s*\(([^)]*)\)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = urlCallRegex.exec(stripped)) !== null) {
+    const inner = (match[1] || '').trim().replace(/^['"]|['"]$/g, '').trim();
+    if (!/^#[a-zA-Z0-9_.:-]+$/.test(inner)) {
+      return true;
+    }
+  }
+
+  // Reject unclosed / malformed url( calls
+  if (/url\s*\(/i.test(stripped.replace(urlCallRegex, ''))) {
+    return true;
+  }
+
+  return false;
+}
+
+export function isAllowedSvgAttribute(
+  tagName: string,
+  rawAttrName: string,
+  rawAttrValue: string
+): boolean {
+  const attrName = (rawAttrName || '').toLowerCase().trim();
+  const attrVal = (rawAttrValue || '').trim();
+  const tag = (tagName || '').toLowerCase().trim();
+
+  if (attrName.startsWith('on') || isForbiddenSvgTag(tag)) {
+    return false;
+  }
+
+  const compactVal = attrVal.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+  if (
+    compactVal.includes('javascript:') ||
+    compactVal.includes('vbscript:') ||
+    compactVal.includes('data:text') ||
+    compactVal.includes('data:image/svg+xml')
+  ) {
+    return false;
+  }
+
+  if (URI_ATTRS.has(attrName)) {
+    if (/^#[a-zA-Z0-9_.:-]+$/.test(attrVal)) {
+      return true;
+    }
+    if ((tag === 'image' || tag === 'feimage') && sanitizeSafeUrl(attrVal) !== null) {
+      return true;
+    }
+    return false;
+  }
+
+  if (attrName === 'style' || SVG_CSS_URL_ATTRS.has(attrName)) {
+    return !hasUnsafeCssValue(attrVal);
+  }
+
+  return true;
+}
 
 let svgPurifierInstance: typeof DOMPurify | null = null;
 
@@ -78,83 +159,15 @@ function getSvgPurifier(): typeof DOMPurify | null {
 
   instance.addHook('uponSanitizeElement', (currentNode) => {
     const tag = (currentNode.nodeName || '').toLowerCase();
-    if (FORBIDDEN_SVG_TAGS.has(tag)) {
+    if (isForbiddenSvgTag(tag)) {
       currentNode.parentNode?.removeChild(currentNode);
-      return;
-    }
-    if (tag === 'style' && currentNode.textContent) {
-      const css = currentNode.textContent;
-      if (
-        /@import|expression\s*\(|javascript:|vbscript:|data:text|-moz-binding|behavior\s*:|url\s*\(\s*['"]?\s*(?!#)/i.test(
-          css
-        )
-      ) {
-        currentNode.parentNode?.removeChild(currentNode);
-      }
     }
   });
 
   instance.addHook('uponSanitizeAttribute', (currentNode, data) => {
-    const attrName = (data.attrName || '').toLowerCase().trim();
-    const attrVal = (data.attrValue || '').trim();
     const tag = (currentNode?.nodeName || '').toLowerCase();
-
-    if (attrName.startsWith('on')) {
+    if (!isAllowedSvgAttribute(tag, data.attrName || '', data.attrValue || '')) {
       data.keepAttr = false;
-      return;
-    }
-
-    if (ANIMATION_SVG_TAGS.has(tag)) {
-      if (attrName === 'href' || attrName === 'xlink:href') {
-        data.keepAttr = false;
-        return;
-      }
-      if (attrName === 'attributename') {
-        const targetAttr = attrVal.replace(/[\s\u0000-\u001F]+/g, '').toLowerCase();
-        if (
-          targetAttr.startsWith('on') ||
-          targetAttr === 'href' ||
-          targetAttr === 'xlink:href' ||
-          targetAttr === 'src' ||
-          targetAttr === 'action' ||
-          targetAttr === 'formaction'
-        ) {
-          data.keepAttr = false;
-          return;
-        }
-      }
-    }
-
-    const compactVal = attrVal.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
-    if (
-      compactVal.includes('javascript:') ||
-      compactVal.includes('vbscript:') ||
-      compactVal.includes('data:text') ||
-      compactVal.includes('data:image/svg+xml')
-    ) {
-      data.keepAttr = false;
-      return;
-    }
-
-    if (URI_ATTRS.has(attrName)) {
-      if (/^#[a-zA-Z0-9_.:-]+$/.test(attrVal)) {
-        return;
-      }
-      if ((tag === 'image' || tag === 'feimage') && sanitizeSafeUrl(attrVal) !== null) {
-        return;
-      }
-      data.keepAttr = false;
-      return;
-    }
-
-    if (attrName === 'style') {
-      if (
-        /@import|expression\s*\(|-moz-binding|behavior\s*:|url\s*\(\s*['"]?\s*(?!#)/i.test(
-          attrVal
-        )
-      ) {
-        data.keepAttr = false;
-      }
     }
   });
 
@@ -163,8 +176,8 @@ function getSvgPurifier(): typeof DOMPurify | null {
 }
 
 /**
- * Sanitizes SVG markup strictly using DOMPurify to prevent XSS.
- * Fails closed cleanly in non-DOM/SSR environments.
+ * Sanitizes SVG markup strictly using DOMPurify to prevent XSS, global CSS injection,
+ * and SMIL animation tricks. Fails closed cleanly in non-DOM/SSR environments.
  */
 export function sanitizeSvg(rawSvg: string): string {
   if (typeof rawSvg !== 'string' || !rawSvg.trim()) return '';
@@ -175,26 +188,7 @@ export function sanitizeSvg(rawSvg: string): string {
 
   return purifier.sanitize(rawSvg, {
     USE_PROFILES: { svg: true, svgFilters: true },
-    FORBID_TAGS: [
-      'script',
-      'foreignobject',
-      'foreignObject',
-      'iframe',
-      'object',
-      'embed',
-      'a',
-      'base',
-      'meta',
-      'link',
-      'form',
-      'input',
-      'button',
-      'textarea',
-      'select',
-      'frame',
-      'frameset',
-      'applet',
-    ],
+    FORBID_TAGS: [...SVG_FORBID_TAGS],
     ADD_ATTR: ['xlink:href', 'href', 'viewBox', 'preserveAspectRatio'],
   });
 }

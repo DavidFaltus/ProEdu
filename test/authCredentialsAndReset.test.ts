@@ -92,19 +92,37 @@ test('Login.tsx includes Google Password Manager autocomplete attributes and pas
 });
 
 test('server emailService exports sendPasswordResetEmailTemplate and formats reset link properly', async () => {
-  const { sendPasswordResetEmailTemplate } = await import('../server/services/emailService.js');
+  const {
+    sendPasswordResetEmailTemplate,
+    setTransporterForTesting,
+    resetTransporterForTesting
+  } = await import('../server/services/emailService.js');
   assert.equal(typeof sendPasswordResetEmailTemplate, 'function');
 
-  const res = await sendPasswordResetEmailTemplate({
-    to: 'test-user@proedu.cz',
-    name: 'Jan Novák',
-    resetLink: 'https://proedu.cz/reset?code=123456'
+  let capturedMailOptions: any = null;
+  setTransporterForTesting({
+    sendMail: async (options: any) => {
+      capturedMailOptions = options;
+      return { messageId: '<mock-reset-msg@pro-edu.eu>' };
+    }
   });
 
-  assert.ok(res.success, 'sendPasswordResetEmailTemplate should succeed in dev / simulation mode');
+  try {
+    const res = await sendPasswordResetEmailTemplate({
+      to: 'test-user@proedu.cz',
+      name: 'Jan Novák',
+      resetLink: 'https://proedu.cz/reset?code=123456'
+    });
+
+    assert.ok(res.success, 'sendPasswordResetEmailTemplate should succeed with mocked transporter');
+    assert.equal(capturedMailOptions.to, 'test-user@proedu.cz');
+    assert.ok(capturedMailOptions.html.includes('https://proedu.cz/reset?code=123456'), 'Email HTML must include reset link');
+  } finally {
+    resetTransporterForTesting();
+  }
 });
 
-test('server/index.js defines POST /api/auth/password-reset endpoint, rate limiter and canonical public URL', () => {
+test('server/index.js defines POST /api/auth/password-reset endpoint, rate limiter, canonical URL, and SEC-07 guards', () => {
   const serverPath = path.resolve(process.cwd(), 'server/index.js');
   const serverCode = fs.readFileSync(serverPath, 'utf8');
 
@@ -116,7 +134,9 @@ test('server/index.js defines POST /api/auth/password-reset endpoint, rate limit
   assert.ok(serverCode.includes('https://proeducator.eu'), 'server/index.js must default canonical URL to https://proeducator.eu');
   assert.ok(serverCode.includes('publicResetLink = `${CANONICAL_PUBLIC_APP_URL}/reset-password?oobCode='), 'server/index.js must build publicResetLink with canonical URL');
   assert.ok(serverCode.includes('resetLink: publicResetLink'), 'server/index.js must pass publicResetLink into email template');
-  assert.ok(serverCode.includes('localResetLink'), 'server/index.js must retain localResetLink for dev server debugging');
+  assert.ok(!/console\.(log|info|warn|error)\([^\n]*(publicResetLink|localResetLink|rawResetLink|oobCode)/.test(serverCode), 'server/index.js must never log plaintext reset links or oobCode');
+  assert.ok(serverCode.includes("process.env.NODE_ENV === 'production' && emailRes?.simulated"), 'server/index.js must fail closed when emailRes.simulated is true in production');
+  assert.ok(serverCode.includes('res.status(503)'), 'server/index.js must return HTTP 503 when simulated email delivery occurs in production');
 });
 
 test('App.tsx and ResetPassword.tsx configure custom ProEdu password reset page with eye toggles and confirmation match', () => {

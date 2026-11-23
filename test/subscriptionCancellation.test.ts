@@ -42,7 +42,7 @@ function calculateCancellationPayload(
     subscriptionCancelledAt: nowIso,
     subscriptionCancelReason: safeReason,
     subscriptionPeriodEnd: periodEnd,
-    initRecurringTransId: null,
+    initRecurringTransId: userDoc?.initRecurringTransId ?? null,
     recurringCancelled: true,
     recurringCancelledAt: nowIso
   };
@@ -95,7 +95,8 @@ test('Cancellation at period end PRESERVES existing paid periodEnd and keeps rol
     uid: 'user-123',
     role: 'premium',
     subscriptionStatus: 'active',
-    subscriptionPeriodEnd: existingPeriodEnd
+    subscriptionPeriodEnd: existingPeriodEnd,
+    initRecurringTransId: 'INIT_TRANS_999'
   };
 
   const payload = calculateCancellationPayload(existingProfile, false, 'Přecházím na jiný způsob přípravy', baseNow);
@@ -104,6 +105,7 @@ test('Cancellation at period end PRESERVES existing paid periodEnd and keeps rol
   assert.equal(payload.role, 'premium', 'Role must remain premium during remaining period');
   assert.equal(payload.subscriptionStatus, 'cancelled_at_period_end');
   assert.equal(payload.subscriptionPeriodEnd, existingPeriodEnd, 'Existing periodEnd must be strictly preserved');
+  assert.equal(payload.initRecurringTransId, 'INIT_TRANS_999', 'SEC-23: Non-immediate cancel must preserve initRecurringTransId for potential reactivation');
   assert.equal(payload.subscriptionCancelReason, 'Přecházím na jiný způsob přípravy');
   assert.equal(payload.subscriptionCancelledAt, new Date(baseNow).toISOString());
 });

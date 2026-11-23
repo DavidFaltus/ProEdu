@@ -3,7 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // =========================================================================
-    // HELPER FUNCTIONS (Custom Claims Only — Zero Email / Firestore Fallbacks)
+    // HELPER FUNCTIONS
     // =========================================================================
 
     function isAuthenticated() {
@@ -18,10 +18,14 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid));
     }
 
+    // SEC-11: Evaluate Auth custom claims first; ONLY fall back to userDoc() when the claim is absent.
+    // Eliminates +1 billed Firestore read per request for claim-bearing users AND prevents
+    // downgraded claims from falling through to stale Firestore user docs.
     function isTeacher() {
       return isAuthenticated() && (
         (('role' in request.auth.token) && request.auth.token.role == 'teacher') ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (!('role' in request.auth.token) &&
+         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          userDoc().data.role == 'teacher')
       );
     }
@@ -35,7 +39,8 @@ service cloud.firestore {
       return isAuthenticated() && (
         (('role' in request.auth.token) &&
          request.auth.token.role in ['premium', 'course', 'teacher']) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (!('role' in request.auth.token) &&
+         exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
          userDoc().data.role in ['premium', 'course', 'teacher'])
       );
     }
@@ -50,10 +55,11 @@ service cloud.firestore {
         isAuthenticated() &&
         courseId is string &&
         courseId.size() > 0 && (
-          ('enrolledCourseIds' in request.auth.token &&
+          (('enrolledCourseIds' in request.auth.token) &&
            request.auth.token.enrolledCourseIds is list &&
            courseId in request.auth.token.enrolledCourseIds) ||
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+          (!('enrolledCourseIds' in request.auth.token) &&
+           exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
            'enrolledCourseIds' in userDoc().data &&
            userDoc().data.enrolledCourseIds is list &&
            courseId in userDoc().data.enrolledCourseIds)
@@ -63,10 +69,7 @@ service cloud.firestore {
 
     // deleteField()-safe immutability check
     function unchanged(field) {
-      return (!(field in resource.data) && !(field in request.resource.data)) ||
-        ((field in resource.data) &&
-         (field in request.resource.data) &&
-         request.resource.data[field] == resource.data[field]);
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny([field]);
     }
 
     function hasNoImmutableChanges(fields) {
@@ -74,13 +77,7 @@ service cloud.firestore {
     }
 
     function keepsImmutableFields() {
-      return unchanged('uid') &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        unchanged('studentId') &&
-        unchanged('testId') &&
-        unchanged('referredBy') &&
-        hasNoImmutableChanges(['uid', 'createdAt', 'createdBy', 'studentId', 'testId', 'referredBy']);
+      return hasNoImmutableChanges(['uid', 'createdAt', 'createdBy', 'studentId', 'testId', 'referredBy']);
     }
 
     function isNonEmptyString(val, maxLen) {
@@ -88,36 +85,54 @@ service cloud.firestore {
     }
 
     function isOptionalString(data, field, maxLen) {
-      return !(field in data) ||
-        data[field] == null ||
-        (data[field] is string && data[field].size() <= maxLen);
+      let v = data.get(field, null);
+      return v == null || (v is string && v.size() <= maxLen);
     }
 
     function isOptionalNumber(data, field, minVal, maxVal) {
-      return !(field in data) ||
-        data[field] == null ||
-        (data[field] is number && data[field] >= minVal && data[field] <= maxVal);
+      let v = data.get(field, null);
+      return v == null || (v is number && v >= minVal && v <= maxVal);
     }
 
     function isOptionalBool(data, field) {
-      return !(field in data) || data[field] == null || data[field] is bool;
+      let v = data.get(field, null);
+      return v == null || v is bool;
     }
 
     function isTimestampOrString(val) {
-      return val is timestamp || val is string;
+      return val is timestamp || (val is string && val.size() <= 40);
     }
 
     function isOptionalTimestampOrString(data, field) {
-      return !(field in data) || data[field] == null || isTimestampOrString(data[field]);
+      let v = data.get(field, null);
+      return v == null || isTimestampOrString(v);
+    }
+
+    function isValidPhotoUrl(val) {
+      return val == null ||
+        val == '' ||
+        (val is string && val.size() <= 2048 && val.matches('^https://[^\\s]+$')) ||
+        (val is string && val.size() <= 150000 && val.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'));
     }
 
     function isNotHidden(data) {
-      return !('isHidden' in data) || data.isHidden != true;
+      return data.get('isHidden', false) != true;
     }
 
     // =========================================================================
     // SCHEMA VALIDATORS
     // =========================================================================
+
+    // SEC-22: Strict single-address email validator (rejects commas, semicolons, whitespace,
+    // angle brackets, quotes, backslashes, and CR/LF header injection)
+    function isOptionalSingleEmail(data, field, maxLen) {
+      let v = data.get(field, null);
+      return v == null || v == '' || (
+        v is string &&
+        v.size() <= maxLen &&
+        v.matches('^[^\\s,@<>;"\\\\]+@[^\\s,@<>;"\\\\]+\\.[^\\s,@<>;"\\\\]{2,}$')
+      );
+    }
 
     function isValidBillingDetails(billing) {
       return billing is map &&
@@ -125,7 +140,7 @@ service cloud.firestore {
           'clientName', 'invoiceEmail', 'street', 'city', 'zip', 'country', 'ico', 'dic'
         ]) &&
         isOptionalString(billing, 'clientName', 128) &&
-        isOptionalString(billing, 'invoiceEmail', 256) &&
+        isOptionalSingleEmail(billing, 'invoiceEmail', 256) &&
         isOptionalString(billing, 'street', 150) &&
         isOptionalString(billing, 'city', 100) &&
         isOptionalString(billing, 'zip', 20) &&
@@ -134,106 +149,68 @@ service cloud.firestore {
         isOptionalString(billing, 'dic', 20);
     }
 
-    function isValidUserCreate(data, userId) {
-      return data.keys().hasOnly([
-          'uid', 'email', 'name', 'displayName', 'photoURL',
-          'avatarEmoji', 'avatarBgColor', 'role', 'jokers', 'streak',
-          'dailyVideosWatched', 'lastDailyGrantDate', 'lastJokerResetDate',
-          'lastViewedActivityAt', 'notificationsReadAt', 'referralCode',
-          'referralsCount', 'focusAreas', 'year', 'targetSchool', 'goalGrade',
-          'weeklyGoal', 'dailyGoalMinutes', 'preferredDifficulty',
-          'onboardingCompleted', 'createdAt', 'updatedAt'
-        ]) &&
-        !data.keys().hasAny([
-          'enrolledCourseIds', 'courseId', 'subscriptionStatus',
-          'subscriptionPeriodEnd', 'subscriptionExpiresAt', 'subscriptionExpiredAt',
-          'subscriptionCancelledAt', 'subscriptionCancelReason',
-          'initRecurringTransId', 'recurringCancelled', 'recurringCancelledAt',
-          'pendingOrderId', 'isAdmin', 'referredBy',
-          'surveyCompleted', 'surveyAnswer', 'surveyCustomAnswer', 'surveySubmittedAt',
-          'iuctoCustomerId', 'lastRecurringAttemptDate', 'lastRecurringOrderId',
-          'lastRecurringPaymentFailed', 'lastRecurringFailureReason', 'lastRecurringFailedAt',
-          'xp', 'gardenPlants',
-          'focusSessionsHistory', 'lastPracticeDate', 'lastStreakPracticeDate',
-          'premiumSince', 'cancelledOrderIds'
-        ]) &&
-        data.uid == userId &&
-        data.role == 'free' &&
-        data.jokers == 5 &&
-        data.streak == 0 &&
-        (!('dailyVideosWatched' in data) || data.dailyVideosWatched == 0) &&
-        (!('referralsCount' in data) || data.referralsCount == 0) &&
-        (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 320)) &&
-        isOptionalString(data, 'name', 128) &&
-        isOptionalString(data, 'displayName', 128) &&
-        isOptionalString(data, 'photoURL', 500000) &&
-        isOptionalString(data, 'avatarEmoji', 16) &&
-        isOptionalString(data, 'avatarBgColor', 32) &&
-        isOptionalString(data, 'referralCode', 32) &&
-        isOptionalString(data, 'lastDailyGrantDate', 32) &&
-        isOptionalString(data, 'lastJokerResetDate', 32) &&
-        isOptionalString(data, 'targetSchool', 128) &&
-        isOptionalString(data, 'goalGrade', 32) &&
-        (!('year' in data) || data.year == null ||
-          (data.year is int && data.year >= 1 && data.year <= 13) ||
-          (data.year is string && data.year.size() <= 32)) &&
-        isOptionalNumber(data, 'weeklyGoal', 0, 1000) &&
-        isOptionalNumber(data, 'dailyGoalMinutes', 0, 1440) &&
-        (!('preferredDifficulty' in data) || data.preferredDifficulty == null ||
-          data.preferredDifficulty in ['easy', 'medium', 'hard', 'adaptive']) &&
-        isOptionalBool(data, 'onboardingCompleted') &&
-        (!('focusAreas' in data) || (data.focusAreas is list && data.focusAreas.size() <= 30)) &&
-        ('createdAt' in data && isTimestampOrString(data.createdAt)) &&
-        isOptionalTimestampOrString(data, 'updatedAt') &&
-        isOptionalTimestampOrString(data, 'lastViewedActivityAt') &&
-        isOptionalTimestampOrString(data, 'notificationsReadAt');
-    }
-
+    // Partial-safe owner profile update validator (validates only changed keys to stay well under 1000 exprs)
     function isValidUserProfileOwnerUpdate(data) {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
           'displayName', 'name', 'photoURL', 'avatarEmoji', 'avatarBgColor',
           'year', 'targetSchool', 'goalGrade', 'weeklyGoal', 'dailyGoalMinutes',
           'preferredDifficulty', 'onboardingCompleted', 'updatedAt', 'focusAreas',
           'notificationsReadAt', 'lastViewedActivityAt', 'billingDetails',
           'preferredPaymentMethod'
         ]) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-          'uid', 'email', 'createdAt', 'role', 'enrolledCourseIds', 'courseId',
-          'jokers', 'dailyVideosWatched', 'lastJokerReset', 'lastJokerResetDate',
-          'lastDailyGrantDate', 'streak', 'lastPracticeDate', 'lastStreakPracticeDate',
-          'xp', 'subscriptionStatus', 'subscriptionPeriodEnd', 'subscriptionExpiresAt',
-          'subscriptionExpiredAt', 'subscriptionCancelledAt', 'subscriptionCancelReason',
-          'initRecurringTransId', 'recurringCancelled', 'recurringCancelledAt',
-          'pendingOrderId', 'referredBy', 'referralsCount',
-          'referralCode', 'surveyCompleted', 'surveyAnswer', 'surveyCustomAnswer',
-          'surveySubmittedAt', 'gardenPlants', 'focusSessionsHistory', 'isAdmin',
-          'iuctoCustomerId', 'lastRecurringAttemptDate', 'lastRecurringOrderId',
-          'lastRecurringPaymentFailed', 'lastRecurringFailureReason', 'lastRecurringFailedAt',
-          'premiumSince'
-        ]) &&
-        isOptionalString(data, 'displayName', 128) &&
-        isOptionalString(data, 'name', 128) &&
-        isOptionalString(data, 'photoURL', 500000) &&
-        isOptionalString(data, 'avatarEmoji', 16) &&
-        isOptionalString(data, 'avatarBgColor', 32) &&
-        isOptionalString(data, 'targetSchool', 128) &&
-        isOptionalString(data, 'goalGrade', 32) &&
-        (!('year' in data) || data.year == null ||
+        (!changed.hasAny(['displayName']) || isOptionalString(data, 'displayName', 128)) &&
+        (!changed.hasAny(['name']) || isOptionalString(data, 'name', 128)) &&
+        (!changed.hasAny(['photoURL']) || isValidPhotoUrl(data.get('photoURL', null))) &&
+        (!changed.hasAny(['avatarEmoji']) || isOptionalString(data, 'avatarEmoji', 16)) &&
+        (!changed.hasAny(['avatarBgColor']) || isOptionalString(data, 'avatarBgColor', 32)) &&
+        (!changed.hasAny(['targetSchool']) || isOptionalString(data, 'targetSchool', 128)) &&
+        (!changed.hasAny(['goalGrade']) || isOptionalString(data, 'goalGrade', 32)) &&
+        (!changed.hasAny(['year']) || data.get('year', null) == null ||
           (data.year is int && data.year >= 1 && data.year <= 13) ||
           (data.year is string && data.year.size() <= 32)) &&
-        isOptionalNumber(data, 'weeklyGoal', 0, 1000) &&
-        isOptionalNumber(data, 'dailyGoalMinutes', 0, 1440) &&
-        (!('preferredDifficulty' in data) || data.preferredDifficulty == null ||
+        (!changed.hasAny(['weeklyGoal']) || isOptionalNumber(data, 'weeklyGoal', 0, 1000)) &&
+        (!changed.hasAny(['dailyGoalMinutes']) || isOptionalNumber(data, 'dailyGoalMinutes', 0, 1440)) &&
+        (!changed.hasAny(['preferredDifficulty']) || data.get('preferredDifficulty', null) == null ||
           data.preferredDifficulty in ['easy', 'medium', 'hard', 'adaptive']) &&
-        isOptionalBool(data, 'onboardingCompleted') &&
-        (!('focusAreas' in data) || (data.focusAreas is list && data.focusAreas.size() <= 30)) &&
-        (!('preferredPaymentMethod' in data) || data.preferredPaymentMethod == null ||
+        (!changed.hasAny(['onboardingCompleted']) || isOptionalBool(data, 'onboardingCompleted')) &&
+        (!changed.hasAny(['focusAreas']) || data.get('focusAreas', null) == null ||
+          (data.focusAreas is list && data.focusAreas.size() <= 30)) &&
+        (!changed.hasAny(['preferredPaymentMethod']) || data.get('preferredPaymentMethod', null) == null ||
           data.preferredPaymentMethod == 'comgate') &&
-        (!('billingDetails' in data) || data.billingDetails == null ||
+        (!changed.hasAny(['billingDetails']) || data.get('billingDetails', null) == null ||
           isValidBillingDetails(data.billingDetails)) &&
-        isOptionalTimestampOrString(data, 'updatedAt') &&
-        isOptionalTimestampOrString(data, 'notificationsReadAt') &&
-        isOptionalTimestampOrString(data, 'lastViewedActivityAt');
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt')) &&
+        (!changed.hasAny(['notificationsReadAt']) || isOptionalTimestampOrString(data, 'notificationsReadAt')) &&
+        (!changed.hasAny(['lastViewedActivityAt']) || isOptionalTimestampOrString(data, 'lastViewedActivityAt'));
+    }
+
+    // SEC-31: Partial-safe teacher update validator on users/{userId}.
+    // Blocks direct client role edits (including teacher promotion), isAdmin escalation,
+    // billing/quota tampering, immutable field changes, and cross-teacher modification.
+    // Role, course enrollment, and user deletion go exclusively via backend Admin SDK APIs.
+    function isValidUserTeacherUpdate(data, userId) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return unchanged('uid') &&
+        hasNoImmutableChanges(['uid', 'createdAt', 'email', 'role', 'isAdmin']) &&
+        (resource.data.get('role', 'free') != 'teacher' || isOwner(userId)) &&
+        changed.hasOnly([
+          'name', 'displayName', 'focusAreas',
+          'surveyCompleted', 'surveyAnswer', 'surveyAnswerCustom', 'surveyCustomAnswer',
+          'surveySchool', 'surveyGrade', 'surveySubmittedAt', 'updatedAt'
+        ]) &&
+        (!changed.hasAny(['name']) || isOptionalString(data, 'name', 128)) &&
+        (!changed.hasAny(['displayName']) || isOptionalString(data, 'displayName', 128)) &&
+        (!changed.hasAny(['focusAreas']) || data.get('focusAreas', null) == null ||
+          (data.focusAreas is list && data.focusAreas.size() <= 30)) &&
+        (!changed.hasAny(['surveyCompleted']) || isOptionalBool(data, 'surveyCompleted')) &&
+        (!changed.hasAny(['surveyAnswer']) || isOptionalString(data, 'surveyAnswer', 256)) &&
+        (!changed.hasAny(['surveyAnswerCustom']) || isOptionalString(data, 'surveyAnswerCustom', 500)) &&
+        (!changed.hasAny(['surveyCustomAnswer']) || isOptionalString(data, 'surveyCustomAnswer', 500)) &&
+        (!changed.hasAny(['surveySchool']) || isOptionalString(data, 'surveySchool', 200)) &&
+        (!changed.hasAny(['surveyGrade']) || isOptionalString(data, 'surveyGrade', 64)) &&
+        (!changed.hasAny(['surveySubmittedAt']) || isOptionalTimestampOrString(data, 'surveySubmittedAt')) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
     }
 
     function isValidTopic(data) {
@@ -242,11 +219,11 @@ service cloud.firestore {
           'icon', 'color', 'order', 'isHidden',
           'createdAt', 'createdBy', 'updatedAt'
         ]) &&
-        (('name' in data && isNonEmptyString(data.name, 200)) ||
-         ('title' in data && isNonEmptyString(data.title, 200))) &&
+        (isNonEmptyString(data.get('name', ''), 200) ||
+         isNonEmptyString(data.get('title', ''), 200)) &&
         isOptionalString(data, 'name', 200) &&
         isOptionalString(data, 'title', 200) &&
-        isNonEmptyString(data.subjectId, 128) &&
+        isNonEmptyString(data.get('subjectId', ''), 128) &&
         isOptionalString(data, 'description', 2000) &&
         isOptionalString(data, 'icon', 64) &&
         isOptionalString(data, 'color', 32) &&
@@ -262,8 +239,8 @@ service cloud.firestore {
           'id', 'name', 'title', 'description', 'icon', 'color',
           'order', 'isHidden', 'createdAt', 'createdBy', 'updatedAt'
         ]) &&
-        (('name' in data && isNonEmptyString(data.name, 200)) ||
-         ('title' in data && isNonEmptyString(data.title, 200))) &&
+        (isNonEmptyString(data.get('name', ''), 200) ||
+         isNonEmptyString(data.get('title', ''), 200)) &&
         isOptionalString(data, 'description', 2000) &&
         isOptionalString(data, 'icon', 64) &&
         isOptionalString(data, 'color', 32) &&
@@ -283,9 +260,9 @@ service cloud.firestore {
           'studyTips', 'studyImages', 'studyVideos', 'sampleProblem',
           'practiceConfig', 'createdAt', 'createdBy', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.title, 256) &&
-        isNonEmptyString(data.topicId, 128) &&
-        isNonEmptyString(data.subjectId, 128) &&
+        isNonEmptyString(data.get('title', ''), 256) &&
+        isNonEmptyString(data.get('topicId', ''), 128) &&
+        isNonEmptyString(data.get('subjectId', ''), 128) &&
         isOptionalString(data, 'topic', 200) &&
         isOptionalString(data, 'description', 2000) &&
         isOptionalNumber(data, 'order', -1000, 10000) &&
@@ -302,21 +279,65 @@ service cloud.firestore {
         isOptionalString(data, 'svgUrl', 5000) &&
         isOptionalString(data, 'svgContent', 1000000) &&
         isOptionalString(data, 'studyTheory', 200000) &&
-        (!('studySteps' in data) || data.studySteps == null ||
+        (data.get('studySteps', null) == null ||
           (data.studySteps is list && data.studySteps.size() <= 50)) &&
-        (!('studyTips' in data) || data.studyTips == null ||
+        (data.get('studyTips', null) == null ||
           data.studyTips is string || data.studyTips is list) &&
-        (!('studyImages' in data) || data.studyImages == null ||
+        (data.get('studyImages', null) == null ||
           (data.studyImages is list && data.studyImages.size() <= 50)) &&
-        (!('studyVideos' in data) || data.studyVideos == null ||
+        (data.get('studyVideos', null) == null ||
           (data.studyVideos is list && data.studyVideos.size() <= 20)) &&
-        (!('sampleProblem' in data) || data.sampleProblem == null ||
+        (data.get('sampleProblem', null) == null ||
           data.sampleProblem is map || data.sampleProblem is string) &&
-        (!('practiceConfig' in data) || data.practiceConfig == null ||
+        (data.get('practiceConfig', null) == null ||
           data.practiceConfig is map) &&
         isOptionalString(data, 'createdBy', 128) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'updatedAt');
+    }
+
+    function isValidPracticeSubtopicUpdate(data) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'id', 'title', 'topicId', 'topic', 'subjectId', 'description',
+          'order', 'isHidden', 'hasStudyMaterial', 'materialId', 'pairedMaterialId',
+          'fileUrl', 'pdfUrl', 'downloadUrl', 'thumbnailUrl', 'fileType',
+          'originalName', 'svgUrl', 'svgContent', 'studyTheory', 'studySteps',
+          'studyTips', 'studyImages', 'studyVideos', 'sampleProblem',
+          'practiceConfig', 'updatedAt'
+        ]) &&
+        (!changed.hasAny(['title']) || isNonEmptyString(data.get('title', ''), 256)) &&
+        (!changed.hasAny(['topicId']) || isNonEmptyString(data.get('topicId', ''), 128)) &&
+        (!changed.hasAny(['subjectId']) || isNonEmptyString(data.get('subjectId', ''), 128)) &&
+        (!changed.hasAny(['topic']) || isOptionalString(data, 'topic', 200)) &&
+        (!changed.hasAny(['description']) || isOptionalString(data, 'description', 2000)) &&
+        (!changed.hasAny(['order']) || isOptionalNumber(data, 'order', -1000, 10000)) &&
+        (!changed.hasAny(['isHidden']) || isOptionalBool(data, 'isHidden')) &&
+        (!changed.hasAny(['hasStudyMaterial']) || isOptionalBool(data, 'hasStudyMaterial')) &&
+        (!changed.hasAny(['materialId']) || isOptionalString(data, 'materialId', 128)) &&
+        (!changed.hasAny(['pairedMaterialId']) || isOptionalString(data, 'pairedMaterialId', 128)) &&
+        (!changed.hasAny(['fileUrl']) || isOptionalString(data, 'fileUrl', 5000)) &&
+        (!changed.hasAny(['pdfUrl']) || isOptionalString(data, 'pdfUrl', 5000)) &&
+        (!changed.hasAny(['downloadUrl']) || isOptionalString(data, 'downloadUrl', 5000)) &&
+        (!changed.hasAny(['thumbnailUrl']) || isOptionalString(data, 'thumbnailUrl', 500000)) &&
+        (!changed.hasAny(['fileType']) || isOptionalString(data, 'fileType', 128)) &&
+        (!changed.hasAny(['originalName']) || isOptionalString(data, 'originalName', 256)) &&
+        (!changed.hasAny(['svgUrl']) || isOptionalString(data, 'svgUrl', 5000)) &&
+        (!changed.hasAny(['svgContent']) || isOptionalString(data, 'svgContent', 1000000)) &&
+        (!changed.hasAny(['studyTheory']) || isOptionalString(data, 'studyTheory', 200000)) &&
+        (!changed.hasAny(['studySteps']) || data.get('studySteps', null) == null ||
+          (data.studySteps is list && data.studySteps.size() <= 50)) &&
+        (!changed.hasAny(['studyTips']) || data.get('studyTips', null) == null ||
+          data.studyTips is string || data.studyTips is list) &&
+        (!changed.hasAny(['studyImages']) || data.get('studyImages', null) == null ||
+          (data.studyImages is list && data.studyImages.size() <= 50)) &&
+        (!changed.hasAny(['studyVideos']) || data.get('studyVideos', null) == null ||
+          (data.studyVideos is list && data.studyVideos.size() <= 20)) &&
+        (!changed.hasAny(['sampleProblem']) || data.get('sampleProblem', null) == null ||
+          data.sampleProblem is map || data.sampleProblem is string) &&
+        (!changed.hasAny(['practiceConfig']) || data.get('practiceConfig', null) == null ||
+          data.practiceConfig is map) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
     }
 
     function isValidQuestion(data) {
@@ -327,16 +348,16 @@ service cloud.firestore {
           'solutionSvgContent', 'caseSensitive', 'order', 'isHidden',
           'createdAt', 'createdBy', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.question, 5000) &&
-        isNonEmptyString(data.subtopicId, 128) &&
+        isNonEmptyString(data.get('question', ''), 5000) &&
+        isNonEmptyString(data.get('subtopicId', ''), 128) &&
         (data.type in ['multiple_choice', 'choice', 'open', 'text', 'numeric', 'math'] ||
          data.type == 'self_check') &&
         (data.correctAnswer is string && data.correctAnswer.size() <= 5000) &&
-        (!('options' in data) || data.options == null ||
+        (data.get('options', null) == null ||
           (data.options is list && data.options.size() <= 20)) &&
         isOptionalString(data, 'hint', 2000) &&
         isOptionalString(data, 'explanation', 10000) &&
-        (!('difficulty' in data) || data.difficulty == null ||
+        (data.get('difficulty', null) == null ||
           data.difficulty in [
             'easy', 'medium', 'hard',
             'Lehká', 'Střední', 'Těžká',
@@ -347,9 +368,9 @@ service cloud.firestore {
         isOptionalString(data, 'topic', 200) &&
         isOptionalString(data, 'imageUrl', 600000) &&
         isOptionalString(data, 'svgContent', 500000) &&
-        (!('solutionImageUrl' in data) || data.solutionImageUrl == null ||
+        (data.get('solutionImageUrl', null) == null ||
           (data.solutionImageUrl is string && data.solutionImageUrl.size() <= 600000)) &&
-        (!('solutionSvgContent' in data) || data.solutionSvgContent == null ||
+        (data.get('solutionSvgContent', null) == null ||
           (data.solutionSvgContent is string && data.solutionSvgContent.size() <= 500000)) &&
         isOptionalBool(data, 'caseSensitive') &&
         isOptionalNumber(data, 'order', -1000, 10000) &&
@@ -362,7 +383,7 @@ service cloud.firestore {
     function isValidLearningSheet(data) {
       return data.keys().hasOnly([
           'id', 'title', 'subject', 'subjectId', 'topic', 'topicId', 'subtopicId',
-          'studyTheory', 'content', 'studySteps', 'hiddenFromLibrary', 'isHidden',
+          'studyTheory', 'content', 'svgContent', 'studySteps', 'hiddenFromLibrary', 'isHidden',
           'materialType', 'grade', 'order', 'pageCount', 'isFreeSample', 'isExamPrep',
           'activeChunkPrefix',
           'status', 'errorMessage', 'originalName', 'fileType', 'fileSize',
@@ -370,7 +391,7 @@ service cloud.firestore {
           'hasStudyMaterial', 'hasThumbnailChunk', 'chunkCount', 'chunkedPdf',
           'createdBy', 'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.title, 256) &&
+        isNonEmptyString(data.get('title', ''), 256) &&
         isOptionalString(data, 'subject', 128) &&
         isOptionalString(data, 'subjectId', 128) &&
         isOptionalString(data, 'topic', 200) &&
@@ -378,20 +399,21 @@ service cloud.firestore {
         isOptionalString(data, 'subtopicId', 128) &&
         isOptionalString(data, 'studyTheory', 200000) &&
         isOptionalString(data, 'content', 1000000) &&
-        (!('studySteps' in data) || data.studySteps == null ||
+        isOptionalString(data, 'svgContent', 1000000) &&
+        (data.get('studySteps', null) == null ||
           (data.studySteps is list && data.studySteps.size() <= 50)) &&
         isOptionalBool(data, 'hiddenFromLibrary') &&
         isOptionalBool(data, 'isHidden') &&
-        (!('materialType' in data) || data.materialType == null ||
+        (data.get('materialType', null) == null ||
           data.materialType in ['worksheet', 'summary', 'cheatsheet']) &&
-        (!('grade' in data) || data.grade == null ||
+        (data.get('grade', null) == null ||
           data.grade in ['5', '7', '9', 'all']) &&
         isOptionalNumber(data, 'order', -1000, 10000) &&
         isOptionalNumber(data, 'pageCount', 0, 500) &&
         isOptionalBool(data, 'isFreeSample') &&
         isOptionalBool(data, 'isExamPrep') &&
         isOptionalString(data, 'activeChunkPrefix', 128) &&
-        (!('status' in data) || data.status == null ||
+        (data.get('status', null) == null ||
           data.status in ['processing', 'ready', 'error']) &&
         isOptionalString(data, 'errorMessage', 1000) &&
         isOptionalString(data, 'originalName', 256) &&
@@ -411,7 +433,61 @@ service cloud.firestore {
         isOptionalTimestampOrString(data, 'updatedAt');
     }
 
+    // Partial-safe update validator for learningSheets (prevents hitting Firestore's 1000-expression ceiling)
+    function isValidLearningSheetUpdate(data) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'id', 'title', 'subject', 'subjectId', 'topic', 'topicId', 'subtopicId',
+          'studyTheory', 'content', 'svgContent', 'studySteps', 'hiddenFromLibrary', 'isHidden',
+          'materialType', 'grade', 'order', 'pageCount', 'isFreeSample', 'isExamPrep',
+          'activeChunkPrefix',
+          'status', 'errorMessage', 'originalName', 'fileType', 'fileSize',
+          'thumbnailUrl', 'fileUrl', 'pdfUrl', 'svgUrl', 'downloadUrl',
+          'hasStudyMaterial', 'hasThumbnailChunk', 'chunkCount', 'chunkedPdf',
+          'updatedAt'
+        ]) &&
+        (!changed.hasAny(['title']) || isNonEmptyString(data.get('title', ''), 256)) &&
+        (!changed.hasAny(['subject']) || isOptionalString(data, 'subject', 128)) &&
+        (!changed.hasAny(['subjectId']) || isOptionalString(data, 'subjectId', 128)) &&
+        (!changed.hasAny(['topic']) || isOptionalString(data, 'topic', 200)) &&
+        (!changed.hasAny(['topicId']) || isOptionalString(data, 'topicId', 128)) &&
+        (!changed.hasAny(['subtopicId']) || isOptionalString(data, 'subtopicId', 128)) &&
+        (!changed.hasAny(['studyTheory']) || isOptionalString(data, 'studyTheory', 200000)) &&
+        (!changed.hasAny(['content']) || isOptionalString(data, 'content', 1000000)) &&
+        (!changed.hasAny(['svgContent']) || isOptionalString(data, 'svgContent', 1000000)) &&
+        (!changed.hasAny(['studySteps']) || data.get('studySteps', null) == null ||
+          (data.studySteps is list && data.studySteps.size() <= 50)) &&
+        (!changed.hasAny(['hiddenFromLibrary']) || isOptionalBool(data, 'hiddenFromLibrary')) &&
+        (!changed.hasAny(['isHidden']) || isOptionalBool(data, 'isHidden')) &&
+        (!changed.hasAny(['materialType']) || data.get('materialType', null) == null ||
+          data.materialType in ['worksheet', 'summary', 'cheatsheet']) &&
+        (!changed.hasAny(['grade']) || data.get('grade', null) == null ||
+          data.grade in ['5', '7', '9', 'all']) &&
+        (!changed.hasAny(['order']) || isOptionalNumber(data, 'order', -1000, 10000)) &&
+        (!changed.hasAny(['pageCount']) || isOptionalNumber(data, 'pageCount', 0, 500)) &&
+        (!changed.hasAny(['isFreeSample']) || isOptionalBool(data, 'isFreeSample')) &&
+        (!changed.hasAny(['isExamPrep']) || isOptionalBool(data, 'isExamPrep')) &&
+        (!changed.hasAny(['activeChunkPrefix']) || isOptionalString(data, 'activeChunkPrefix', 128)) &&
+        (!changed.hasAny(['status']) || data.get('status', null) == null ||
+          data.status in ['processing', 'ready', 'error']) &&
+        (!changed.hasAny(['errorMessage']) || isOptionalString(data, 'errorMessage', 1000)) &&
+        (!changed.hasAny(['originalName']) || isOptionalString(data, 'originalName', 256)) &&
+        (!changed.hasAny(['fileType']) || isOptionalString(data, 'fileType', 128)) &&
+        (!changed.hasAny(['fileSize']) || isOptionalNumber(data, 'fileSize', 0, 50000000)) &&
+        (!changed.hasAny(['thumbnailUrl']) || isOptionalString(data, 'thumbnailUrl', 500000)) &&
+        (!changed.hasAny(['fileUrl']) || isOptionalString(data, 'fileUrl', 5000)) &&
+        (!changed.hasAny(['pdfUrl']) || isOptionalString(data, 'pdfUrl', 5000)) &&
+        (!changed.hasAny(['svgUrl']) || isOptionalString(data, 'svgUrl', 5000)) &&
+        (!changed.hasAny(['downloadUrl']) || isOptionalString(data, 'downloadUrl', 5000)) &&
+        (!changed.hasAny(['hasStudyMaterial']) || isOptionalBool(data, 'hasStudyMaterial')) &&
+        (!changed.hasAny(['hasThumbnailChunk']) || isOptionalBool(data, 'hasThumbnailChunk')) &&
+        (!changed.hasAny(['chunkCount']) || isOptionalNumber(data, 'chunkCount', 0, 500)) &&
+        (!changed.hasAny(['chunkedPdf']) || isOptionalBool(data, 'chunkedPdf')) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
+    }
+
     function isValidStudyProgress(data, userId, subtopicId) {
+      let va = data.get('verifiedAnswers', null);
       return data.keys().hasOnly([
           'uid', 'subtopicId', 'completedSteps', 'verifiedAnswers',
           'totalSteps', 'createdAt', 'updatedAt'
@@ -420,7 +496,7 @@ service cloud.firestore {
         data.subtopicId == subtopicId &&
         data.completedSteps is list &&
         data.completedSteps.size() <= 100 &&
-        (!('verifiedAnswers' in data) || data.verifiedAnswers == null || data.verifiedAnswers is map) &&
+        (va == null || (va is map && va.size() <= 100)) &&
         isOptionalNumber(data, 'totalSteps', 0, 100) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'updatedAt');
@@ -430,25 +506,36 @@ service cloud.firestore {
       return data.keys().hasOnly([
           'data', 'contentType', 'index', 'total', 'createdAt'
         ]) &&
-        isNonEmptyString(data.data, 1040000) &&
+        isNonEmptyString(data.get('data', ''), 1040000) &&
         isOptionalString(data, 'contentType', 128) &&
         isOptionalNumber(data, 'index', 0, 1000) &&
         isOptionalNumber(data, 'total', 1, 1000) &&
         isOptionalTimestampOrString(data, 'createdAt');
     }
 
+    function isValidCoursePrice(data) {
+      let v = data.get('price', null);
+      return v == null ||
+        (v is number && v >= 0 && v <= 500000) ||
+        (v is string && v.size() <= 64);
+    }
+
     function isValidCourse(data) {
       return data.keys().hasOnly([
-          'id', 'title', 'description', 'subject', 'price', 'difficulty',
+          'id', 'title', 'description', 'subject', 'topic', 'topics', 'price', 'difficulty',
           'schedule', 'instructorName', 'startDate', 'endDate', 'badge', 'color',
           'meetUrl', 'syllabus', 'teacherId', 'studentIds', 'studentCount',
-          'isHidden', 'category', 'duration', 'lessonsCount',
+          'isHidden', 'isVisible', 'category', 'duration', 'lessonsCount',
           'createdAt', 'createdBy', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.title, 200) &&
+        isOptionalString(data, 'id', 128) &&
+        isNonEmptyString(data.get('title', ''), 200) &&
         isOptionalString(data, 'description', 5000) &&
         isOptionalString(data, 'subject', 128) &&
-        isOptionalNumber(data, 'price', 0, 500000) &&
+        isOptionalString(data, 'topic', 200) &&
+        (data.get('topics', null) == null ||
+          (data.topics is list && data.topics.size() <= 100)) &&
+        isValidCoursePrice(data) &&
         isOptionalString(data, 'difficulty', 64) &&
         isOptionalString(data, 'schedule', 512) &&
         isOptionalString(data, 'instructorName', 128) &&
@@ -457,14 +544,15 @@ service cloud.firestore {
         isOptionalString(data, 'badge', 64) &&
         isOptionalString(data, 'color', 32) &&
         isOptionalString(data, 'meetUrl', 1000) &&
-        (!('syllabus' in data) || data.syllabus == null ||
+        (data.get('syllabus', null) == null ||
           (data.syllabus is list && data.syllabus.size() <= 100) ||
           (data.syllabus is string && data.syllabus.size() <= 10000)) &&
         isOptionalString(data, 'teacherId', 128) &&
-        (!('studentIds' in data) || data.studentIds == null ||
+        (data.get('studentIds', null) == null ||
           (data.studentIds is list && data.studentIds.size() <= 2000)) &&
         isOptionalNumber(data, 'studentCount', 0, 2000) &&
         isOptionalBool(data, 'isHidden') &&
+        isOptionalBool(data, 'isVisible') &&
         isOptionalString(data, 'category', 128) &&
         isOptionalString(data, 'duration', 128) &&
         isOptionalNumber(data, 'lessonsCount', 0, 500) &&
@@ -473,14 +561,56 @@ service cloud.firestore {
         isOptionalTimestampOrString(data, 'updatedAt');
     }
 
+    // SEC-29: Partial-safe update validator for courses & practiceCourses (stays well under 1000 exprs)
+    function isValidCourseUpdate(data) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'id', 'title', 'description', 'subject', 'topic', 'topics', 'price', 'difficulty',
+          'schedule', 'instructorName', 'startDate', 'endDate', 'badge', 'color',
+          'meetUrl', 'syllabus', 'teacherId', 'studentIds', 'studentCount',
+          'isHidden', 'isVisible', 'category', 'duration', 'lessonsCount',
+          'updatedAt'
+        ]) &&
+        (!changed.hasAny(['id']) || isOptionalString(data, 'id', 128)) &&
+        (!changed.hasAny(['title']) || isNonEmptyString(data.get('title', ''), 200)) &&
+        (!changed.hasAny(['description']) || isOptionalString(data, 'description', 5000)) &&
+        (!changed.hasAny(['subject']) || isOptionalString(data, 'subject', 128)) &&
+        (!changed.hasAny(['topic']) || isOptionalString(data, 'topic', 200)) &&
+        (!changed.hasAny(['topics']) || data.get('topics', null) == null ||
+          (data.topics is list && data.topics.size() <= 100)) &&
+        (!changed.hasAny(['price']) || isValidCoursePrice(data)) &&
+        (!changed.hasAny(['difficulty']) || isOptionalString(data, 'difficulty', 64)) &&
+        (!changed.hasAny(['schedule']) || isOptionalString(data, 'schedule', 512)) &&
+        (!changed.hasAny(['instructorName']) || isOptionalString(data, 'instructorName', 128)) &&
+        (!changed.hasAny(['startDate']) || isOptionalString(data, 'startDate', 64)) &&
+        (!changed.hasAny(['endDate']) || isOptionalString(data, 'endDate', 64)) &&
+        (!changed.hasAny(['badge']) || isOptionalString(data, 'badge', 64)) &&
+        (!changed.hasAny(['color']) || isOptionalString(data, 'color', 32)) &&
+        (!changed.hasAny(['meetUrl']) || isOptionalString(data, 'meetUrl', 1000)) &&
+        (!changed.hasAny(['syllabus']) || data.get('syllabus', null) == null ||
+          (data.syllabus is list && data.syllabus.size() <= 100) ||
+          (data.syllabus is string && data.syllabus.size() <= 10000)) &&
+        (!changed.hasAny(['teacherId']) || isOptionalString(data, 'teacherId', 128)) &&
+        (!changed.hasAny(['studentIds']) || data.get('studentIds', null) == null ||
+          (data.studentIds is list && data.studentIds.size() <= 2000)) &&
+        (!changed.hasAny(['studentCount']) || isOptionalNumber(data, 'studentCount', 0, 2000)) &&
+        (!changed.hasAny(['isHidden']) || isOptionalBool(data, 'isHidden')) &&
+        (!changed.hasAny(['isVisible']) || isOptionalBool(data, 'isVisible')) &&
+        (!changed.hasAny(['category']) || isOptionalString(data, 'category', 128)) &&
+        (!changed.hasAny(['duration']) || isOptionalString(data, 'duration', 128)) &&
+        (!changed.hasAny(['lessonsCount']) || isOptionalNumber(data, 'lessonsCount', 0, 500)) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
+    }
+
     function isValidCourseItem(data) {
       return data.keys().hasOnly([
           'courseId', 'title', 'description', 'type', 'order', 'url', 'fileUrl',
           'meetUrl', 'materialId', 'subtopicId', 'content', 'isHidden',
-          'dueDate', 'scheduledAt', 'createdBy', 'createdAt', 'updatedAt'
+          'dueDate', 'scheduledAt', 'date', 'attachments',
+          'addedBy', 'createdBy', 'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.courseId, 128) &&
-        isNonEmptyString(data.title, 256) &&
+        isNonEmptyString(data.get('courseId', ''), 128) &&
+        isNonEmptyString(data.get('title', ''), 256) &&
         isOptionalString(data, 'description', 5000) &&
         isOptionalString(data, 'type', 64) &&
         isOptionalNumber(data, 'order', -1000, 10000) &&
@@ -493,9 +623,43 @@ service cloud.firestore {
         isOptionalBool(data, 'isHidden') &&
         isOptionalTimestampOrString(data, 'dueDate') &&
         isOptionalTimestampOrString(data, 'scheduledAt') &&
+        isOptionalTimestampOrString(data, 'date') &&
+        (data.get('attachments', null) == null ||
+          (data.attachments is list && data.attachments.size() <= 20)) &&
+        isOptionalString(data, 'addedBy', 128) &&
         isOptionalString(data, 'createdBy', 128) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'updatedAt');
+    }
+
+    // SEC-29: Partial-safe update validator for courseItems
+    function isValidCourseItemUpdate(data) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'courseId', 'title', 'description', 'type', 'order', 'url', 'fileUrl',
+          'meetUrl', 'materialId', 'subtopicId', 'content', 'isHidden',
+          'dueDate', 'scheduledAt', 'date', 'attachments',
+          'addedBy', 'updatedAt'
+        ]) &&
+        (!changed.hasAny(['courseId']) || isNonEmptyString(data.get('courseId', ''), 128)) &&
+        (!changed.hasAny(['title']) || isNonEmptyString(data.get('title', ''), 256)) &&
+        (!changed.hasAny(['description']) || isOptionalString(data, 'description', 5000)) &&
+        (!changed.hasAny(['type']) || isOptionalString(data, 'type', 64)) &&
+        (!changed.hasAny(['order']) || isOptionalNumber(data, 'order', -1000, 10000)) &&
+        (!changed.hasAny(['url']) || isOptionalString(data, 'url', 5000)) &&
+        (!changed.hasAny(['fileUrl']) || isOptionalString(data, 'fileUrl', 5000)) &&
+        (!changed.hasAny(['meetUrl']) || isOptionalString(data, 'meetUrl', 1000)) &&
+        (!changed.hasAny(['materialId']) || isOptionalString(data, 'materialId', 128)) &&
+        (!changed.hasAny(['subtopicId']) || isOptionalString(data, 'subtopicId', 128)) &&
+        (!changed.hasAny(['content']) || isOptionalString(data, 'content', 100000)) &&
+        (!changed.hasAny(['isHidden']) || isOptionalBool(data, 'isHidden')) &&
+        (!changed.hasAny(['dueDate']) || isOptionalTimestampOrString(data, 'dueDate')) &&
+        (!changed.hasAny(['scheduledAt']) || isOptionalTimestampOrString(data, 'scheduledAt')) &&
+        (!changed.hasAny(['date']) || isOptionalTimestampOrString(data, 'date')) &&
+        (!changed.hasAny(['attachments']) || data.get('attachments', null) == null ||
+          (data.attachments is list && data.attachments.size() <= 20)) &&
+        (!changed.hasAny(['addedBy']) || isOptionalString(data, 'addedBy', 128)) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
     }
 
     function isValidLiveLesson(data) {
@@ -505,13 +669,13 @@ service cloud.firestore {
           'targetAudience', 'studentIds', 'courseId', 'studentId',
           'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.title, 200) &&
+        isNonEmptyString(data.get('title', ''), 200) &&
         isOptionalString(data, 'description', 2000) &&
         isOptionalString(data, 'subject', 128) &&
-        isNonEmptyString(data.teacherId, 128) &&
+        isNonEmptyString(data.get('teacherId', ''), 128) &&
         isOptionalString(data, 'teacherName', 128) &&
-        isNonEmptyString(data.provider, 64) &&
-        isNonEmptyString(data.meetUrl, 1000) &&
+        isNonEmptyString(data.get('provider', ''), 64) &&
+        isNonEmptyString(data.get('meetUrl', ''), 1000) &&
         data.meetUrl.matches('^https?://.*') &&
         ('scheduledAt' in data && isTimestampOrString(data.scheduledAt)) &&
         data.durationMinutes is number &&
@@ -519,11 +683,11 @@ service cloud.firestore {
         data.durationMinutes <= 480 &&
         data.status in ['scheduled', 'live', 'ended', 'completed', 'cancelled'] &&
         data.targetAudience in ['all', 'individual', 'selected', 'course'] &&
-        (!('studentIds' in data) || data.studentIds == null ||
+        (data.get('studentIds', null) == null ||
           (data.studentIds is list && data.studentIds.size() <= 1000)) &&
-        (!('courseId' in data) || data.courseId == null ||
+        (data.get('courseId', null) == null ||
           (isNonEmptyString(data.courseId, 128) && data.targetAudience == 'course')) &&
-        (!('studentId' in data) || data.studentId == null ||
+        (data.get('studentId', null) == null ||
           (isNonEmptyString(data.studentId, 128) && data.targetAudience != 'all')) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'updatedAt');
@@ -532,27 +696,35 @@ service cloud.firestore {
     function isValidAssignedTest(data) {
       return data.keys().hasOnly([
           'studentId', 'studentName', 'teacherId', 'createdBy', 'testId',
-          'title', 'description', 'subjectId', 'topicId', 'subtopicId',
-          'questions', 'answers', 'status', 'grade', 'score', 'maxScore',
-          'feedback', 'dueDate', 'assignedAt', 'startedAt', 'submittedAt',
-          'gradedAt', 'timeSpentSeconds', 'createdAt', 'updatedAt'
+          'title', 'testTitle', 'description', 'testDescription',
+          'subjectId', 'topicId', 'topic', 'subtopicId',
+          'courseId', 'autoGrade', 'questions', 'answers', 'status', 'grade',
+          'score', 'maxScore', 'feedback', 'dueDate', 'assignedAt', 'startedAt',
+          'submittedAt', 'gradedAt', 'timeSpentSeconds', 'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.studentId, 128) &&
+        isNonEmptyString(data.get('studentId', ''), 128) &&
         isOptionalString(data, 'studentName', 128) &&
         isOptionalString(data, 'teacherId', 128) &&
         isOptionalString(data, 'createdBy', 128) &&
         isOptionalString(data, 'testId', 128) &&
-        isNonEmptyString(data.title, 256) &&
+        (isNonEmptyString(data.get('title', ''), 256) ||
+         isNonEmptyString(data.get('testTitle', ''), 256)) &&
+        isOptionalString(data, 'title', 256) &&
+        isOptionalString(data, 'testTitle', 256) &&
         isOptionalString(data, 'description', 5000) &&
+        isOptionalString(data, 'testDescription', 5000) &&
         isOptionalString(data, 'subjectId', 128) &&
         isOptionalString(data, 'topicId', 128) &&
+        isOptionalString(data, 'topic', 200) &&
         isOptionalString(data, 'subtopicId', 128) &&
-        (!('questions' in data) || data.questions == null ||
+        isOptionalString(data, 'courseId', 128) &&
+        isOptionalBool(data, 'autoGrade') &&
+        (data.get('questions', null) == null ||
           (data.questions is list && data.questions.size() <= 200)) &&
-        (!('answers' in data) || data.answers == null ||
+        (data.get('answers', null) == null ||
           data.answers is map || data.answers is list) &&
-        data.status in ['assigned', 'in_progress', 'submitted', 'graded'] &&
-        (!('grade' in data) || data.grade == null ||
+        data.status in ['pending', 'assigned', 'in_progress', 'submitted', 'graded'] &&
+        (data.get('grade', null) == null ||
           data.grade is string || data.grade is number) &&
         isOptionalNumber(data, 'score', 0, 10000) &&
         isOptionalNumber(data, 'maxScore', 0, 10000) &&
@@ -567,6 +739,48 @@ service cloud.firestore {
         isOptionalTimestampOrString(data, 'updatedAt');
     }
 
+    // Partial-safe teacher update validator for assignedTests (prevents hitting 1000-expression ceiling)
+    function isValidAssignedTestUpdate(data) {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return changed.hasOnly([
+          'studentName', 'teacherId', 'title', 'testTitle', 'description',
+          'testDescription', 'subjectId', 'topicId', 'topic', 'subtopicId',
+          'courseId', 'autoGrade', 'questions', 'answers', 'status', 'grade',
+          'score', 'maxScore', 'feedback', 'dueDate', 'assignedAt', 'startedAt',
+          'submittedAt', 'gradedAt', 'timeSpentSeconds', 'updatedAt'
+        ]) &&
+        (!changed.hasAny(['studentName']) || isOptionalString(data, 'studentName', 128)) &&
+        (!changed.hasAny(['teacherId']) || isOptionalString(data, 'teacherId', 128)) &&
+        (!changed.hasAny(['title']) || isNonEmptyString(data.get('title', ''), 256)) &&
+        (!changed.hasAny(['testTitle']) || isNonEmptyString(data.get('testTitle', ''), 256)) &&
+        (!changed.hasAny(['description']) || isOptionalString(data, 'description', 5000)) &&
+        (!changed.hasAny(['testDescription']) || isOptionalString(data, 'testDescription', 5000)) &&
+        (!changed.hasAny(['subjectId']) || isOptionalString(data, 'subjectId', 128)) &&
+        (!changed.hasAny(['topicId']) || isOptionalString(data, 'topicId', 128)) &&
+        (!changed.hasAny(['topic']) || isOptionalString(data, 'topic', 200)) &&
+        (!changed.hasAny(['subtopicId']) || isOptionalString(data, 'subtopicId', 128)) &&
+        (!changed.hasAny(['courseId']) || isOptionalString(data, 'courseId', 128)) &&
+        (!changed.hasAny(['autoGrade']) || isOptionalBool(data, 'autoGrade')) &&
+        (!changed.hasAny(['questions']) || data.get('questions', null) == null ||
+          (data.questions is list && data.questions.size() <= 200)) &&
+        (!changed.hasAny(['answers']) || data.get('answers', null) == null ||
+          data.answers is map || data.answers is list) &&
+        (!changed.hasAny(['status']) ||
+          data.status in ['pending', 'assigned', 'in_progress', 'submitted', 'graded']) &&
+        (!changed.hasAny(['grade']) || data.get('grade', null) == null ||
+          data.grade is string || data.grade is number) &&
+        (!changed.hasAny(['score']) || isOptionalNumber(data, 'score', 0, 10000)) &&
+        (!changed.hasAny(['maxScore']) || isOptionalNumber(data, 'maxScore', 0, 10000)) &&
+        (!changed.hasAny(['feedback']) || isOptionalString(data, 'feedback', 5000)) &&
+        (!changed.hasAny(['dueDate']) || isOptionalTimestampOrString(data, 'dueDate')) &&
+        (!changed.hasAny(['assignedAt']) || isOptionalTimestampOrString(data, 'assignedAt')) &&
+        (!changed.hasAny(['startedAt']) || isOptionalTimestampOrString(data, 'startedAt')) &&
+        (!changed.hasAny(['submittedAt']) || isOptionalTimestampOrString(data, 'submittedAt')) &&
+        (!changed.hasAny(['gradedAt']) || isOptionalTimestampOrString(data, 'gradedAt')) &&
+        (!changed.hasAny(['timeSpentSeconds']) || isOptionalNumber(data, 'timeSpentSeconds', 0, 86400)) &&
+        (!changed.hasAny(['updatedAt']) || isOptionalTimestampOrString(data, 'updatedAt'));
+    }
+
     // Required exact function name & shape referenced by test/activePracticeSessions.test.ts
     function isValidActivePracticeSession(data) {
       return data.keys().hasOnly([
@@ -575,21 +789,18 @@ service cloud.firestore {
           'answersMap', 'openInputs', 'showHintMap', 'bookmarkedIndices',
           'updatedAt', 'createdAt'
         ]) &&
-        !data.keys().hasAny([
-          'pointsEarned', 'score', 'grade', 'feedback', 'isCompleted', 'completedAt'
-        ]) &&
         data.studentId == request.auth.uid &&
         (!('userId' in data) || data.userId == request.auth.uid) &&
-        isNonEmptyString(data.subtopicId, 128) &&
+        isNonEmptyString(data.get('subtopicId', ''), 128) &&
         isOptionalString(data, 'topicId', 128) &&
         isOptionalString(data, 'subjectId', 128) &&
         data.questionIds is list && data.questionIds.size() <= 100 &&
         data.currentIndex is number && data.currentIndex >= 0 && data.currentIndex <= 100 &&
         data.answeredCount is number && data.answeredCount >= 0 && data.answeredCount <= 100 &&
         data.totalCount is number && data.totalCount >= 0 && data.totalCount <= 100 &&
-        data.answersMap is map &&
-        (!('openInputs' in data) || data.openInputs is map) &&
-        (!('showHintMap' in data) || data.showHintMap is map) &&
+        data.answersMap is map && data.answersMap.size() <= 100 &&
+        (!('openInputs' in data) || (data.openInputs is map && data.openInputs.size() <= 100)) &&
+        (!('showHintMap' in data) || (data.showHintMap is map && data.showHintMap.size() <= 100)) &&
         (!('bookmarkedIndices' in data) ||
           (data.bookmarkedIndices is list && data.bookmarkedIndices.size() <= 100)) &&
         isOptionalTimestampOrString(data, 'updatedAt') &&
@@ -603,12 +814,12 @@ service cloud.firestore {
           'screenResolution', 'status', 'resolutionNotes', 'resolvedAt',
           'resolvedBy', 'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.userId, 128) &&
+        isNonEmptyString(data.get('userId', ''), 128) &&
         isOptionalString(data, 'userEmail', 320) &&
         isOptionalString(data, 'userName', 128) &&
         data.category in ['question', 'technical', 'visual', 'improvement', 'other'] &&
         isOptionalString(data, 'categoryLabel', 64) &&
-        isNonEmptyString(data.description, 5000) &&
+        isNonEmptyString(data.get('description', ''), 5000) &&
         isOptionalString(data, 'pageUrl', 1000) &&
         isOptionalString(data, 'screenshotUrl', 2000) &&
         isOptionalString(data, 'userAgent', 512) &&
@@ -628,15 +839,15 @@ service cloud.firestore {
           'teacherReply', 'repliedAt', 'repliedBy', 'repliedByName',
           'createdAt', 'updatedAt'
         ]) &&
-        isNonEmptyString(data.studentId, 128) &&
+        isNonEmptyString(data.get('studentId', ''), 128) &&
         isOptionalString(data, 'studentName', 128) &&
         isOptionalString(data, 'questionId', 128) &&
         isOptionalString(data, 'questionText', 5000) &&
         isOptionalString(data, 'topic', 256) &&
-        isNonEmptyString(data.comment, 2000) &&
+        isNonEmptyString(data.get('comment', ''), 2000) &&
         data.status in ['pending', 'answered'] &&
         isOptionalBool(data, 'isReadByStudent') &&
-        (!('senderRole' in data) || data.senderRole in ['student', 'teacher']) &&
+        (data.get('senderRole', null) == null || data.senderRole in ['student', 'teacher']) &&
         isOptionalString(data, 'reply', 5000) &&
         isOptionalString(data, 'teacherReply', 5000) &&
         isOptionalTimestampOrString(data, 'repliedAt') &&
@@ -650,16 +861,16 @@ service cloud.firestore {
       return data.keys().hasOnly([
           'studentId', 'userId', 'title', 'description', 'type', 'completed',
           'addedBy', 'createdAt', 'dueDate', 'completedAt', 'updatedAt',
-          'referenceId', 'subjectId', 'topicId', 'planId',
-          'repetitionIndex', 'totalRepetitions'
+          'referenceId', 'subjectId', 'topicId', 'planId', 'courseId',
+          'assignedTestId', 'repetitionIndex', 'totalRepetitions'
         ]) &&
-        isNonEmptyString(data.studentId, 128) &&
+        isNonEmptyString(data.get('studentId', ''), 128) &&
         isOptionalString(data, 'userId', 128) &&
-        isNonEmptyString(data.title, 256) &&
+        isNonEmptyString(data.get('title', ''), 256) &&
         isOptionalString(data, 'description', 2000) &&
-        data.type in ['practice', 'lesson', 'course_lesson', 'custom', 'test'] &&
+        data.type in ['practice', 'lesson', 'course_lesson', 'custom', 'test', 'material', 'course_material', 'course_practice'] &&
         data.completed is bool &&
-        isNonEmptyString(data.addedBy, 128) &&
+        isNonEmptyString(data.get('addedBy', ''), 128) &&
         isOptionalTimestampOrString(data, 'createdAt') &&
         isOptionalTimestampOrString(data, 'dueDate') &&
         isOptionalTimestampOrString(data, 'completedAt') &&
@@ -668,6 +879,8 @@ service cloud.firestore {
         isOptionalString(data, 'subjectId', 128) &&
         isOptionalString(data, 'topicId', 128) &&
         isOptionalString(data, 'planId', 128) &&
+        isOptionalString(data, 'courseId', 128) &&
+        isOptionalString(data, 'assignedTestId', 128) &&
         isOptionalNumber(data, 'repetitionIndex', 1, 500) &&
         isOptionalNumber(data, 'totalRepetitions', 1, 500);
     }
@@ -678,16 +891,12 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isTeacher();
-      allow create: if (isOwner(userId) && isValidUserCreate(request.resource.data, userId)) ||
-        (isTeacher() &&
-         request.resource.data.uid == userId &&
-         request.resource.data.role in ['free', 'student', 'premium', 'course', 'teacher']);
-      allow update: if (isTeacher() &&
-          unchanged('uid') &&
-          (!('role' in request.resource.data) ||
-           request.resource.data.role in ['free', 'student', 'premium', 'course', 'teacher'])) ||
-        (isOwner(userId) && isValidUserProfileOwnerUpdate(request.resource.data));
-      allow delete: if isTeacher();
+      // User documents are created exclusively by backend Admin SDK (/api/auth/register-confirm, /api/auth/session-bootstrap)
+      allow create: if false;
+      allow update: if (isOwner(userId) && isValidUserProfileOwnerUpdate(request.resource.data)) ||
+        (isTeacher() && isValidUserTeacherUpdate(request.resource.data, userId));
+      // SEC-31: User deletion goes exclusively via backend Admin SDK (DELETE /api/students/:studentId)
+      allow delete: if false;
 
       match /materialQuotas/{periodKey} {
         allow read: if isOwner(userId) || isTeacher();
@@ -699,16 +908,15 @@ service cloud.firestore {
         allow create: if isOwner(userId) &&
           isValidStudyProgress(request.resource.data, userId, subtopicId);
         allow update: if isOwner(userId) &&
-          unchanged('uid') &&
-          unchanged('subtopicId') &&
-          unchanged('createdAt') &&
+          hasNoImmutableChanges(['uid', 'subtopicId', 'createdAt']) &&
           isValidStudyProgress(request.resource.data, userId, subtopicId);
         allow delete: if isOwner(userId) || isTeacher();
       }
     }
 
+    // Non-teachers read sanitized questions exclusively via /api/practice/subtopics/:subtopicId/questions
     match /questions/{qId} {
-      allow read: if isAuthenticated();
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidQuestion(request.resource.data);
       allow update: if isTeacher() &&
         keepsImmutableFields() &&
@@ -716,94 +924,83 @@ service cloud.firestore {
       allow delete: if isTeacher();
     }
 
+    // Non-teachers read sanitized practice catalog exclusively via /api/practice/catalog
     match /practiceTopics/{topicId} {
-      allow read: if true;
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidTopic(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
         isValidTopic(request.resource.data);
       allow delete: if isTeacher();
     }
 
     match /customTopics/{topicId} {
-      allow read: if true;
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidTopic(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
         isValidTopic(request.resource.data);
       allow delete: if isTeacher();
     }
 
     match /customSubjects/{subjectId} {
-      allow read: if true;
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidSubject(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
         isValidSubject(request.resource.data);
       allow delete: if isTeacher();
     }
 
-    // Unpaid users fetch sanitized catalog via /api/practice/catalog (strips theory/media)
+    // Non-teachers fetch sanitized catalog via /api/practice/catalog and paid study mode via /api/practice/study/:subtopicId
     match /practiceSubtopics/{subtopicId} {
-      allow read: if true;
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidPracticeSubtopic(request.resource.data);
-      allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidPracticeSubtopic(request.resource.data);
+      allow update: if isTeacher() && isValidPracticeSubtopicUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
     match /learningSheets/{sheetId} {
       allow read: if isTeacher();
       allow create: if isTeacher() && isValidLearningSheet(request.resource.data);
-      allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidLearningSheet(request.resource.data);
+      allow update: if isTeacher() && isValidLearningSheetUpdate(request.resource.data);
       allow delete: if isTeacher();
 
       match /chunks/{chunkId} {
         allow read: if isTeacher();
         allow create: if isTeacher() && isValidLearningSheetChunk(request.resource.data);
         allow update: if isTeacher() &&
-          unchanged('createdAt') &&
+          hasNoImmutableChanges(['createdAt']) &&
           isValidLearningSheetChunk(request.resource.data);
         allow delete: if isTeacher();
       }
     }
 
+    // SEC-42: Legacy unused studyMaterials collection restricted to teachers only
     match /studyMaterials/{materialId} {
-      allow read: if isTeacher() || isPaidUser();
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidLearningSheet(request.resource.data);
-      allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidLearningSheet(request.resource.data);
+      allow update: if isTeacher() && isValidLearningSheetUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
-    // Unenrolled / public users browse sanitized courses catalog via /api/courses
+    // SEC-31: Students & public users read sanitized courses via /api/courses & /api/courses/:courseId
+    // (strips peer studentIds UIDs and teacherId). Direct Firestore reads are restricted to teachers.
     match /courses/{courseId} {
-      allow read: if isTeacher() || isEnrolledInCourse(courseId);
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidCourse(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidCourse(request.resource.data);
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
+        isValidCourseUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
     match /practiceCourses/{courseId} {
-      allow read: if isTeacher() || isEnrolledInCourse(courseId);
+      allow read: if isTeacher();
       allow create: if isTeacher() && isValidCourse(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidCourse(request.resource.data);
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
+        isValidCourseUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
@@ -815,9 +1012,8 @@ service cloud.firestore {
       );
       allow create: if isTeacher() && isValidCourseItem(request.resource.data);
       allow update: if isTeacher() &&
-        unchanged('createdAt') &&
-        unchanged('createdBy') &&
-        isValidCourseItem(request.resource.data);
+        hasNoImmutableChanges(['createdAt', 'createdBy']) &&
+        isValidCourseItemUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
@@ -840,10 +1036,11 @@ service cloud.firestore {
         isValidLiveLesson(request.resource.data);
       allow update: if isTeacher() &&
         (!('teacherId' in resource.data) || resource.data.teacherId == request.auth.uid) &&
-        unchanged('teacherId') &&
-        unchanged('createdAt') &&
+        hasNoImmutableChanges(['teacherId', 'createdAt']) &&
         isValidLiveLesson(request.resource.data);
-      allow delete: if isTeacher();
+      // SEC-42: Delete symmetry with update — only owning teacher (or legacy lesson without teacherId)
+      allow delete: if isTeacher() &&
+        (!('teacherId' in resource.data) || resource.data.teacherId == request.auth.uid);
     }
 
     // Practice test results written strictly by Admin SDK (/api/practice/finish)
@@ -855,33 +1052,14 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Student submissions go strictly via POST /api/assigned-tests/:testId/submit (Admin SDK)
     match /assignedTests/{testId} {
       allow read: if isTeacher() ||
         (isAuthenticated() &&
          resource.data.studentId == request.auth.uid &&
          resource.data.status in ['submitted', 'graded']);
       allow create: if isTeacher() && isValidAssignedTest(request.resource.data);
-      allow update: if (
-          isTeacher() &&
-          unchanged('createdAt') &&
-          unchanged('createdBy') &&
-          unchanged('studentId') &&
-          unchanged('testId') &&
-          isValidAssignedTest(request.resource.data)
-        ) || (
-          isAuthenticated() &&
-          resource.data.studentId == request.auth.uid &&
-          resource.data.status in ['assigned', 'in_progress'] &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'answers', 'status', 'submittedAt', 'startedAt', 'updatedAt', 'timeSpentSeconds'
-          ]) &&
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny([
-            'grade', 'feedback', 'gradedAt', 'studentId', 'teacherId', 'testId',
-            'title', 'questions', 'maxScore', 'score', 'createdBy', 'createdAt'
-          ]) &&
-          request.resource.data.status in ['in_progress', 'submitted'] &&
-          isValidAssignedTest(request.resource.data)
-        );
+      allow update: if isTeacher() && isValidAssignedTestUpdate(request.resource.data);
       allow delete: if isTeacher();
     }
 
@@ -890,10 +1068,15 @@ service cloud.firestore {
         ('studentId' in resource.data && resource.data.studentId == request.auth.uid) ||
         ('userId' in resource.data && resource.data.userId == request.auth.uid)
       ));
-      allow create: if isAuthenticated() && isValidActivePracticeSession(request.resource.data);
+      allow create: if isAuthenticated() &&
+        sessionId == request.auth.uid + '_' + request.resource.data.subtopicId &&
+        isValidActivePracticeSession(request.resource.data);
       allow update: if isAuthenticated() &&
+        sessionId == request.auth.uid + '_' + request.resource.data.subtopicId &&
         ('studentId' in resource.data && resource.data.studentId == request.auth.uid) &&
-        keepsImmutableFields() &&
+        hasNoImmutableChanges(['uid', 'createdBy', 'studentId', 'testId', 'referredBy']) &&
+        // SEC-29: setDoc() from practiceService omits createdAt on updates; permit omission or exact match while blocking mutation
+        (!('createdAt' in request.resource.data) || unchanged('createdAt')) &&
         unchanged('subtopicId') &&
         unchanged('userId') &&
         isValidActivePracticeSession(request.resource.data);
@@ -940,19 +1123,13 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // Bug reports created strictly via POST /api/bug-reports/submit (Admin SDK)
     match /bugReports/{reportId} {
       allow read: if isTeacher() ||
         (isAuthenticated() && resource.data.userId == request.auth.uid);
-      allow create: if isAuthenticated() &&
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.status in ['pending', 'new'] &&
-        (!('resolutionNotes' in request.resource.data) || request.resource.data.resolutionNotes == null) &&
-        (!('resolvedAt' in request.resource.data) || request.resource.data.resolvedAt == null) &&
-        (!('resolvedBy' in request.resource.data) || request.resource.data.resolvedBy == null) &&
-        isValidBugReport(request.resource.data);
+      allow create: if false;
       allow update: if isTeacher() &&
-        unchanged('userId') &&
-        unchanged('createdAt') &&
+        hasNoImmutableChanges(['userId', 'createdAt']) &&
         isValidBugReport(request.resource.data);
       allow delete: if isTeacher();
     }
@@ -977,8 +1154,7 @@ service cloud.firestore {
         );
       allow update: if (
           isTeacher() &&
-          unchanged('studentId') &&
-          unchanged('createdAt') &&
+          hasNoImmutableChanges(['studentId', 'createdAt']) &&
           isValidQuestionInquiry(request.resource.data)
         ) || (
           isAuthenticated() &&
@@ -998,16 +1174,15 @@ service cloud.firestore {
           isTeacher() ||
           (isAuthenticated() &&
            request.resource.data.studentId == request.auth.uid &&
+           (!('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid) &&
            request.resource.data.addedBy == request.auth.uid &&
            request.resource.data.completed == false &&
-           (request.resource.data.type != 'practice' || isPremiumOrAdmin()))
+           (request.resource.data.type != 'practice' || isPremiumOrAdmin()) &&
+           (request.resource.data.type == 'custom' ||
+            (isPremiumOrAdmin() && request.resource.data.type in ['practice', 'course_lesson'])))
         ) && isValidTodo(request.resource.data);
       allow update: if isValidTodo(request.resource.data) &&
-        (!('studentId' in resource.data) || unchanged('studentId')) &&
-        (!('userId' in resource.data) || unchanged('userId')) &&
-        (!('addedBy' in resource.data) || unchanged('addedBy')) &&
-        (!('createdAt' in resource.data) || unchanged('createdAt')) &&
-        (!('type' in resource.data) || unchanged('type')) && (
+        hasNoImmutableChanges(['studentId', 'userId', 'addedBy', 'createdAt', 'type']) && (
           isTeacher() ||
           (isOwner(resource.data.studentId) &&
            resource.data.addedBy == request.auth.uid &&
@@ -1034,6 +1209,19 @@ service cloud.firestore {
     }
 
     match /cronLocks/{docId} {
+      allow read, write: if false;
+    }
+
+    match /verifiedPracticeChecks/{docId} {
+      allow read, write: if false;
+    }
+
+    match /rateLimits/{docId} {
+      allow read, write: if false;
+    }
+
+    // SEC-42: Explicit backend-only deny rule for videoSessions (written/consumed by Admin SDK)
+    match /videoSessions/{sessionId} {
       allow read, write: if false;
     }
 

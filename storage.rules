@@ -31,6 +31,29 @@ service firebase.storage {
       );
     }
 
+    function hasOwnerMetadata(expectedUid) {
+      return request.resource != null &&
+        request.resource.metadata != null &&
+        'ownerId' in request.resource.metadata &&
+        request.resource.metadata.ownerId == expectedUid;
+    }
+
+    function hasNoSpoofedOwnerMetadata(expectedUid) {
+      return request.resource != null && (
+        request.resource.metadata == null ||
+        !('ownerId' in request.resource.metadata) ||
+        request.resource.metadata.ownerId == expectedUid
+      );
+    }
+
+    // Ensures uploads target an actual object inside the namespace prefix (not the prefix itself)
+    function isNestedUnder(prefix) {
+      return request.resource != null &&
+        request.resource.name.size() > prefix.size() &&
+        request.resource.name[0:prefix.size()] == prefix;
+    }
+
+    // SEC-30: Strictly PDF & safe raster images (image/svg+xml removed to prevent stored XSS)
     function isAllowedTeacherMaterial() {
       return request.resource != null &&
         request.resource.size > 0 &&
@@ -40,8 +63,7 @@ service firebase.storage {
           'image/png',
           'image/jpeg',
           'image/webp',
-          'image/gif',
-          'image/svg+xml'
+          'image/gif'
         ];
     }
 
@@ -57,55 +79,86 @@ service firebase.storage {
         ];
     }
 
-    // Study materials, worksheets & teacher uploads (max 30 MB)
-    match /learningSheets/{allPaths=**} {
-      allow read: if isTeacher() || isPaidUser();
-      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
-      allow delete: if isTeacher();
+    // SEC-30: Study materials, worksheets & teacher uploads (max 30 MB, strictly teacher-only).
+    // Paid users NEVER read directly from Storage (all student material access goes through watermarked/quota-enforced /api/materials/*).
+    // Enforces Rule 12 ownership namespace ({teacherUid}) and ownerId custom metadata.
+    match /learningSheets/{teacherUid}/{allPaths=**} {
+      allow read: if isTeacher();
+      allow create, update: if isTeacher() &&
+        request.auth.uid == teacherUid &&
+        isNestedUnder('learningSheets/' + teacherUid + '/') &&
+        isAllowedTeacherMaterial() &&
+        hasOwnerMetadata(request.auth.uid);
+      allow delete: if isTeacher() && request.auth.uid == teacherUid;
     }
 
-    match /materials/{allPaths=**} {
-      allow read: if isTeacher() || isPaidUser();
-      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
-      allow delete: if isTeacher();
+    match /materials/{teacherUid}/{allPaths=**} {
+      allow read: if isTeacher();
+      allow create, update: if isTeacher() &&
+        request.auth.uid == teacherUid &&
+        isNestedUnder('materials/' + teacherUid + '/') &&
+        isAllowedTeacherMaterial() &&
+        hasOwnerMetadata(request.auth.uid);
+      allow delete: if isTeacher() && request.auth.uid == teacherUid;
     }
 
-    match /questions/{allPaths=**} {
-      allow read: if isTeacher() || isPaidUser();
-      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
-      allow delete: if isTeacher();
+    match /questions/{teacherUid}/{allPaths=**} {
+      allow read: if isTeacher();
+      allow create, update: if isTeacher() &&
+        request.auth.uid == teacherUid &&
+        isNestedUnder('questions/' + teacherUid + '/') &&
+        isAllowedTeacherMaterial() &&
+        hasOwnerMetadata(request.auth.uid);
+      allow delete: if isTeacher() && request.auth.uid == teacherUid;
     }
 
-    match /practice/{allPaths=**} {
-      allow read: if isTeacher() || isPaidUser();
-      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
-      allow delete: if isTeacher();
+    match /practice/{teacherUid}/{allPaths=**} {
+      allow read: if isTeacher();
+      allow create, update: if isTeacher() &&
+        request.auth.uid == teacherUid &&
+        isNestedUnder('practice/' + teacherUid + '/') &&
+        isAllowedTeacherMaterial() &&
+        hasOwnerMetadata(request.auth.uid);
+      allow delete: if isTeacher() && request.auth.uid == teacherUid;
     }
 
+    // SEC-30: Course files — enrolled students may fetch known file paths (get), NEVER list directories
     match /courses/{courseId}/{allPaths=**} {
-      allow read: if isTeacher() || isEnrolledInCourse(courseId);
-      allow create, update: if isTeacher() && isAllowedTeacherMaterial();
+      allow get: if isTeacher() || isEnrolledInCourse(courseId);
+      allow list: if isTeacher();
+      allow create, update: if isTeacher() &&
+        isNestedUnder('courses/' + courseId + '/') &&
+        isAllowedTeacherMaterial() &&
+        hasOwnerMetadata(request.auth.uid);
       allow delete: if isTeacher();
     }
 
-    // Private user files (avatars, etc.) — raster images only, <= 5 MB
+    // Private user files (avatars, etc.) — raster images only, <= 5 MB, no student directory listing
     match /users/{userId}/{allPaths=**} {
-      allow read: if isOwner(userId) || isTeacher();
-      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
+      allow get: if isOwner(userId) || isTeacher();
+      allow list: if isTeacher();
+      allow create, update: if isOwner(userId) &&
+        isNestedUnder('users/' + userId + '/') &&
+        isAllowedSafeUserRasterImage() &&
+        hasNoSpoofedOwnerMetadata(userId);
       allow delete: if isOwner(userId) || isTeacher();
     }
 
-    // Bug report screenshots — camelCase & kebab-case namespaces, raster only, <= 5 MB
+    // Active bug report screenshot namespace (matches server GDPR deletion prefix bugReports/{uid}/)
+    // Raster images only, <= 5 MB, no student directory listing
     match /bugReports/{userId}/{allPaths=**} {
-      allow read: if isOwner(userId) || isTeacher();
-      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
+      allow get: if isOwner(userId) || isTeacher();
+      allow list: if isTeacher();
+      allow create, update: if isOwner(userId) &&
+        isNestedUnder('bugReports/' + userId + '/') &&
+        isAllowedSafeUserRasterImage() &&
+        hasNoSpoofedOwnerMetadata(userId);
       allow delete: if isOwner(userId) || isTeacher();
     }
 
+    // Unused legacy kebab-case namespace (locked to prevent orphaned un-deleted GDPR uploads)
     match /bug-reports/{userId}/{allPaths=**} {
-      allow read: if isOwner(userId) || isTeacher();
-      allow create, update: if isOwner(userId) && isAllowedSafeUserRasterImage();
-      allow delete: if isOwner(userId) || isTeacher();
+      allow read, write: if false;
     }
 
     // Strict deny-all default fallback for unmanaged paths

@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, connectAuthEmulator } from 'firebase/auth';
-import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, memoryLocalCache, connectFirestoreEmulator } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache, connectFirestoreEmulator } from 'firebase/firestore';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -27,9 +27,7 @@ if (import.meta.env?.DEV) {
 export const db = initializeFirestore(
   app,
   {
-    localCache: isFirebaseEmulatorEnabled
-      ? memoryLocalCache()
-      : persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+    localCache: memoryLocalCache(),
   },
   resolvedFirebaseConfig.firestoreDatabaseId
 );

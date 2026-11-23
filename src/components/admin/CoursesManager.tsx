@@ -22,7 +22,9 @@ import {
   createCourse, 
   updateCourse, 
   deleteCourse,
-  seedDefaultCourses 
+  seedDefaultCourses,
+  formatCoursePrice,
+  parseCoursePriceNumber
 } from '../../services/courseService';
 import { Link } from 'react-router-dom';
 import { sanitizeSafeUrl } from '../../utils/svgUtils';
@@ -108,7 +110,7 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
     setTitle(c.title || '');
     setDescription(c.description || '');
     setSubject(c.subject || 'Matematika');
-    setPrice(c.price || '2 490 Kč / sezóna');
+    setPrice(formatCoursePrice(c.price));
     setDifficulty(c.difficulty || 'Střední (Cermat 9. třída)');
     setSchedule(c.schedule || '');
     setInstructorName(c.instructorName || '');
@@ -147,11 +149,12 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
 
     setSaving(true);
     try {
+      const parsedPrice = parseCoursePriceNumber(price);
       const payload: Partial<Course> = {
         title: title.trim(),
         description: description.trim(),
         subject,
-        price: price.trim(),
+        ...(parsedPrice !== undefined ? { price: parsedPrice } : {}),
         difficulty: difficulty.trim(),
         schedule: schedule.trim(),
         instructorName: instructorName.trim(),
@@ -311,10 +314,10 @@ export default function CoursesManager({ userId }: CoursesManagerProps) {
 
               <CardContent className="p-6 pt-3 space-y-3.5 flex-1 flex flex-col justify-between text-xs text-gray-600">
                 <div className="space-y-2 bg-gray-50/80 p-3.5 rounded-2xl">
-                  {course.price && (
+                  {course.price !== undefined && course.price !== '' && (
                     <div className="flex items-center justify-between font-bold text-gray-900">
                       <span className="text-gray-500">Cena:</span>
-                      <span className="text-amber-700 font-black">{course.price}</span>
+                      <span className="text-amber-700 font-black">{formatCoursePrice(course.price)}</span>
                     </div>
                   )}
 

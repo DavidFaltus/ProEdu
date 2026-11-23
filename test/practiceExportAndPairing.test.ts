@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import * as XLSX from 'xlsx';
+import { writeExcelWorkbookBuffer } from '../src/utils/excelWorkbook';
 import {
   normalizeSubtopicPayload,
   buildSubtopicUpdatePayload,
@@ -185,10 +185,14 @@ test('exported XLSX round-trips cleanly through parsePracticeQuestionsExcelFile 
   };
 
   const { rows } = buildPracticeExportRows({ topics, subtopics, questionsMap });
-  const ws = XLSX.utils.json_to_sheet(rows, { header: [...PRACTICE_EXPORT_HEADERS] });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Procvičování');
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const headers = [...PRACTICE_EXPORT_HEADERS];
+  const buf = await writeExcelWorkbookBuffer([
+    {
+      name: 'Procvičování',
+      headers,
+      rows: rows.map((row) => headers.map((h) => row[h as keyof typeof row])),
+    },
+  ]);
   const file = new File([buf], 'procvicovani-export.xlsx');
 
   const parsed = await parsePracticeQuestionsExcelFile(file);

@@ -18,7 +18,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import { Course } from '../types';
-import { getCourseById } from '../services/courseService';
+import { formatCoursePrice, getCourseById } from '../services/courseService';
 import { setDynamicPageSeo, updateSeoMeta } from '../services/analyticsService';
 
 const getSafeExternalUrl = (rawUrl?: string | null): string | null => {
@@ -339,7 +339,7 @@ export default function CourseDetail() {
                   Cena kurzu
                 </span>
                 <div className="text-3xl font-display font-black text-gray-900">
-                  {course.price || '2 490 Kč / sezóna'}
+                  {formatCoursePrice(course.price)}
                 </div>
                 <p className="text-xs text-gray-500 font-medium">
                   Přístup do vybraného kurzu přiřazuje lektor individuálně po předchozí domluvě.

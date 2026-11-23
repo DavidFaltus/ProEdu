@@ -4,6 +4,18 @@ import http from 'node:http';
 import fs from 'node:fs';
 
 test('Materials chunking & background processing API flow', async (t) => {
+  const teacherEmail = (process.env.TEST_TEACHER_EMAIL || '').trim();
+  const teacherPassword = process.env.TEST_TEACHER_PASSWORD || '';
+  const authEmulatorHost = (process.env.FIREBASE_AUTH_EMULATOR_HOST || '').trim();
+  const allowIntegrationOptIn = process.env.RUN_MATERIALS_INTEGRATION_TEST === 'true';
+
+  if (!teacherEmail || !teacherPassword || (!authEmulatorHost && !allowIntegrationOptIn)) {
+    t.skip(
+      'Skipping integration test: set TEST_TEACHER_EMAIL, TEST_TEACHER_PASSWORD, and FIREBASE_AUTH_EMULATOR_HOST (or RUN_MATERIALS_INTEGRATION_TEST=true).'
+    );
+    return;
+  }
+
   // Let's create a simulated base64 file payload (~500 KB to trigger multiple chunks) with valid PDF magic bytes
   const simulatedFileSize = 500 * 1024;
   const rawBytes = Buffer.alloc(simulatedFileSize, 'A');
@@ -40,22 +52,25 @@ test('Materials chunking & background processing API flow', async (t) => {
   const health = await makeRequest({ path: '/api/health', method: 'GET' });
   assert.strictEqual(health.statusCode, 200, 'Server should be reachable on port 3005');
 
-  // 2. Sign in as teacher (ucitel@ucitel.cz) via Firebase IdentityToolkit to obtain a real signed ID token
+  // 2. Sign in as teacher via Firebase Auth Emulator (or explicitly opted-in IdentityToolkit) using env credentials
   const appletCfg = JSON.parse(fs.readFileSync('firebase-applet-config.json', 'utf8'));
+  const authBaseUrl = authEmulatorHost
+    ? `http://${authEmulatorHost}/identitytoolkit.googleapis.com/v1`
+    : 'https://identitytoolkit.googleapis.com/v1';
   const authResp = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${appletCfg.apiKey}`,
+    `${authBaseUrl}/accounts:signInWithPassword?key=${appletCfg.apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'ucitel@ucitel.cz',
-        password: 'ucitel123',
+        email: teacherEmail,
+        password: teacherPassword,
         returnSecureToken: true,
       }),
     }
   );
   const authData: any = await authResp.json();
-  assert.ok(authData.idToken, 'Should obtain valid Firebase ID token for ucitel@ucitel.cz');
+  assert.ok(authData.idToken, 'Should obtain valid Firebase ID token for configured teacher test account');
   const mockTeacherToken = authData.idToken;
 
   // 3. POST /api/materials/upload
@@ -79,10 +94,10 @@ test('Materials chunking & background processing API flow', async (t) => {
     }
   }, uploadPayload);
 
-  assert.strictEqual(uploadRes.statusCode, 202, 'Upload endpoint should respond immediately with HTTP 202');
+  assert.ok([200, 201, 202].includes(uploadRes.statusCode), 'Upload endpoint should respond with HTTP 201/200/202');
   const uploadResult = JSON.parse(uploadRes.data.toString('utf8'));
   assert.strictEqual(uploadResult.success, true);
-  assert.strictEqual(uploadResult.status, 'processing', 'Status should immediately be "processing"');
+  assert.strictEqual(uploadResult.status, 'ready', 'Status should be "ready" once chunk processing completes before response (SEC-15)');
   assert.ok(uploadResult.materialId, 'Response should contain materialId');
   const materialId = uploadResult.materialId;
 

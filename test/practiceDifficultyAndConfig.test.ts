@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import { writeExcelWorkbookBuffer } from '../src/utils/excelWorkbook';
 import { 
   normalizeDifficulty, 
   cleanPracticeConfig, 
@@ -143,11 +142,69 @@ test('sampleQuestionsForPractice samples requested distribution and orders Lehk�
 });
 
 test('parsePracticeQuestionsExcelFile parses template file and extracts difficulty', async () => {
-  const filePath = path.resolve('public', 'ProEdu_Import_Procvicovani.xlsx');
-  const buffer = fs.readFileSync(filePath);
+  const rows = [
+    {
+      'Předmět': 'Matematika',
+      'Téma': 'Ukázkové téma',
+      'Podtéma': 'Ukázkové podtéma',
+      'Otázka': 'Kolik je 2 + 3?',
+      'Nápověda': 'Sečti obě čísla.',
+      'Vysvětlení': '2 + 3 = 5.',
+      'Typ': 'výběr',
+      'Odpověď (volná)': '',
+      'Možnost A': '4',
+      'Možnost B': '5',
+      'Možnost C': '6',
+      'Možnost D': '7',
+      'Odpověď (výběr)': 'B',
+      'Obtížnost': 'Lehká',
+    },
+    {
+      'Předmět': 'Matematika',
+      'Téma': 'Ukázkové téma',
+      'Podtéma': 'Ukázkové podtéma',
+      'Otázka': 'Kolik je 10 - 4?',
+      'Nápověda': '',
+      'Vysvětlení': '10 - 4 = 6.',
+      'Typ': 'volná',
+      'Odpověď (volná)': '6',
+      'Možnost A': '',
+      'Možnost B': '',
+      'Možnost C': '',
+      'Možnost D': '',
+      'Odpověď (výběr)': '',
+      'Obtížnost': 'lehka',
+    },
+    {
+      'Předmět': 'Matematika',
+      'Téma': 'Ukázkové téma',
+      'Podtéma': 'Ukázkové podtéma',
+      'Otázka': 'Vyřeš rovnici 2x = 14.',
+      'Nápověda': 'Vyděl obě strany 2.',
+      'Vysvětlení': 'x = 7.',
+      'Typ': 'volná',
+      'Odpověď (volná)': '7',
+      'Možnost A': '',
+      'Možnost B': '',
+      'Možnost C': '',
+      'Možnost D': '',
+      'Odpověď (výběr)': '',
+      'Obtížnost': 'Střední',
+    },
+  ];
+
+  const headers = Object.keys(rows[0]);
+  const buffer = await writeExcelWorkbookBuffer([
+    {
+      name: 'Procvičování',
+      headers,
+      rows: rows.map((row) => headers.map((h) => row[h as keyof typeof row])),
+    },
+  ]);
   const file = new File([buffer], 'ProEdu_Import_Procvicovani.xlsx');
 
   const result = await parsePracticeQuestionsExcelFile(file);
+  assert.equal(result.invalidRows.length, 0);
   assert.ok(result.validRows.length >= 3);
   assert.equal(result.validRows[0].difficulty, 'Lehká');
   assert.equal(result.validRows[1].difficulty, 'Lehká');

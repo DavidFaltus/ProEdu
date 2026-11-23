@@ -1859,6 +1859,94 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
   };
 
   // --- 1. EXCEL IMPORT PROČVIČOVÁNÍ ---
+  const handleDownloadPracticeTemplate = async () => {
+    try {
+      const { downloadExcelWorkbook } = await import('../../utils/excelWorkbook');
+      const headers = [
+        'Předmět',
+        'Téma',
+        'Podtéma',
+        'Otázka',
+        'Nápověda',
+        'Vysvětlení',
+        'Typ',
+        'Odpověď (volná)',
+        'Možnost A',
+        'Možnost B',
+        'Možnost C',
+        'Možnost D',
+        'Odpověď (výběr)',
+        'Obtížnost',
+      ];
+      const rows = [
+        [
+          'Matematika',
+          'Ukázkové téma',
+          'Ukázkové podtéma',
+          'Kolik je 2 + 2?',
+          'Sečtěte obě čísla.',
+          '2 + 2 = 4.',
+          'výběr',
+          '',
+          '3',
+          '4',
+          '5',
+          '6',
+          'B',
+          'Lehká',
+        ],
+      ];
+      await downloadExcelWorkbook('ProEdu_Import_Procvicovani.xlsx', [
+        { name: 'Procvičování', headers, rows },
+      ]);
+    } catch (err: any) {
+      toast.error('Nepodařilo se vygenerovat šablonu: ' + (err?.message || 'neznámá chyba'));
+    }
+  };
+
+  const handleDownloadStudyTemplate = async () => {
+    try {
+      const { downloadExcelWorkbook } = await import('../../utils/excelWorkbook');
+      const headers = [
+        'Předmět',
+        'Téma',
+        'Podtéma',
+        'Teoretický výklad',
+        'Krok',
+        'Text kroku',
+        'Otázka',
+        'Možnost A',
+        'Možnost B',
+        'Možnost C',
+        'Možnost D',
+        'Odpověď',
+        'Tip',
+      ];
+      const rows = [
+        [
+          'Matematika',
+          'Ukázkové téma',
+          'Ukázkové podtéma',
+          'Stručný úvodní výklad k podtématu (volitelný sloupec).',
+          1,
+          'Ukázkový text prvního kroku výkladu.',
+          'Ukázková kontrolní otázka ke kroku 1?',
+          'Správná možnost',
+          'Nesprávná možnost 1',
+          'Nesprávná možnost 2',
+          'Nesprávná možnost 3',
+          'A',
+          'Krátký tip lektora k tomuto kroku.',
+        ],
+      ];
+      await downloadExcelWorkbook('ProEdu_Import_Studovat.xlsx', [
+        { name: 'Studovat', headers, rows },
+      ]);
+    } catch (err: any) {
+      toast.error('Nepodařilo se vygenerovat šablonu: ' + (err?.message || 'neznámá chyba'));
+    }
+  };
+
   const handlePracticeFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -4523,14 +4611,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <span className="text-gray-700 font-medium">
                 Importujte otázky (výběr ze 4 možností i volná odpověď) s automatickou deduplikací a sloupcem Obtížnost (Lehká / Střední / Těžká).
               </span>
-              <a 
-                href={`${import.meta.env.BASE_URL}ProEdu_Import_Procvicovani.xlsx`} 
-                download="ProEdu_Import_Procvicovani.xlsx" 
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#B80053] border border-pink-200 hover:bg-pink-100 font-bold rounded-xl shrink-0 transition-colors"
+              <button
+                type="button"
+                onClick={handleDownloadPracticeTemplate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#B80053] border border-pink-200 hover:bg-pink-100 font-bold rounded-xl shrink-0 transition-colors cursor-pointer"
               >
                 <FileSpreadsheet size={14} />
                 <span>Stáhnout šablonu (.xlsx)</span>
-              </a>
+              </button>
             </div>
 
             {/* Dropzone */}
@@ -4715,14 +4803,14 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
               <span className="text-gray-700 font-medium">
                 Importujte teoretický výklad podtémat i krokový výklad s ověřovacími otázkami a tipy lektora.
               </span>
-              <a 
-                href={`${import.meta.env.BASE_URL}ProEdu_Import_Studovat.xlsx`} 
-                download="ProEdu_Import_Studovat.xlsx" 
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#0F5238] border border-emerald-200 hover:bg-emerald-100 font-bold rounded-xl shrink-0 transition-colors"
+              <button
+                type="button"
+                onClick={handleDownloadStudyTemplate}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-[#0F5238] border border-emerald-200 hover:bg-emerald-100 font-bold rounded-xl shrink-0 transition-colors cursor-pointer"
               >
                 <FileSpreadsheet size={14} />
                 <span>Stáhnout šablonu (.xlsx)</span>
-              </a>
+              </button>
             </div>
 
             {/* Dropzone */}

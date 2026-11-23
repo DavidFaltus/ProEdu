@@ -1,7 +1,7 @@
 import { collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { PracticeSubtopic } from '../types';
-import { getTopics, getSubtopics } from './practiceService';
+import { fetchPracticeCatalog } from './practiceService';
 
 export interface RecommendedPracticeItem {
   subtopicId: string;
@@ -117,11 +117,10 @@ export async function getPersonalizedRecommendations(
   userFocusAreas: string[] = []
 ): Promise<RecommendedPracticeItem[]> {
   try {
-    // 1. Načteme všechna dostupná viditelná témata a podtémata v aplikaci
-    const [allTopics, rawSubtopics] = await Promise.all([
-      getTopics(),
-      getSubtopics()
-    ]);
+    // 1. Načteme všechna dostupná viditelná témata a podtémata přes bezpečné backend API
+    const catalog = await fetchPracticeCatalog();
+    const allTopics = catalog.topics || [];
+    const rawSubtopics = catalog.subtopics || [];
 
     const topicTitleMap = new Map<string, string>();
     allTopics.forEach(t => {

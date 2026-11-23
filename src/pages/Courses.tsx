@@ -15,7 +15,7 @@ import {
 import { Button } from '../components/ui/button';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/card';
 import { Course } from '../types';
-import { DEFAULT_FLAGSHIP_COURSES, getAllCourses } from '../services/courseService';
+import { DEFAULT_FLAGSHIP_COURSES, formatCoursePrice, getAllCourses } from '../services/courseService';
 import { trackSectionClick } from '../services/analyticsService';
 
 export default function Courses() {
@@ -100,7 +100,7 @@ export default function Courses() {
                   </span>
                 ) : (
                   <span className="text-xs font-black text-indigo-900 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
-                    {course.price || '2 490 Kč / sezóna'}
+                    {formatCoursePrice(course.price)}
                   </span>
                 )}
               </div>

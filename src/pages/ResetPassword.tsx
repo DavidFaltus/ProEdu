@@ -19,12 +19,17 @@ export default function ResetPassword() {
   const navigate = useNavigate();
   const { resetPassword } = useAuth();
 
-  const oobCode = searchParams.get('oobCode') || searchParams.get('code') || '';
-  const emailParam = searchParams.get('email') || '';
-  const isDemo = searchParams.get('demo') === 'true' || searchParams.get('test') === 'true';
+  const oobCode = (searchParams.get('oobCode') || searchParams.get('code') || '').trim();
+  const isDemo =
+    import.meta.env.DEV &&
+    (searchParams.get('demo') === 'true' || searchParams.get('test') === 'true');
+  const demoEmailParam =
+    import.meta.env.DEV && isDemo ? (searchParams.get('email') || '').trim() : '';
 
   const [verifying, setVerifying] = useState(Boolean(oobCode && !isDemo));
-  const [verifiedEmail, setVerifiedEmail] = useState(emailParam || (isDemo ? 'student@proeducator.eu' : ''));
+  const [verifiedEmail, setVerifiedEmail] = useState(
+    import.meta.env.DEV && isDemo ? (demoEmailParam || 'student@proeducator.eu') : ''
+  );
   const [error, setError] = useState<string | null>(
     oobCode || isDemo ? null : 'V odkazu chybí platný bezpečnostní kód pro obnovení hesla.'
   );
@@ -36,15 +41,33 @@ export default function ResetPassword() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // Formulář pro nové vyžádání odkazu při chybě
-  const [newLinkEmail, setNewLinkEmail] = useState(emailParam);
+  // Formulář pro nové vyžádání odkazu při chybě (v produkci nikdy nekopíruje neověřený ?email= z URL)
+  const [newLinkEmail, setNewLinkEmail] = useState(
+    import.meta.env.DEV && isDemo ? demoEmailParam : ''
+  );
   const [requestingNewLink, setRequestingNewLink] = useState(false);
   const [newLinkSent, setNewLinkSent] = useState(false);
 
   useEffect(() => {
-    if (!oobCode || isDemo) return;
+    if (import.meta.env.DEV && isDemo) {
+      setVerifying(false);
+      setError(null);
+      setVerifiedEmail(demoEmailParam || 'student@proeducator.eu');
+      return;
+    }
+
+    if (!oobCode) {
+      setVerifying(false);
+      setVerifiedEmail('');
+      setError('V odkazu chybí platný bezpečnostní kód pro obnovení hesla.');
+      return;
+    }
 
     let active = true;
+    setVerifying(true);
+    setError(null);
+    setVerifiedEmail('');
+
     verifyPasswordResetCode(auth, oobCode)
       .then((email) => {
         if (!active) return;
@@ -68,7 +91,7 @@ export default function ResetPassword() {
     return () => {
       active = false;
     };
-  }, [oobCode, isDemo]);
+  }, [oobCode, isDemo, demoEmailParam]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -83,10 +106,14 @@ export default function ResetPassword() {
 
     setSubmitting(true);
     try {
-      if (isDemo) {
+      if (import.meta.env.DEV && isDemo) {
         await new Promise((resolve) => setTimeout(resolve, 600));
         setIsSuccess(true);
         toast.success('Heslo bylo úspěšně změněno! (Režim náhledu)');
+        return;
+      }
+      if (!oobCode) {
+        setError('V odkazu chybí platný bezpečnostní kód pro obnovení hesla.');
         return;
       }
       await confirmPasswordReset(auth, oobCode, password);
@@ -121,7 +148,7 @@ export default function ResetPassword() {
     try {
       const res = await resetPassword(trimmed);
       setNewLinkSent(true);
-      if (res?.simulated) {
+      if (import.meta.env.DEV && res?.simulated) {
         toast.info('Režim lokálního náhledu: Nový odkaz byl vypsán do konzole serveru.');
       } else {
         toast.success(`Nový odkaz byl odeslán na ${trimmed}!`);

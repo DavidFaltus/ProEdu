@@ -20,6 +20,7 @@ import {
 } from './common/CustomIcon';
 import { cn } from '../lib/utils';
 import { AppNotification, NotificationType } from '../hooks/useNotifications';
+import { sanitizeSafeUrl } from '../utils/urlSecurity';
 import { format, isToday, isYesterday } from 'date-fns';
 import { cs } from 'date-fns/locale';
 
@@ -227,7 +228,10 @@ export default function NotificationPopover({
     onClose();
     await onMarkAllAsRead();
     if (item.meetUrl) {
-      window.open(item.meetUrl, '_blank', 'noopener,noreferrer');
+      const safeMeetUrl = sanitizeSafeUrl(item.meetUrl, { httpOnly: true });
+      if (safeMeetUrl) {
+        window.open(safeMeetUrl, '_blank', 'noopener,noreferrer');
+      }
       return;
     }
     if (item.link) {

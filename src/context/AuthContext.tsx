@@ -161,6 +161,32 @@ const getDevRoleOverride = (): UserRole | null => {
 
 const CACHED_PROFILE_KEY = 'proedu_cached_profile';
 
+const clearLegacyFirestoreIndexedDb = () => {
+  if (typeof window === 'undefined' || typeof indexedDB === 'undefined') return;
+  try {
+    const idb = indexedDB as IDBFactory & {
+      databases?: () => Promise<Array<{ name?: string }>>;
+    };
+    if (typeof idb.databases === 'function') {
+      idb.databases()
+        .then((dbs) => {
+          dbs.forEach((dbInfo) => {
+            if (dbInfo.name && dbInfo.name.startsWith('firestore/')) {
+              try {
+                indexedDB.deleteDatabase(dbInfo.name);
+              } catch {
+                // Ignore deletion errors
+              }
+            }
+          });
+        })
+        .catch(() => {});
+    }
+  } catch {
+    // Ignore IndexedDB enumeration errors on unsupported browsers
+  }
+};
+
 const clearSessionStorageKeys = () => {
   if (typeof window === 'undefined') return;
   try {
@@ -181,6 +207,7 @@ const clearSessionStorageKeys = () => {
       }
       keysToDelete.forEach((k) => store.removeItem(k));
     }
+    clearLegacyFirestoreIndexedDb();
   } catch (e) {
     console.warn('Failed to clear session storage keys:', e);
   }
@@ -247,6 +274,10 @@ function normalizeUserProfile(raw: Partial<UserProfile>, authUser: User): UserPr
     enrolledCourseIds: Array.isArray(raw.enrolledCourseIds)
       ? raw.enrolledCourseIds.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
       : [],
+    hasRecurringPaymentMethod:
+      typeof raw.hasRecurringPaymentMethod === 'boolean'
+        ? raw.hasRecurringPaymentMethod
+        : Boolean(raw.initRecurringTransId),
     subscriptionPeriodEnd: periodEnd ?? undefined,
     createdAt: toFirestoreTimestamp(raw.createdAt),
   } as UserProfile;
@@ -481,6 +512,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else {
             if (!cancelledRef.current) {
               setProfile(null);
+              cacheManager.clear();
               clearSessionStorageKeys();
             }
           }
@@ -680,8 +712,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const data = await parseSafeJsonResponse(res, 'Nepodařilo se ověřit kód.');
     if (data.customToken) {
       await signInWithCustomToken(auth, data.customToken);
-    } else if (data.tempPassword) {
-      await signInWithEmailAndPassword(auth, email, data.tempPassword);
     }
     trackAuthSignUpComplete('password');
     return data;
@@ -744,6 +774,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (CLIENT_WRITABLE_PROFILE_FIELDS.has(key) && value !== undefined) {
         safeData[key] = value;
       }
+    }
+
+    if ('photoURL' in safeData && safeData.photoURL !== null && safeData.photoURL !== '') {
+      const candidate = String(safeData.photoURL).trim();
+      const isValidHttps = candidate.length <= 2048 && /^https:\/\/[^\s]+$/.test(candidate);
+      const isValidRasterData =
+        candidate.length <= 150000 &&
+        /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(candidate);
+      if (!isValidHttps && !isValidRasterData) {
+        throw new Error('Neplatný formát nebo velikost profilového obrázku.');
+      }
+      safeData.photoURL = candidate;
     }
 
     if (Object.keys(safeData).length === 0) {

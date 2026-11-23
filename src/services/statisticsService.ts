@@ -1,7 +1,7 @@
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { PracticeTopic, PracticeSubtopic } from '../types';
-import { getTopics, getSubtopics } from './practiceService';
+import { fetchPracticeCatalog } from './practiceService';
 
 export type StatsSubjectFilter = 'Vše' | 'Matematika' | 'Čeština';
 export type StatsPeriodFilter = 'all' | '30d' | '7d';
@@ -254,10 +254,9 @@ export async function fetchStudentRawStatisticsData(userId?: string): Promise<{
   subtopics: PracticeSubtopic[];
   attempts: StudentAttemptRecord[];
 }> {
-  const [rawTopics, rawSubtopics] = await Promise.all([
-    getTopics(),
-    getSubtopics()
-  ]);
+  const catalog = await fetchPracticeCatalog();
+  const rawTopics = catalog.topics || [];
+  const rawSubtopics = catalog.subtopics || [];
 
   const hiddenTopicKeys = new Set<string>();
   rawTopics.forEach(t => {

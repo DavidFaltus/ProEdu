@@ -4,15 +4,21 @@
  *
  * 1:1 ESM JS port of src/utils/mathEvaluator.ts for server-side evaluation.
  */
+const MAX_FRACTION_TERM_DIGITS = 15;
+const MAX_FRACTION_EXPONENT = 30;
+const MAX_NUMERIC_TOKEN_LENGTH = 64;
+const STRICT_NUMBER_REGEX = /^-?\d+(?:\.\d+)?$/;
+
 export function gcd(a, b) {
-  let x = Math.abs(a);
-  let y = Math.abs(b);
-  while (y !== 0) {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 1;
+  let x = Math.abs(Math.trunc(a));
+  let y = Math.abs(Math.trunc(b));
+  while (y !== 0 && Number.isFinite(y)) {
     const t = y;
     y = x % y;
     x = t;
   }
-  return x;
+  return Number.isFinite(x) ? x : 1;
 }
 
 /**
@@ -54,11 +60,50 @@ function evalFractionTerm(term) {
   const clean = term.replace(/[\(\)\{\}]/g, '').trim();
   const powMatch = clean.match(/^(-?\d+)\^([0-9]+)$/);
   if (powMatch) {
+    const baseDigits = powMatch[1].startsWith('-') ? powMatch[1].slice(1) : powMatch[1];
+    const expDigits = powMatch[2];
+    if (baseDigits.length > MAX_FRACTION_TERM_DIGITS || expDigits.length > MAX_FRACTION_TERM_DIGITS) {
+      return NaN;
+    }
     const base = parseInt(powMatch[1], 10);
-    const exp = parseInt(powMatch[2], 10);
-    return Math.pow(base, exp);
+    const exp = parseInt(expDigits, 10);
+    if (!Number.isSafeInteger(base) || !Number.isSafeInteger(exp) || exp < 0 || exp > MAX_FRACTION_EXPONENT) {
+      return NaN;
+    }
+    const result = Math.pow(base, exp);
+    if (!Number.isFinite(result) || !Number.isSafeInteger(result)) {
+      return NaN;
+    }
+    return result;
   }
-  return parseInt(clean, 10);
+
+  if (!/^-?\d+$/.test(clean)) {
+    return NaN;
+  }
+  const digits = clean.startsWith('-') ? clean.slice(1) : clean;
+  if (digits.length > MAX_FRACTION_TERM_DIGITS) {
+    return NaN;
+  }
+  const value = parseInt(clean, 10);
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value)) {
+    return NaN;
+  }
+  return value;
+}
+
+function parseStrictNumber(normStr) {
+  if (typeof normStr !== 'string' || !normStr || normStr.length > MAX_NUMERIC_TOKEN_LENGTH) {
+    return NaN;
+  }
+  if (!STRICT_NUMBER_REGEX.test(normStr)) {
+    return NaN;
+  }
+  const intPart = normStr.replace(/^-/, '').split('.')[0];
+  if (intPart.length > MAX_FRACTION_TERM_DIGITS) {
+    return NaN;
+  }
+  const value = Number(normStr);
+  return Number.isFinite(value) ? value : NaN;
 }
 
 /**
@@ -66,6 +111,7 @@ function evalFractionTerm(term) {
  */
 export function parseFraction(str) {
   const norm = normalizeMathAnswer(str);
+  if (!norm || norm.length > MAX_NUMERIC_TOKEN_LENGTH) return null;
 
   // Match simple integer fraction or fraction with powers: e.g. "3/4" or "1/2^5" or "2^3/5"
   const match = norm.match(/^(-?\d+(?:\^\{?[0-9]+\}?)?)\/(-?\d+(?:\^\{?[0-9]+\}?)?)$/);
@@ -74,7 +120,7 @@ export function parseFraction(str) {
   let num = evalFractionTerm(match[1]);
   let den = evalFractionTerm(match[2]);
 
-  if (Number.isNaN(num) || Number.isNaN(den) || den === 0) return null;
+  if (!Number.isSafeInteger(num) || !Number.isSafeInteger(den) || den === 0) return null;
 
   // Move negative sign to numerator if denominator is negative
   if (den < 0) {
@@ -82,13 +128,18 @@ export function parseFraction(str) {
     den = -den;
   }
 
+  if (!Number.isSafeInteger(num) || !Number.isSafeInteger(den) || den <= 0) return null;
+
+  const value = num / den;
+  if (!Number.isFinite(value)) return null;
+
   const divisor = gcd(num, den);
   const isSimplified = divisor === 1 && den > 0;
 
   return {
     numerator: num,
     denominator: den,
-    value: num / den,
+    value,
     isSimplified
   };
 }
@@ -183,7 +234,7 @@ export function evaluateStudentAnswer(studentInput, expectedAnswer, options = {}
     if (studentFrac && expectedFrac) {
       if (Math.abs(studentFrac.value - expectedFrac.value) < 1e-9) {
         if (!studentFrac.isSimplified) {
-          const d = gcd(studentFrac.numerator, studentFrac.denominator);
+          const d = gcd(studentFrac.numerator, studentFrac.denominator) || 1;
           const simplifiedNum = studentFrac.numerator / d;
           const simplifiedDen = studentFrac.denominator / d;
           return {
@@ -201,11 +252,11 @@ export function evaluateStudentAnswer(studentInput, expectedAnswer, options = {}
       }
     }
 
-    // One is fraction, one is decimal
-    const studentNum = studentFrac ? studentFrac.value : parseFloat(normStudent);
-    const expectedNum = expectedFrac ? expectedFrac.value : parseFloat(normExpected);
+    // One is fraction, one is decimal (or both strict numbers)
+    const studentNum = studentFrac ? studentFrac.value : parseStrictNumber(normStudent);
+    const expectedNum = expectedFrac ? expectedFrac.value : parseStrictNumber(normExpected);
 
-    if (!Number.isNaN(studentNum) && !Number.isNaN(expectedNum)) {
+    if (Number.isFinite(studentNum) && Number.isFinite(expectedNum)) {
       if (Math.abs(studentNum - expectedNum) < 1e-9) {
         if (expectedFrac && studentFrac && !studentFrac.isSimplified) {
           return {

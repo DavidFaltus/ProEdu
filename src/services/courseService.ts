@@ -13,6 +13,44 @@ import {
 } from 'firebase/firestore';
 import { Course } from '../types';
 
+export function parseCoursePriceNumber(price?: number | string | null): number | undefined {
+  if (typeof price === 'number') {
+    return Number.isFinite(price) && price >= 0 && price <= 500000 ? Math.round(price) : undefined;
+  }
+  if (typeof price !== 'string') return undefined;
+  const trimmed = price.trim();
+  if (!trimmed) return undefined;
+  const match = trimmed.match(/^\d[\d\s\u00A0]*/);
+  if (!match) return undefined;
+  const digits = match[0].replace(/[\s\u00A0]+/g, '');
+  const parsed = Number.parseInt(digits, 10);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 500000 ? parsed : undefined;
+}
+
+export function formatCoursePrice(
+  price?: number | string | null,
+  fallback = '2 490 Kč / sezóna'
+): string {
+  if (typeof price === 'number' && Number.isFinite(price)) {
+    const formatted = Math.round(price)
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    return `${formatted} Kč / sezóna`;
+  }
+  if (typeof price === 'string') {
+    const trimmed = price.trim();
+    if (!trimmed) return fallback;
+    if (/^\d[\d\s\u00A0]*$/.test(trimmed)) {
+      const parsed = parseCoursePriceNumber(trimmed);
+      if (parsed !== undefined) {
+        return formatCoursePrice(parsed, fallback);
+      }
+    }
+    return trimmed;
+  }
+  return fallback;
+}
+
 export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[] = [
   {
     id: 'course-combo',
@@ -20,7 +58,7 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     description: 'Nejkomplexnější příprava na přijímací zkoušky na SŠ. 2x týdně živá online lekce přes Google Meet, kompletní videozáznamy, testy a materiály ke kurzu.',
     badge: 'Doporučeno • Nejoblíbenější',
     subject: 'MA + ČJ',
-    price: '3 990 Kč / sezóna',
+    price: 3990,
     difficulty: 'Střední až vyšší (Cermat 9. třída)',
     schedule: 'Úterý & Čtvrtek 17:00 – 18:30 (2× týdně, 90 min)',
     instructorName: 'Mgr. Kateřina Dvořáková & Mgr. Petr Horák',
@@ -47,7 +85,7 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     description: 'Systematické zvládnutí všech typů úloh z Cermat testů – geometrie, rovnice, slovní úlohy, procenta a strategie řešení. 1x týdně živá lekce.',
     badge: 'Matematika',
     subject: 'Matematika',
-    price: '2 490 Kč / sezóna',
+    price: 2490,
     difficulty: 'Střední (Cermat 9. třída)',
     schedule: 'Úterý 17:00 – 18:30 (1× týdně, 90 min)',
     instructorName: 'Mgr. Petr Horák',
@@ -74,7 +112,7 @@ export const DEFAULT_FLAGSHIP_COURSES: Omit<Course, 'createdAt' | 'updatedAt'>[]
     description: 'Zaměřeno na pravopisné jevy, větné rozbory, stylistiku, porozumění textu a typické chytáky v Cermat testech z češtiny. 1x týdně živá lekce.',
     badge: 'Český jazyk',
     subject: 'Český jazyk',
-    price: '2 490 Kč / sezóna',
+    price: 2490,
     difficulty: 'Střední (Cermat 9. třída)',
     schedule: 'Čtvrtek 17:00 – 18:30 (1× týdně, 90 min)',
     instructorName: 'Mgr. Kateřina Dvořáková',
@@ -207,7 +245,8 @@ export async function unenrollStudentFromCourse(courseId: string, studentUid: st
 }
 
 export async function createCourse(data: Omit<Course, 'id'>, teacherId?: string): Promise<string> {
-  const courseData = {
+  const normalizedPrice = parseCoursePriceNumber(data.price);
+  const courseData: Record<string, any> = {
     ...data,
     teacherId: teacherId || data.teacherId || 'admin',
     studentIds: data.studentIds || [],
@@ -215,6 +254,11 @@ export async function createCourse(data: Omit<Course, 'id'>, teacherId?: string)
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp()
   };
+  if (normalizedPrice !== undefined) {
+    courseData.price = normalizedPrice;
+  } else {
+    delete courseData.price;
+  }
 
   const docRef = await addDoc(collection(db, 'courses'), courseData);
   cacheManager.invalidate('courses');
@@ -230,6 +274,14 @@ export async function updateCourse(id: string, data: Partial<Course>): Promise<v
     updatedAt: serverTimestamp()
   };
   delete cleanData.id;
+  if ('price' in cleanData) {
+    const normalizedPrice = parseCoursePriceNumber(cleanData.price);
+    if (normalizedPrice !== undefined) {
+      cleanData.price = normalizedPrice;
+    } else {
+      delete cleanData.price;
+    }
+  }
 
   if (snap.exists()) {
     await updateDoc(docRef, cleanData);

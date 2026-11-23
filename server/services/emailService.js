@@ -17,7 +17,59 @@ function sanitizeHeaderValue(value) {
   return String(value ?? '').replace(/[\r\n\0]+/g, ' ').trim();
 }
 
-function isEmailSimulationAllowed() {
+/**
+ * SEC-22: Striktní validátor jediné e-mailové adresy.
+ * Odmítá čárky, středníky, mezery/bílé znaky, <, >, uvozovky, CR/LF, NUL, neplatnou syntaxi a délku > 254.
+ */
+export function isStrictSingleEmail(value) {
+  if (typeof value !== 'string') return false;
+  if (/[\r\n\0]/.test(value)) return false;
+  if (!value || value.length > 254) return false;
+  if (/[\s,;<>'"()\\:]/.test(value)) return false;
+
+  const atIndex = value.indexOf('@');
+  if (atIndex <= 0 || atIndex !== value.lastIndexOf('@')) return false;
+
+  const localPart = value.slice(0, atIndex);
+  const domainPart = value.slice(atIndex + 1);
+  if (localPart.length > 64 || domainPart.length < 3 || domainPart.length > 253) return false;
+  if (localPart.startsWith('.') || localPart.endsWith('.') || localPart.includes('..')) return false;
+  if (!/^[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]+$/.test(localPart)) return false;
+
+  const labels = domainPart.split('.');
+  if (labels.length < 2) return false;
+  for (const label of labels) {
+    if (!label || label.length > 63) return false;
+    if (label.startsWith('-') || label.endsWith('-')) return false;
+    if (!/^[A-Za-z0-9-]+$/.test(label)) return false;
+  }
+  const tld = labels[labels.length - 1];
+  if (!/^(?:[A-Za-z]{2,63}|xn--[A-Za-z0-9-]{2,59})$/i.test(tld)) return false;
+
+  return true;
+}
+
+function validateOptionalSingleAddress(addr) {
+  if (addr === undefined || addr === null || addr === '') {
+    return { ok: true, value: undefined };
+  }
+  if (typeof addr !== 'string' || /[\r\n\0]/.test(addr)) {
+    return { ok: false, value: undefined };
+  }
+  const trimmed = addr.trim();
+  if (!trimmed) {
+    return { ok: true, value: undefined };
+  }
+  if (!isStrictSingleEmail(trimmed)) {
+    return { ok: false, value: undefined };
+  }
+  return { ok: true, value: trimmed };
+}
+
+export function isEmailSimulationAllowed() {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
   return (
     process.env.ALLOW_DEV_TOOLS === 'true' ||
     Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST) ||
@@ -66,12 +118,51 @@ function getTransporter() {
  * Pokud nejsou nastaveny SMTP proměnné, v produkci selže (fail-closed)
  * a v dev/emulator režimu simuluje odeslání bez logování citlivých OTP kódů.
  */
-export async function sendEmail({ to, subject, html, text, replyTo, bcc, cc, attachments = [], logDetails = {} }) {
-  const safeTo = sanitizeHeaderValue(to);
+export async function sendEmail({
+  to,
+  subject,
+  html,
+  text = undefined,
+  replyTo = undefined,
+  bcc = undefined,
+  cc = undefined,
+  attachments = [],
+  logDetails = {}
+}) {
+  if (typeof to !== 'string' || /[\r\n\0]/.test(to)) {
+    console.warn('[EmailService] Odmítnut neplatný příjemce e-mailu (non-string nebo CR/LF).');
+    return {
+      success: false,
+      simulated: false,
+      error: 'Neplatná e-mailová adresa příjemce.'
+    };
+  }
+  const safeTo = to.trim();
+  if (!isStrictSingleEmail(safeTo)) {
+    console.warn('[EmailService] Odmítnut neplatný nebo vícenásobný příjemce e-mailu.');
+    return {
+      success: false,
+      simulated: false,
+      error: 'Neplatná e-mailová adresa příjemce.'
+    };
+  }
+
+  const replyToCheck = validateOptionalSingleAddress(replyTo);
+  const bccCheck = validateOptionalSingleAddress(bcc);
+  const ccCheck = validateOptionalSingleAddress(cc);
+  if (!replyToCheck.ok || !bccCheck.ok || !ccCheck.ok) {
+    console.warn('[EmailService] Odmítnuta neplatná hlavička replyTo/cc/bcc.');
+    return {
+      success: false,
+      simulated: false,
+      error: 'Neplatná e-mailová hlavička.'
+    };
+  }
+
   const safeSubject = sanitizeHeaderValue(subject);
-  const safeReplyTo = replyTo ? sanitizeHeaderValue(replyTo) : undefined;
-  const safeBcc = bcc ? sanitizeHeaderValue(bcc) : undefined;
-  const safeCc = cc ? sanitizeHeaderValue(cc) : undefined;
+  const safeReplyTo = replyToCheck.value;
+  const safeBcc = bccCheck.value;
+  const safeCc = ccCheck.value;
   const mailClient = getTransporter();
 
   if (!mailClient) {
@@ -362,7 +453,8 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+  const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
     : undefined;
   return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
@@ -418,7 +510,8 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+  const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
     : undefined;
   return sendEmail({ to, bcc, subject, html, attachments, logDetails: { orderId, amount } });
@@ -450,28 +543,140 @@ export async function sendRecurringChargeFailedEmail({ to, name, amount, reason 
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+  const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
     : undefined;
   return sendEmail({ to, bcc, subject, html });
 }
 
 /**
+ * SEC-36: Povolené originy pro klikatelné odkazy na stránku v hlášení chyby.
+ * Externí nebo neplatné URL se v admin e-mailu vykreslí výhradně jako prostý escapovaný text.
+ */
+const ALLOWED_BUG_REPORT_ORIGINS = new Set([
+  'https://www.proeducator.eu',
+  'https://proeducator.eu'
+]);
+const ALLOWED_BUG_STORAGE_BUCKETS = [
+  'gen-lang-client-0972842509.appspot.com',
+  'gen-lang-client-0972842509.firebasestorage.app'
+];
+const STRICT_BUG_DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+$/i;
+
+export function sanitizeAllowedBugReportPageUrl(rawUrl) {
+  const safe = sanitizeHttpUrl(rawUrl);
+  if (!safe) return '';
+  try {
+    const parsed = new URL(safe);
+    if (ALLOWED_BUG_REPORT_ORIGINS.has(parsed.origin)) {
+      return parsed.toString();
+    }
+    if (
+      process.env.NODE_ENV !== 'production' &&
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1')
+    ) {
+      return parsed.toString();
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * SEC-36: Pro screenshot v hlášení chyby povolujeme výhradně inline rastrové data:image/(png|jpeg|webp);base64
+ * nebo Firebase Storage URL projektu gen-lang-client-0972842509 (nikdy libovolné externí tracking <img> URL).
+ */
+export function sanitizeAllowedBugReportScreenshotUrl(rawUrl) {
+  if (typeof rawUrl !== 'string') return '';
+  const cleaned = rawUrl.replace(/[\u0000-\u001f\u007f]+/g, '').trim();
+  if (!cleaned) return '';
+
+  const compact = cleaned.replace(/\s+/g, '');
+  if (STRICT_BUG_DATA_IMAGE_RE.test(compact)) {
+    return compact;
+  }
+
+  const safeHttp = sanitizeHttpUrl(cleaned);
+  if (!safeHttp) return '';
+  try {
+    const parsed = new URL(safeHttp);
+    if (parsed.protocol !== 'https:') return '';
+    let decodedPathname = parsed.pathname;
+    try {
+      decodedPathname = decodeURIComponent(parsed.pathname);
+    } catch {
+      return '';
+    }
+    if (
+      parsed.pathname.split('/').includes('..') ||
+      decodedPathname.split('/').includes('..') ||
+      decodedPathname.includes('\\')
+    ) {
+      return '';
+    }
+
+    if (parsed.hostname === 'firebasestorage.googleapis.com') {
+      const allowedPrefix = ALLOWED_BUG_STORAGE_BUCKETS.some((bucket) =>
+        parsed.pathname.startsWith(`/v0/b/${bucket}/`)
+      );
+      return allowedPrefix ? parsed.toString() : '';
+    }
+
+    if (parsed.hostname === 'storage.googleapis.com') {
+      const allowedPrefix = ALLOWED_BUG_STORAGE_BUCKETS.some((bucket) =>
+        parsed.pathname.startsWith(`/${bucket}/`)
+      );
+      return allowedPrefix ? parsed.toString() : '';
+    }
+
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+export function resolveBugReportRecipient(explicitTo = undefined) {
+  const candidates = [explicitTo, process.env.BUG_REPORT_EMAIL, process.env.ADMIN_EMAIL];
+  for (const raw of candidates) {
+    if (typeof raw !== 'string' || /[\r\n\0]/.test(raw)) continue;
+    const trimmed = raw.trim();
+    if (trimmed && isStrictSingleEmail(trimmed)) {
+      return trimmed;
+    }
+  }
+  return '';
+}
+
+/**
  * 6. Šablona: Hlášení chyby od studenta pro administrátory
  */
 export async function sendBugReportEmail({
-  to = process.env.BUG_REPORT_EMAIL || 'netkova.nela@gmail.com',
-  studentName,
-  studentEmail,
-  category,
-  categoryLabel,
-  description,
-  pageUrl,
-  userAgent,
-  screenResolution,
-  screenshotUrl,
-  reportId
+  to = undefined,
+  studentName = undefined,
+  studentEmail = undefined,
+  category = undefined,
+  categoryLabel = undefined,
+  description = undefined,
+  pageUrl = undefined,
+  userAgent = undefined,
+  screenResolution = undefined,
+  screenshotUrl = undefined,
+  reportId = undefined
 }) {
+  const recipient = resolveBugReportRecipient(to);
+  if (!recipient) {
+    console.warn('[EmailService] BUG_REPORT_EMAIL / ADMIN_EMAIL není nakonfigurováno — e-mail s hlášením chyby nebyl odeslán.');
+    return {
+      success: false,
+      skipped: true,
+      simulated: false,
+      error: 'BUG_REPORT_EMAIL není nakonfigurováno.'
+    };
+  }
+
   const displayCategory = categoryLabel || category || 'Chyba';
   const safeCategory = escapeHtml(displayCategory);
   const safeStudentName = escapeHtml(studentName || 'Student');
@@ -479,9 +684,9 @@ export async function sendBugReportEmail({
   const safeUserAgent = escapeHtml(userAgent || 'Neuvedeno');
   const safeResolution = escapeHtml(screenResolution || 'Neuvedeno');
   const safeReportId = reportId ? escapeHtml(reportId) : '';
-  const safePageUrlHref = sanitizeHttpUrl(pageUrl);
+  const safePageUrlHref = sanitizeAllowedBugReportPageUrl(pageUrl);
   const safePageUrlDisplay = escapeHtml(pageUrl || 'Neuvedeno');
-  const safeScreenshotUrl = sanitizeHttpUrl(screenshotUrl, { allowDataImage: true });
+  const safeScreenshotUrl = sanitizeAllowedBugReportScreenshotUrl(screenshotUrl);
   const mailtoUrl = sanitizeHttpUrl(`mailto:${studentEmail || ''}`, { allowMailto: true });
 
   const attachments = [];
@@ -515,7 +720,7 @@ export async function sendBugReportEmail({
   const safeDescription = escapeHtml(description || '').replace(/\r?\n/g, '<br/>');
 
   const bodyHtml = `
-    <p style="margin-top:0;">Ahoj Nelo,</p>
+    <p style="margin-top:0;">Dobrý den,</p>
     <p>student <strong>${safeStudentName}</strong> (<code>${safeStudentEmail}</code>) právě nahlásil chybu v aplikaci <strong>ProEdu</strong>.</p>
 
     <div style="background-color: #FEF2F2; border-left: 4px solid #EF4444; border-radius: 8px; padding: 16px 20px; margin: 20px 0;">
@@ -580,9 +785,13 @@ export async function sendBugReportEmail({
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const safeReplyToStudent =
+    typeof studentEmail === 'string' && !/[\r\n\0]/.test(studentEmail) && isStrictSingleEmail(studentEmail.trim())
+      ? studentEmail.trim()
+      : undefined;
   return sendEmail({
-    to,
-    replyTo: studentEmail,
+    to: recipient,
+    replyTo: safeReplyToStudent,
     subject,
     html,
     attachments,
@@ -661,7 +870,8 @@ export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, imme
   `;
 
   const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== to.toLowerCase())
+  const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
+  const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
     : undefined;
   return sendEmail({

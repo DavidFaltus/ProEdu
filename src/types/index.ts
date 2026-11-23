@@ -43,7 +43,8 @@ export interface UserProfile {
   preferredPaymentMethod?: PaymentMethod; // Preferovaná platební metoda ('comgate')
   billingDetails?: BillingDetails; // Uložené fakturační údaje pro iÚčto
   emailVerified?: boolean; // Zda byl e-mail ověřen 6místným kódem
-  initRecurringTransId?: string; // Comgate transId iniciační platby pro opakované strhávání
+  hasRecurringPaymentMethod?: boolean; // Bezpečný příznak uložené platební metody pro opakované platby
+  initRecurringTransId?: string; // Legacy interní Comgate transId (již se nevrací z session-bootstrap)
   recurringCancelled?: boolean; // Zda byla zrušena opakovaná platba
   recurringCancelledAt?: string | null; // ISO datum zrušení opakované platby
   premiumSince?: string;
@@ -124,7 +125,7 @@ export interface PracticeSubtopic {
   hasStudyMaterial?: boolean;
   hasStudyContent?: boolean;
   isDemo?: boolean;
-  svgUrl?: string | null; // např. '/materials/cz-shoda.svg' nebo externí link
+  svgUrl?: string | null; // např. '/api/materials/{id}/file' nebo externí link
   svgContent?: string | null; // Uložený kód SVG z konvertovaného PDF nebo SVG souboru
   materialId?: string | null;
   pairedMaterialId?: string | null;
@@ -254,7 +255,7 @@ export interface Course {
   title: string;
   description: string;
   subject?: string; // 'MA + ČJ' | 'Matematika' | 'Český jazyk'
-  price?: string; // e.g. '3 990 Kč / sezóna'
+  price?: number | string; // Číselná cena v Kč (např. 3990), zachována zpětná kompatibilita se stringem
   difficulty?: string; // e.g. 'Střední pokročilost (Cermat 9. třída)'
   schedule?: string; // e.g. 'Čtvrtek 17:00 - 18:30 (1x týdně, 90 min)'
   instructorName?: string; // e.g. 'Mgr. Jan Novák'

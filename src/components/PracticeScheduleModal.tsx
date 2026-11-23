@@ -36,8 +36,8 @@ import {
   ScheduleConfig,
 } from '../types';
 import {
-  getTopics,
-  getSubtopics,
+  fetchPracticeCatalog,
+  normalizeSubjectName,
   PREDEFINED_SUBJECTS,
 } from '../services/practiceService';
 import {
@@ -160,10 +160,14 @@ export default function PracticeScheduleModal({
     async function fetchCatalog() {
       setLoadingCatalog(true);
       try {
-        const [fetchedTopics, fetchedSubtopics] = await Promise.all([
-          getTopics(catalogSubject),
-          getSubtopics(undefined, catalogSubject),
-        ]);
+        const catalog = await fetchPracticeCatalog();
+        const targetSubject = normalizeSubjectName(catalogSubject);
+        const fetchedTopics = (catalog.topics || []).filter(
+          (t) => normalizeSubjectName(t.subjectId) === targetSubject
+        );
+        const fetchedSubtopics = (catalog.subtopics || []).filter(
+          (s) => normalizeSubjectName(s.subjectId) === targetSubject
+        );
         if (active) {
           const visibleSubs = fetchedSubtopics.filter((s) => !s.isHidden);
           const visibleTopics = fetchedTopics.filter(
