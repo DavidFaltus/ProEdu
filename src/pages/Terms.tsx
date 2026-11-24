@@ -6,9 +6,9 @@ import { Button } from '../components/ui/button';
 
 export default function Terms() {
   return (
-    <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6 space-y-8 text-[#1E1B18]">
+    <div className="max-w-4xl mx-auto py-4 sm:py-6 space-y-8 text-[#1E1B18]">
       {/* Top Bar with Back Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link to="/">
           <Button variant="ghost" className="gap-2 font-bold text-gray-600 hover:text-gray-900 rounded-2xl cursor-pointer">
             <ArrowLeft size={18} />
@@ -29,7 +29,7 @@ export default function Terms() {
             Právní dokument
           </span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-gray-700 tracking-tight">
+        <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
           Obchodní podmínky
         </h1>
         <p className="mt-2 text-sm text-gray-500 font-medium">
@@ -55,8 +55,8 @@ export default function Terms() {
 
         {/* 2. Identifikační údaje poskytovatele */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Building2 size={20} className="text-amber-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Building2 size={20} className="text-amber-600 shrink-0 mt-1" />
             <span>2. Identifikační údaje poskytovatele</span>
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 bg-[#FAF7F0] rounded-2xl border border-amber-200/60 font-medium text-xs sm:text-sm">
@@ -85,8 +85,8 @@ export default function Terms() {
 
         {/* 3. Charakter služeb a vyloučení odpovědnosti */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <AlertCircle size={20} className="text-amber-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <AlertCircle size={20} className="text-amber-600 shrink-0 mt-1" />
             <span>3. Charakter služeb a vyloučení odpovědnosti za výsledek</span>
           </h2>
           <p>
@@ -139,8 +139,8 @@ export default function Terms() {
 
         {/* 6. Digitální předplatné ProEdu Premium a podmínky opakovaných plateb (Subscription) */}
         <section id="predplatne" className="bg-white rounded-3xl p-6 sm:p-8 border border-amber-200/80 shadow-xs space-y-4">
-          <div className="flex items-center gap-2">
-            <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-black text-sm">
+          <div className="flex items-start gap-2.5">
+            <span className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-black text-sm shrink-0 mt-0.5">
               ★
             </span>
             <h2 className="text-xl font-bold text-gray-900">
@@ -181,8 +181,8 @@ export default function Terms() {
 
         {/* 7. Autorská práva a ochrana obsahu */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <ShieldCheck size={20} className="text-amber-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <ShieldCheck size={20} className="text-amber-600 shrink-0 mt-1" />
             <span>7. Autorská práva a ochrana obsahu</span>
           </h2>
           <p>
@@ -238,8 +238,8 @@ export default function Terms() {
 
         {/* 10. Reklamace a mimosoudní řešení sporů */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Scale size={20} className="text-amber-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Scale size={20} className="text-amber-600 shrink-0 mt-1" />
             <span>10. Reklamace a mimosoudní řešení sporů</span>
           </h2>
           <p>

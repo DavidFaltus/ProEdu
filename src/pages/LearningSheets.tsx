@@ -9,8 +9,10 @@ import {
   Lock,
   Maximize2,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Star,
+  X,
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -248,6 +250,7 @@ export default function LearningSheets() {
   // Selected sheet & preview state
   const [selectedMaterialId, setSelectedMaterialId] = useState<string | null>(null);
   const [isMobileDetailOpen, setIsMobileDetailOpen] = useState(false);
+  const [isMobileTypeFilterOpen, setIsMobileTypeFilterOpen] = useState(false);
 
   const [previewPages, setPreviewPages] = useState<MaterialPageItem[]>([]);
   const [previewPageIdx, setPreviewPageIdx] = useState(0);
@@ -306,6 +309,20 @@ export default function LearningSheets() {
   useEffect(() => {
     setVisibleLimit(8);
   }, [selectedTopicKey, search, selectedTypes, sortBy]);
+
+  // Automaticky zavřít mobilní bottom sheet při přechodu na desktop (resize / otočení tabletu)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (e: MediaQueryListEvent | MediaQueryList) => {
+      if (e.matches) {
+        setIsMobileDetailOpen(false);
+      }
+    };
+    handleChange(mq);
+    mq.addEventListener('change', handleChange);
+    return () => mq.removeEventListener('change', handleChange);
+  }, []);
 
   const libraryMaterials = useMemo(
     () =>
@@ -597,9 +614,21 @@ export default function LearningSheets() {
   }, [isTeacher, previewWatermark, user?.email, user?.uid]);
 
   const openPaywall = (customDesc?: string) => {
+    setIsMobileDetailOpen(false);
     setPaywallDescription(customDesc);
     setIsPaywallOpen(true);
   };
+
+  const openReader = () => {
+    setIsMobileDetailOpen(false);
+    setIsReaderOpen(true);
+  };
+
+  const activeTypeCount = useMemo(
+    () => MATERIAL_TYPE_FILTER_LABELS.filter(({ key }) => selectedTypes[key]).length,
+    [selectedTypes]
+  );
+  const hasCustomTypeFilter = activeTypeCount < MATERIAL_TYPE_FILTER_LABELS.length;
 
   const handleToggleType = (typeKey: MaterialType) => {
     setSelectedTypes((prev) => ({ ...prev, [typeKey]: !prev[typeKey] }));
@@ -625,6 +654,7 @@ export default function LearningSheets() {
       return;
     }
     if (mat.linkedSubtopic) {
+      setIsMobileDetailOpen(false);
       trackSectionClick('material_study_click', `/study/${mat.linkedSubtopic.id}`, {
         materialId: mat.id,
         subtopicId: mat.linkedSubtopic.id,
@@ -632,7 +662,7 @@ export default function LearningSheets() {
       navigate(`/study/${mat.linkedSubtopic.id}`);
       return;
     }
-    setIsReaderOpen(true);
+    openReader();
   };
 
   const handleDownloadPdf = async (mat: ExistingMaterialItem) => {
@@ -708,7 +738,10 @@ export default function LearningSheets() {
     return topicGroups.find((g) => g.key === selectedTopicKey)?.label || 'Materiály';
   }, [selectedTopicKey, topicGroups]);
 
-  const renderRightDetailPanel = (mat: ExistingMaterialItem) => {
+  const renderRightDetailPanel = (
+    mat: ExistingMaterialItem,
+    mode: 'full' | 'bodyOnly' | 'actionsOnly' = 'full'
+  ) => {
     const code = materialCodeMap.get(mat.id) || '1.1';
     const typeLabel = MATERIAL_TYPE_LABELS[mat.materialType || 'worksheet'];
     const pageCount = Math.max(
@@ -791,6 +824,109 @@ export default function LearningSheets() {
       return 'Otevřením čtečky si můžeš materiál zvětšit nebo vytisknout';
     })();
 
+    const actionButtons = (
+      <div className="space-y-2 pt-1">
+        {mat.locked ? (
+          <>
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="w-full h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
+            >
+              <Lock size={16} />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadPdf(mat)}
+              disabled={isDownloading || isPrinting}
+              className="w-full h-11 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <Download size={16} />
+              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
+            </Button>
+          </>
+        ) : mat.linkedSubtopic ? (
+          <>
+            {/* Řádek 1: plnošířkové primární CTA */}
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="w-full h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-1.5 shadow-xs border border-amber-300/60 cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.01]"
+            >
+              <BookOpen size={16} className="shrink-0" />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            {/* Řádek 2: 50/50 Otevřít čtečku + Stáhnout PDF s popiskem */}
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={openReader}
+                className="w-full h-11 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-xs sm:text-sm px-3 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                <Maximize2 size={15} className="shrink-0" />
+                <span>Otevřít čtečku</span>
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => handleDownloadPdf(mat)}
+                disabled={isDownloading || isPrinting}
+                className="w-full h-11 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-xs sm:text-sm px-3 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              >
+                {isDownloading ? (
+                  <Loader2 size={15} className="animate-spin shrink-0" />
+                ) : (
+                  <Download size={15} className="shrink-0" />
+                )}
+                <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <Button
+              type="button"
+              onClick={() => handlePrimaryAction(mat)}
+              className="w-full h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
+            >
+              <Maximize2 size={16} />
+              <span>{primaryButtonLabel}</span>
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleDownloadPdf(mat)}
+              disabled={isDownloading || isPrinting}
+              className="w-full h-11 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isDownloading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Download size={16} />
+              )}
+              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
+            </Button>
+          </>
+        )}
+
+        {/* Centered Quota Line */}
+        <p className="text-xs font-medium text-gray-500 text-center pt-0.5">
+          {quotaFooterText}
+        </p>
+      </div>
+    );
+
+    if (mode === 'actionsOnly') {
+      return actionButtons;
+    }
+
     return (
       <div className="space-y-4">
         {/* Preview Frame */}
@@ -807,7 +943,7 @@ export default function LearningSheets() {
           </div>
         ) : currentPreviewPage ? (
           <div
-            onClick={() => setIsReaderOpen(true)}
+            onClick={openReader}
             onContextMenu={(e) => e.preventDefault()}
             title="Kliknutím otevřete čtečku na celou obrazovku"
             className="relative w-full rounded-2xl bg-[#EEF3F9] border border-slate-200/70 p-3.5 pt-10 overflow-hidden cursor-zoom-in group"
@@ -837,9 +973,9 @@ export default function LearningSheets() {
                     onClick={() => setPreviewPageIdx((p) => Math.max(0, p - 1))}
                     disabled={safePreviewPageIdx === 0}
                     aria-label="Předchozí strana"
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
+                    className="w-9 h-9 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
                   >
-                    <ChevronLeft size={15} />
+                    <ChevronLeft size={16} />
                   </button>
                   <button
                     type="button"
@@ -848,15 +984,15 @@ export default function LearningSheets() {
                     }
                     disabled={safePreviewPageIdx === previewPages.length - 1}
                     aria-label="Další strana"
-                    className="w-8 h-8 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
+                    className="w-9 h-9 rounded-full bg-white hover:bg-gray-50 disabled:opacity-40 text-[#0F1E36] flex items-center justify-center shadow-2xs border border-gray-200/80 cursor-pointer"
                   >
-                    <ChevronRight size={15} />
+                    <ChevronRight size={16} />
                   </button>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setIsReaderOpen(true)}
+                  onClick={openReader}
                   className="inline-flex items-center gap-1.5 text-xs font-bold text-[#1D4ED8] hover:underline cursor-pointer"
                 >
                   <Maximize2 size={13} />
@@ -878,9 +1014,11 @@ export default function LearningSheets() {
 
         {/* Badges */}
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="px-3 py-1 rounded-full text-xs font-black bg-[#1D4ED8] text-white">
-            {code}
-          </span>
+          {mode === 'full' && (
+            <span className="px-3 py-1 rounded-full text-xs font-black bg-[#1D4ED8] text-white">
+              {code}
+            </span>
+          )}
           <span className="px-3 py-1 rounded-full text-xs font-bold bg-[#EEF4FF] text-[#1D4ED8]">
             {typeLabel}
           </span>
@@ -889,9 +1027,11 @@ export default function LearningSheets() {
 
         {/* Title & Meta */}
         <div className="space-y-1.5">
-          <h3 className="text-2xl sm:text-[26px] font-display font-black text-[#0F1E36] leading-tight">
-            {mat.title}
-          </h3>
+          {mode === 'full' && (
+            <h3 className="text-2xl sm:text-[26px] font-display font-black text-[#0F1E36] leading-tight">
+              {mat.title}
+            </h3>
+          )}
           <p className="text-sm font-medium text-gray-500">
             {mat.linkedSubtopic ? (
               <>
@@ -923,91 +1063,7 @@ export default function LearningSheets() {
           </div>
         )}
 
-        {/* Action Buttons: linked materials show Začít studovat + Otevřít čtečku + icon download; standalone keeps full-width Stáhnout PDF */}
-        {mat.locked ? (
-          <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-1">
-            <Button
-              type="button"
-              onClick={() => handlePrimaryAction(mat)}
-              className="flex-1 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
-            >
-              <Lock size={16} />
-              <span>{primaryButtonLabel}</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleDownloadPdf(mat)}
-              disabled={isDownloading || isPrinting}
-              className="flex-1 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Download size={16} />
-              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
-            </Button>
-          </div>
-        ) : mat.linkedSubtopic ? (
-          <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 pt-1">
-            <Button
-              type="button"
-              onClick={() => handlePrimaryAction(mat)}
-              className="flex-1 min-w-[130px] sm:min-w-0 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-1.5 shadow-xs border border-amber-300/60 cursor-pointer whitespace-nowrap transition-transform hover:scale-[1.01]"
-            >
-              <BookOpen size={16} className="shrink-0" />
-              <span>{primaryButtonLabel}</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setIsReaderOpen(true)}
-              className="flex-1 min-w-[130px] sm:min-w-0 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
-            >
-              <Maximize2 size={16} className="shrink-0" />
-              <span>Otevřít čtečku</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={() => handleDownloadPdf(mat)}
-              disabled={isDownloading || isPrinting}
-              title={isDownloading ? 'Stahuji PDF...' : 'Stáhnout PDF'}
-              aria-label="Stáhnout PDF"
-              className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 shrink-0 cursor-pointer"
-            >
-              {isDownloading ? <Loader2 size={17} className="animate-spin" /> : <Download size={17} />}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col sm:flex-row items-stretch gap-2.5 pt-1">
-            <Button
-              type="button"
-              onClick={() => handlePrimaryAction(mat)}
-              className="flex-1 h-11 sm:h-12 rounded-full bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] font-black text-sm px-4 flex items-center justify-center gap-2 shadow-xs border border-amber-300/60 cursor-pointer transition-transform hover:scale-[1.01]"
-            >
-              <Maximize2 size={16} />
-              <span>{primaryButtonLabel}</span>
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleDownloadPdf(mat)}
-              disabled={isDownloading || isPrinting}
-              className="flex-1 h-11 sm:h-12 rounded-full bg-white hover:bg-gray-50 text-[#0F1E36] border border-gray-300 hover:border-gray-400 font-bold text-sm px-4 flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <Download size={16} />
-              <span>{isDownloading ? 'Stahuji...' : 'Stáhnout PDF'}</span>
-            </Button>
-          </div>
-        )}
-
-        {/* Centered Quota Line */}
-        <p className="text-xs font-medium text-gray-500 text-center pt-0.5">
-          {quotaFooterText}
-        </p>
+        {mode === 'full' && actionButtons}
       </div>
     );
   };
@@ -1027,22 +1083,22 @@ export default function LearningSheets() {
       {/* Toolbar Row: Subjects LEFT (styled like Practice.tsx) + Search RIGHT (+ hidden Ročník behind feature flag) */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         {/* Left Controls: Subject Switcher (+ optional Ročník) */}
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="inline-flex items-center gap-1.5 bg-white border border-[#E6DFD3] rounded-full p-1.5 shadow-xs shrink-0 max-w-full">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+          <div className="grid grid-cols-2 w-full sm:w-auto sm:inline-flex items-center gap-1.5 bg-white border border-[#E6DFD3] rounded-full p-1.5 shadow-xs shrink-0 max-w-full">
             <button
               type="button"
               onClick={() => setActiveSubject('Matematika')}
               className={cn(
-                'px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
+                'justify-center px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
                 activeSubject === 'Matematika'
                   ? 'bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-md shadow-teal-900/10'
                   : 'text-gray-700 hover:text-emerald-700 hover:bg-emerald-50/70'
               )}
             >
               {activeSubject === 'Matematika' ? (
-                <BrainWhiteIcon className="w-6 h-6 shrink-0" />
+                <BrainWhiteIcon className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               ) : (
-                <BrainPinkIcon className="w-6 h-6 shrink-0" />
+                <BrainPinkIcon className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               )}
               <span>Matematika</span>
             </button>
@@ -1050,16 +1106,16 @@ export default function LearningSheets() {
               type="button"
               onClick={() => setActiveSubject('Čeština')}
               className={cn(
-                'px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
+                'justify-center px-3 sm:px-5 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-black inline-flex items-center gap-2 sm:gap-2.5 transition-all cursor-pointer whitespace-nowrap',
                 activeSubject === 'Čeština'
                   ? 'bg-gradient-to-br from-rose-500 to-pink-600 text-white shadow-md shadow-rose-900/10'
                   : 'text-gray-700 hover:text-rose-700 hover:bg-rose-50/70'
               )}
             >
               {activeSubject === 'Čeština' ? (
-                <BookWhiteIcon className="w-6 h-6 shrink-0" />
+                <BookWhiteIcon className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               ) : (
-                <BookCyanIcon className="w-6 h-6 shrink-0" />
+                <BookCyanIcon className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               )}
               <span>Český jazyk</span>
             </button>
@@ -1115,9 +1171,9 @@ export default function LearningSheets() {
           <p className="text-base font-bold text-gray-500">Načítám výukové materiály...</p>
         </div>
       ) : (
-        <div className="bg-white rounded-[2rem] border border-[#EAE4D7] shadow-sm overflow-hidden grid grid-cols-1 lg:grid-cols-[235px_minmax(0,1fr)_390px] xl:grid-cols-[255px_minmax(0,1fr)_420px] 2xl:grid-cols-[275px_minmax(0,1fr)_490px] divide-y lg:divide-y-0 lg:divide-x divide-[#EFEAE0]">
-          {/* COLUMN 1: TÉMATA & TYP */}
-          <aside className="p-4 sm:p-5 flex flex-col justify-between gap-6 bg-white">
+        <div className="bg-white rounded-[2rem] border border-[#EAE4D7] shadow-sm overflow-x-clip grid grid-cols-1 lg:grid-cols-[235px_minmax(0,1fr)_390px] xl:grid-cols-[255px_minmax(0,1fr)_420px] 2xl:grid-cols-[275px_minmax(0,1fr)_490px] divide-y lg:divide-y-0 lg:divide-x divide-[#EFEAE0]">
+          {/* COLUMN 1: TÉMATA & TYP (Desktop only >= lg) */}
+          <aside className="hidden lg:flex p-4 sm:p-5 flex-col justify-between gap-6 bg-white">
             <div className="space-y-2">
               <p className="text-xs font-black uppercase tracking-wider text-gray-400 px-3.5">
                 Témata
@@ -1233,9 +1289,95 @@ export default function LearningSheets() {
 
           {/* COLUMN 2: SHEET LIST */}
           <section className="p-4 sm:p-5 flex flex-col justify-between gap-4 min-w-0 bg-white">
-            <div className="space-y-4">
+            <div className="space-y-3.5 sm:space-y-4">
+              {/* Mobile Topic Dropdown (< lg) */}
+              <div className="lg:hidden">
+                <Select value={selectedTopicKey} onValueChange={(v) => setSelectedTopicKey(v)}>
+                  <SelectTrigger
+                    aria-label="Vybrat téma materiálů"
+                    className="w-full h-11 rounded-2xl bg-[#FAF8F4] border border-[#EAE4D7] px-3.5 text-sm font-bold text-[#0F1E36] shadow-2xs cursor-pointer"
+                  >
+                    <span className="flex items-center justify-between gap-2 min-w-0 flex-1 pr-1">
+                      <span className="flex items-center gap-2 min-w-0">
+                        {selectedTopicKey === '__exam__' ? (
+                          <Star
+                            size={15}
+                            className={cn(
+                              'shrink-0',
+                              examPrepCount > 0
+                                ? 'text-amber-500 fill-amber-400'
+                                : 'text-gray-400'
+                            )}
+                          />
+                        ) : selectedTopicKey !== 'all' ? (
+                          <span
+                            className={cn(
+                              'w-2.5 h-2.5 rounded-full shrink-0',
+                              topicGroups.find((g) => g.key === selectedTopicKey)?.dotColor ||
+                                'bg-blue-500'
+                            )}
+                          />
+                        ) : null}
+                        <span className="truncate">{activeTopicTitle}</span>
+                      </span>
+                      <span className="text-xs font-black text-gray-500 shrink-0">
+                        {selectedTopicKey === 'all'
+                          ? subjectGradeMaterials.length
+                          : selectedTopicKey === '__exam__'
+                            ? examPrepCount
+                            : (topicGroups.find((g) => g.key === selectedTopicKey)?.count ?? 0)}
+                      </span>
+                    </span>
+                  </SelectTrigger>
+                  <SelectContent className="rounded-2xl max-h-80">
+                    <SelectItem value="all" className="text-sm font-bold cursor-pointer py-2.5">
+                      <span className="flex items-center justify-between gap-3 w-full">
+                        <span>Všechny materiály</span>
+                        <span className="text-xs font-bold text-gray-400">
+                          {subjectGradeMaterials.length}
+                        </span>
+                      </span>
+                    </SelectItem>
+
+                    <SelectItem value="__exam__" className="text-sm font-bold cursor-pointer py-2.5">
+                      <span className="flex items-center justify-between gap-3 w-full">
+                        <span className="flex items-center gap-2">
+                          <Star
+                            size={14}
+                            className={cn(
+                              'shrink-0',
+                              examPrepCount > 0
+                                ? 'text-amber-500 fill-amber-400'
+                                : 'text-gray-400'
+                            )}
+                          />
+                          <span>Příprava na přijímačky</span>
+                        </span>
+                        <span className="text-xs font-bold text-gray-400">{examPrepCount}</span>
+                      </span>
+                    </SelectItem>
+
+                    {topicGroups.map((group) => (
+                      <SelectItem
+                        key={group.key}
+                        value={group.key}
+                        className="text-sm font-bold cursor-pointer py-2.5"
+                      >
+                        <span className="flex items-center justify-between gap-3 w-full">
+                          <span className="flex items-center gap-2">
+                            <span className={cn('w-2.5 h-2.5 rounded-full shrink-0', group.dotColor)} />
+                            <span>{group.label}</span>
+                          </span>
+                          <span className="text-xs font-bold text-gray-400">{group.count}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               {/* List Header */}
-              <div className="flex items-start justify-between gap-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <h2 className="text-xl sm:text-2xl font-display font-black text-[#0F1E36] leading-snug">
                     {activeTopicTitle}
@@ -1246,23 +1388,75 @@ export default function LearningSheets() {
                   </p>
                 </div>
 
-                <Select value={sortBy} onValueChange={(v: SortOption) => setSortBy(v)}>
-                  <SelectTrigger className="h-9 border-none shadow-none bg-transparent hover:bg-gray-50 px-2.5 rounded-lg text-sm font-bold text-[#0F1E36] w-auto gap-1 cursor-pointer shrink-0">
-                    <span>{SORT_LABELS[sortBy]}</span>
-                  </SelectTrigger>
-                  <SelectContent className="rounded-xl">
-                    <SelectItem value="number" className="text-sm font-bold">
-                      Podle čísla
-                    </SelectItem>
-                    <SelectItem value="newest" className="text-sm font-bold">
-                      Od nejnovějších
-                    </SelectItem>
-                    <SelectItem value="title" className="text-sm font-bold">
-                      Podle názvu
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileTypeFilterOpen((prev) => !prev)}
+                    aria-expanded={isMobileTypeFilterOpen}
+                    className={cn(
+                      'lg:hidden inline-flex items-center gap-1.5 h-9 px-3 rounded-xl border text-xs font-bold transition-colors cursor-pointer shrink-0',
+                      isMobileTypeFilterOpen || hasCustomTypeFilter
+                        ? 'bg-[#EEF4FF] border-[#BFD8FE] text-[#1D4ED8]'
+                        : 'bg-white border-gray-200 text-[#0F1E36] hover:bg-gray-50'
+                    )}
+                  >
+                    <SlidersHorizontal size={14} />
+                    <span>Filtry</span>
+                    {hasCustomTypeFilter && (
+                      <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-[#1D4ED8] text-white text-[10px] font-black">
+                        {activeTypeCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <Select value={sortBy} onValueChange={(v: SortOption) => setSortBy(v)}>
+                    <SelectTrigger className="h-9 border-none shadow-none bg-transparent hover:bg-gray-50 px-2.5 rounded-lg text-sm font-bold text-[#0F1E36] w-auto gap-1 cursor-pointer shrink-0">
+                      <span>{SORT_LABELS[sortBy]}</span>
+                    </SelectTrigger>
+                    <SelectContent className="rounded-xl">
+                      <SelectItem value="number" className="text-sm font-bold">
+                        Podle čísla
+                      </SelectItem>
+                      <SelectItem value="newest" className="text-sm font-bold">
+                        Od nejnovějších
+                      </SelectItem>
+                      <SelectItem value="title" className="text-sm font-bold">
+                        Podle názvu
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+
+              {/* Mobile Collapsible Type Filter Pills (< lg) */}
+              {isMobileTypeFilterOpen && (
+                <div className="lg:hidden flex flex-wrap items-center gap-2 p-2.5 rounded-2xl bg-[#FAF8F4] border border-[#EAE4D7]">
+                  <span className="text-[11px] font-black uppercase tracking-wider text-gray-400 px-1">
+                    Typ:
+                  </span>
+                  {MATERIAL_TYPE_FILTER_LABELS.map(({ key, label }) => {
+                    const checked = selectedTypes[key];
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => handleToggleType(key)}
+                        className={cn(
+                          'inline-flex items-center gap-1.5 px-3 py-1.5 min-h-[34px] rounded-full text-xs font-bold border transition-colors cursor-pointer',
+                          checked
+                            ? 'bg-[#1D4ED8] border-[#1D4ED8] text-white shadow-2xs'
+                            : 'bg-white border-gray-200 text-gray-600 hover:border-gray-300'
+                        )}
+                      >
+                        {checked && <Check size={12} strokeWidth={3} />}
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               {/* Material Rows */}
               {filteredMaterials.length === 0 ? (
@@ -1328,7 +1522,7 @@ export default function LearningSheets() {
                           </span>
 
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm sm:text-[15px] font-bold text-[#0F1E36] truncate">
+                            <p className="text-sm sm:text-[15px] font-bold text-[#0F1E36] line-clamp-2 sm:truncate leading-snug">
                               {mat.title}
                             </p>
                             <p className="text-xs sm:text-[13px] font-medium text-gray-500 truncate">
@@ -1386,8 +1580,8 @@ export default function LearningSheets() {
             )}
           </section>
 
-          {/* COLUMN 3: PREVIEW & ACTIONS (Desktop) */}
-          <aside className="hidden lg:block p-5 sm:p-6 bg-white">
+          {/* COLUMN 3: PREVIEW & ACTIONS (Desktop sticky) */}
+          <aside className="hidden lg:block lg:sticky lg:top-4 lg:self-start p-5 sm:p-6 bg-white">
             {selectedMaterial ? (
               renderRightDetailPanel(selectedMaterial)
             ) : (
@@ -1403,16 +1597,56 @@ export default function LearningSheets() {
         </div>
       )}
 
-      {/* Mobile Detail Sheet Modal (< lg) */}
+      {/* Mobile Bottom Sheet (< lg): sticky header + scrollable body + sticky CTA bar */}
       <Dialog open={isMobileDetailOpen} onOpenChange={setIsMobileDetailOpen}>
-        <DialogContent className="lg:hidden max-w-lg w-[94vw] max-h-[90vh] overflow-y-auto rounded-3xl p-5 bg-white">
+        <DialogContent
+          showCloseButton={false}
+          className="lg:hidden fixed inset-x-0 bottom-0 z-50 w-full max-w-none sm:max-w-none rounded-t-3xl rounded-b-none max-h-[88dvh] p-0 flex flex-col bg-white shadow-2xl border-0 border-t border-gray-200 overflow-hidden my-0"
+        >
           <DialogTitle className="sr-only">
             {selectedMaterial?.title || 'Detail materiálu'}
           </DialogTitle>
           <DialogDescription className="sr-only">
             Náhled a akce vybraného výukového materiálu
           </DialogDescription>
-          {selectedMaterial && renderRightDetailPanel(selectedMaterial)}
+
+          {selectedMaterial && (
+            <>
+              {/* Sticky Sheet Header */}
+              <div className="shrink-0 bg-white border-b border-gray-100 px-4 pt-2.5 pb-3">
+                <div className="w-10 h-1.5 rounded-full bg-gray-300 mx-auto mb-2.5" />
+                <div className="flex items-start justify-between gap-2.5">
+                  <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                    <span className="px-2.5 py-1 rounded-full text-xs font-black bg-[#1D4ED8] text-white shrink-0 mt-0.5">
+                      {materialCodeMap.get(selectedMaterial.id) || '1.1'}
+                    </span>
+                    <h3 className="text-base sm:text-lg font-display font-black text-[#0F1E36] leading-snug line-clamp-2 min-w-0">
+                      {selectedMaterial.title}
+                    </h3>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setIsMobileDetailOpen(false)}
+                    aria-label="Zavřít detail materiálu"
+                    className="w-10 h-10 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center justify-center shrink-0 cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Sheet Body */}
+              <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4">
+                {renderRightDetailPanel(selectedMaterial, 'bodyOnly')}
+              </div>
+
+              {/* Sticky Bottom CTA Bar */}
+              <div className="shrink-0 border-t border-gray-100 bg-white px-4 pt-2.5 pb-[max(0.875rem,env(safe-area-inset-bottom))]">
+                {renderRightDetailPanel(selectedMaterial, 'actionsOnly')}
+              </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
 

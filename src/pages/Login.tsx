@@ -215,7 +215,7 @@ export default function Login() {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-[80vh] px-4 py-8">
+    <div className="flex items-center justify-center min-h-[80vh] px-0 sm:px-4 py-6 sm:py-8">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -224,12 +224,12 @@ export default function Login() {
       >
         <Card className="border-none shadow-2xl rounded-[2.5rem] overflow-hidden bg-white">
           <div className="h-4 bg-gradient-to-r from-[#F5C400] to-[#EAB308]" />
-          <CardHeader className="text-center space-y-4 pt-10 pb-6">
+          <CardHeader className="text-center space-y-4 pt-8 sm:pt-10 pb-6 px-5 sm:px-8">
             <div className="mx-auto w-20 h-20 bg-[#FAF7F0] rounded-[1.5rem] flex items-center justify-center text-[#625500] shadow-sm">
               <CapIcon size={44} />
             </div>
             <div className="space-y-1">
-              <CardTitle className="text-3xl font-serif font-black text-[#1E1B18]">
+              <CardTitle className="text-3xl font-playful text-gray-700 tracking-tight">
                 {step === 'otp'
                   ? 'Ověření e-mailu'
                   : step === 'forgot'
@@ -238,7 +238,7 @@ export default function Login() {
                   ? 'Vítejte zpět'
                   : 'Vytvořit účet'}
               </CardTitle>
-              <CardDescription className="text-gray-500 text-base">
+              <CardDescription className="text-gray-500 text-sm sm:text-base">
                 {step === 'otp'
                   ? `Zadejte 6místný kód zaslaný na adresu ${email}`
                   : step === 'forgot'
@@ -249,7 +249,7 @@ export default function Login() {
               </CardDescription>
             </div>
           </CardHeader>
-          <CardContent className="px-8 pb-10">
+          <CardContent className="px-5 sm:px-8 pb-8 sm:pb-10">
             {step === 'forgot' ? (
               <form onSubmit={handlePasswordReset} method="post" className="space-y-5">
                 <div className="bg-[#FAF7F0] p-4 rounded-2xl border border-blue-100 flex items-start gap-3">
@@ -323,7 +323,7 @@ export default function Login() {
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="space-y-2"
+                      className="space-y-2 overflow-hidden"
                     >
                       <Label htmlFor="login-name" className="text-blue-900 font-semibold ml-1">Jméno a příjmení</Label>
                       <div className="relative">
@@ -507,7 +507,7 @@ export default function Login() {
                     value={otpCode}
                     onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     placeholder="123456"
-                    className="h-16 text-center font-mono text-3xl tracking-[0.5em] font-black rounded-2xl border-2 border-blue-200 bg-white focus:border-blue-500 shadow-inner"
+                    className="h-16 text-center font-mono text-2xl sm:text-3xl tracking-[0.3em] sm:tracking-[0.5em] pl-[0.3em] sm:pl-[0.5em] font-black rounded-2xl border-2 border-blue-200 bg-white focus:border-blue-500 shadow-inner"
                   />
                 </div>
 

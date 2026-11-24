@@ -414,7 +414,7 @@ export default function QuickCalendar({
   const hasItemsToDisplay = hasEventsForSelectedDay || !!nextActivity;
 
   return (
-    <div className="grid lg:grid-cols-[1fr_325px] gap-4 sm:gap-5 bg-white rounded-[1.75rem] p-3.5 sm:p-5 shadow-md border border-gray-100 overflow-hidden h-full">
+    <div className="grid lg:grid-cols-[1fr_325px] xl:grid-cols-1 2xl:grid-cols-[1fr_290px] gap-4 sm:gap-5 bg-white rounded-[1.75rem] p-3.5 sm:p-5 shadow-md border border-gray-100 overflow-hidden h-full">
       {/* Calendar Grid Side */}
       <div className="space-y-3.5 flex flex-col justify-between h-full">
         <div>
@@ -433,7 +433,8 @@ export default function QuickCalendar({
                 variant="ghost"
                 size="icon"
                 onClick={prevMonth}
-                className="h-8 w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all"
+                aria-label="Předchozí měsíc"
+                className="h-10 w-10 sm:h-8 sm:w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all"
               >
                 <ChevronLeft size={16} />
               </Button>
@@ -441,7 +442,8 @@ export default function QuickCalendar({
                 variant="ghost"
                 size="icon"
                 onClick={nextMonth}
-                className="h-8 w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all"
+                aria-label="Další měsíc"
+                className="h-10 w-10 sm:h-8 sm:w-8 rounded-lg hover:bg-gray-50 border border-transparent hover:border-gray-100 transition-all"
               >
                 <ChevronRight size={16} />
               </Button>
@@ -932,10 +934,11 @@ export default function QuickCalendar({
                                 type="button"
                                 disabled={deletingId === todo.id}
                                 onClick={() => handleDeleteTodo(todo, false)}
-                                className="text-gray-300 hover:text-rose-600 transition-colors p-0.5 cursor-pointer"
+                                className="text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors p-2 -mr-1.5 -mt-1 cursor-pointer shrink-0"
                                 title="Odebrat z kalendáře"
+                                aria-label="Odebrat z kalendáře"
                               >
-                                <Trash2 size={13} />
+                                <Trash2 size={15} />
                               </button>
                             )}
                           </div>
@@ -966,7 +969,7 @@ export default function QuickCalendar({
                                   )
                                 }
                                 className={cn(
-                                  'h-7 px-3 rounded-xl text-[11px] font-black flex items-center gap-1 cursor-pointer',
+                                  'h-9 sm:h-8 px-3 rounded-xl text-[11px] font-black flex items-center gap-1 cursor-pointer',
                                   todo.completed
                                     ? 'bg-white hover:bg-gray-100 text-gray-700 border border-gray-200'
                                     : 'bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80'
@@ -1176,7 +1179,7 @@ export default function QuickCalendar({
                                       `/practice/session/${todo.referenceId}`
                                     )
                                   }
-                                  className="h-7 px-3 rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] text-[11px] font-black flex items-center gap-1 cursor-pointer"
+                                  className="h-9 sm:h-8 px-3 rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] text-[11px] font-black flex items-center gap-1 cursor-pointer"
                                 >
                                   <Play
                                     size={10}

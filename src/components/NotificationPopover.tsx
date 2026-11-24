@@ -127,6 +127,7 @@ export default function NotificationPopover({
     bottom?: number;
     left?: number;
     right?: number;
+    width?: number;
     maxHeight?: number;
     arrowLeft?: number;
     isBottomHalf?: boolean;
@@ -135,7 +136,8 @@ export default function NotificationPopover({
   const updatePosition = useCallback(() => {
     if (!triggerRef?.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
-    const popoverWidth = Math.min(370, window.innerWidth - 32);
+    const horizontalMargin = window.innerWidth < 640 ? 12 : 16;
+    const popoverWidth = Math.min(370, window.innerWidth - horizontalMargin * 2);
 
     const isBottomHalf = rect.top > window.innerHeight / 2;
 
@@ -147,12 +149,12 @@ export default function NotificationPopover({
     if (isBottomHalf) {
       // Desktop: přiblížit k levé straně obrazovky s elegantním odsazením 20px
       bottom = window.innerHeight - rect.top + 12;
-      left = Math.max(16, Math.min(20, window.innerWidth - popoverWidth - 16));
+      left = Math.max(horizontalMargin, Math.min(20, window.innerWidth - popoverWidth - horizontalMargin));
     } else {
       // Mobil: otevírat dolů pod horní lištu, zarovnat k pravému okraji
       top = rect.bottom + 12;
       const idealRight = window.innerWidth - rect.right - 4;
-      right = Math.max(12, Math.min(idealRight, window.innerWidth - popoverWidth - 12));
+      right = Math.max(horizontalMargin, Math.min(idealRight, window.innerWidth - popoverWidth - horizontalMargin));
     }
 
     // Výpočet pozice středu zvonečku pro kapičku
@@ -161,11 +163,12 @@ export default function NotificationPopover({
     const rawArrowLeft = bellCenterX - actualLeft;
     const arrowLeft = Math.max(34, Math.min(popoverWidth - 34, rawArrowLeft));
 
+    const bottomNavOffset = window.innerWidth < 768 ? 80 : 0;
     const maxHeight = isBottomHalf
-      ? Math.max(260, Math.min(480, rect.top - 28))
-      : Math.max(260, Math.min(480, window.innerHeight - rect.bottom - 28));
+      ? Math.max(220, Math.min(480, rect.top - 28))
+      : Math.max(220, Math.min(480, window.innerHeight - rect.bottom - 28 - bottomNavOffset));
 
-    setCoords({ top, bottom, left, right, maxHeight, arrowLeft, isBottomHalf });
+    setCoords({ top, bottom, left, right, width: popoverWidth, maxHeight, arrowLeft, isBottomHalf });
   }, [triggerRef]);
 
   useLayoutEffect(() => {
@@ -254,10 +257,11 @@ export default function NotificationPopover({
         aria-label="Upozornění"
         className={cn(
           "fixed z-[9999]",
-          "w-[340px] sm:w-[370px] max-w-[calc(100vw-24px)]",
+          "max-w-[calc(100vw-24px)]",
           "animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
         )}
         style={{
+          ...(coords.width !== undefined ? { width: `${coords.width}px` } : { width: '340px' }),
           ...(coords.top !== undefined ? { top: `${coords.top}px` } : {}),
           ...(coords.bottom !== undefined ? { bottom: `${coords.bottom}px` } : {}),
           ...(coords.left !== undefined ? { left: `${coords.left}px` } : {}),
@@ -317,10 +321,11 @@ export default function NotificationPopover({
 
           <button
             onClick={onClose}
-            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-white/80 rounded-xl transition-colors cursor-pointer"
+            className="w-9 h-9 flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-white/80 rounded-xl transition-colors cursor-pointer"
             title="Zavřít"
+            aria-label="Zavřít"
           >
-            <X size={16} />
+            <X size={18} />
           </button>
         </div>
       </div>

@@ -117,8 +117,12 @@ export default function RewardedAdModal({
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent 
-          className="sm:max-w-md p-6 bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl text-center space-y-4"
+          className="w-full max-w-md sm:max-w-md max-h-[90dvh] overflow-y-auto p-6 bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl text-center space-y-4"
         >
+          <DialogTitle className="sr-only">Limit videí vyčerpán</DialogTitle>
+          <DialogDescription className="sr-only">
+            Dnes jsi již zhlédl/a maximální počet 3 videí pro dobití žolíků. Další videa budou k dispozici zítra o půlnoci.
+          </DialogDescription>
           <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700">
             <Clock className="w-7 h-7" />
           </div>
@@ -146,7 +150,7 @@ export default function RewardedAdModal({
       onOpenChange(val);
     }}>
       <DialogContent 
-        className="sm:max-w-md p-0 overflow-hidden bg-white text-[#1E1B18] border-2 border-[#B9D8FC] shadow-2xl rounded-3xl"
+        className="w-full max-w-md sm:max-w-md max-h-[92dvh] overflow-y-auto p-0 bg-white text-[#1E1B18] border-2 border-[#B9D8FC] shadow-2xl rounded-3xl"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Sledování videa pro dobití žolíků</DialogTitle>
@@ -190,7 +194,7 @@ export default function RewardedAdModal({
         </div>
 
         {/* Video přehrávač / Simulátor obrazovky */}
-        <div className="relative aspect-video w-full bg-gradient-to-br from-blue-50/90 via-sky-50/60 to-blue-50/90 flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden border-b border-blue-100">
+        <div className="relative min-h-[250px] sm:aspect-video w-full bg-gradient-to-br from-blue-50/90 via-sky-50/60 to-blue-50/90 flex flex-col items-center justify-center p-6 text-center select-none overflow-hidden border-b border-blue-100">
           {/* Pozadí - jemné kruhy */}
           <div className="absolute -top-12 -left-12 w-48 h-48 bg-[#B9D8FC]/40 rounded-full blur-2xl pointer-events-none" />
           <div className="absolute -bottom-12 -right-12 w-48 h-48 bg-blue-200/30 rounded-full blur-2xl pointer-events-none" />
@@ -279,7 +283,7 @@ export default function RewardedAdModal({
               <Button
                 onClick={handleClaimReward}
                 disabled={isClaimed || (!isGuest && !videoToken)}
-                className="w-full h-12 bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-base rounded-2xl border border-blue-200/80 shadow-sm transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer"
+                className="w-full min-h-12 h-auto py-2.5 px-4 bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm sm:text-base rounded-2xl border border-blue-200/80 shadow-sm transition-all hover:scale-[1.01] active:scale-[0.99] cursor-pointer whitespace-normal text-center"
               >
                 <span>Vyzvednout +{rewardAmount} žolíků a pokračovat</span>
                 <ArrowRight className="w-5 h-5 ml-1.5" />

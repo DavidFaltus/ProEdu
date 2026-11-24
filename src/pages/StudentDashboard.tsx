@@ -473,12 +473,12 @@ export default function StudentDashboard() {
       </header>
 
       {/* MAIN DASHBOARD SECTIONS: Mobile = Doporučená procvičování -> Herní zóna žolíků -> Kalendář; Desktop (md+) unchanged */}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-y-6 md:gap-y-5 xl:gap-x-5 xl:gap-y-10 items-stretch">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 xl:gap-x-5 xl:gap-y-8 items-stretch">
         {/* JOKER BONUS & STREAK ZONE (Na desktopu pro přihlášené Free nahoře, pro hosty dole; na mobilu vždy pod Doporučenými procvičováními) */}
         <JokerZoneSection
           className={cn(
             "min-w-0 order-2 xl:col-span-2",
-            isLoggedInFreeUser ? "md:order-1 md:mb-5 xl:mb-0" : "md:order-4 md:mt-5 xl:mt-0"
+            isLoggedInFreeUser ? "md:order-1" : "md:order-4"
           )}
         />
 
@@ -686,7 +686,7 @@ export default function StudentDashboard() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-1.5 shrink-0 w-full sm:w-auto pt-1 sm:pt-0 border-t border-gray-200/40 sm:border-0 justify-end">
+                        <div className="flex flex-wrap items-center gap-1.5 shrink-0 w-full sm:w-auto pt-2 sm:pt-0 border-t border-gray-200/40 sm:border-0 justify-end">
                           <Button
                             size="sm"
                             variant="outline"
@@ -703,7 +703,7 @@ export default function StudentDashboard() {
                               setIsScheduleModalOpen(true);
                             }}
                             title="Přidat procvičování do kalendáře"
-                            className="rounded-xl font-bold text-xs h-9 px-2.5 flex items-center justify-center gap-1 cursor-pointer bg-white border-gray-200 hover:border-brand-blue text-gray-700"
+                            className="rounded-xl font-bold text-xs h-10 sm:h-9 px-2.5 flex items-center justify-center gap-1 cursor-pointer bg-white border-gray-200 hover:border-brand-blue text-gray-700 shrink-0"
                           >
                             <Calendar size={13} className="text-brand-blue" />
                             {!hasPaidOrTeacherAccess && (
@@ -720,7 +720,7 @@ export default function StudentDashboard() {
                               onClick={handleStudyClick}
                               title={isStudyLocked ? "Studium vyžaduje ProEdu Premium" : "Prostudovat látku"}
                               className={cn(
-                                "flex-1 sm:flex-none rounded-xl font-bold text-xs h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white",
+                                "flex-1 sm:flex-none rounded-xl font-bold text-xs h-10 sm:h-9 px-3 flex items-center justify-center gap-1.5 cursor-pointer bg-white min-w-[110px]",
                                 isStudyLocked 
                                   ? "border-amber-300 hover:border-amber-400 text-amber-900" 
                                   : "border-gray-200 hover:border-black text-gray-700"
@@ -743,7 +743,7 @@ export default function StudentDashboard() {
                           <Button
                             size="sm"
                             onClick={handlePracticeBtnClick}
-                            className="flex-1 sm:flex-none rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs px-4 h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs border border-blue-200/80"
+                            className="flex-1 sm:flex-none rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs px-4 h-10 sm:h-9 flex items-center justify-center gap-1.5 transition-transform group-hover:scale-105 cursor-pointer shadow-2xs border border-blue-200/80 min-w-[110px]"
                           >
                             {isLockedForGuest ? (
                               <Lock size={12} className="text-[#0F2942]" />
@@ -859,7 +859,7 @@ export default function StudentDashboard() {
 
       {/* Oslavný dialog po úspěšném návratu z platební brány Comgate */}
       <Dialog open={isPaymentSuccessModalOpen} onOpenChange={setIsPaymentSuccessModalOpen}>
-        <DialogContent className="max-w-md p-6 sm:p-8 rounded-3xl text-center space-y-5 bg-white border border-amber-200 shadow-2xl">
+        <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-8 rounded-3xl text-center space-y-5 bg-white border border-amber-200 shadow-2xl">
           <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto shadow-inner border border-emerald-100">
             <Sparkles size={32} className="text-amber-500 animate-pulse" />
           </div>

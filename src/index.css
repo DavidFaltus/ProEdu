@@ -116,7 +116,7 @@
   }
 
   .page-container {
-    @apply max-w-[1600px] mx-auto px-4 md:px-10 py-8 md:py-12 space-y-10 md:space-y-14 pb-24;
+    @apply max-w-[1600px] mx-auto space-y-6 md:space-y-8;
   }
 
   .focus-container {
@@ -202,7 +202,7 @@
 }
 
 :root {
-    --background: oklch(1 0 0);
+    --background: #FAF6EE;
     --foreground: oklch(0.145 0 0);
     --card: oklch(1 0 0);
     --card-foreground: oklch(0.145 0 0);
@@ -287,6 +287,16 @@
   font-size: 1.05em;
   text-rendering: auto;
   line-height: normal !important;
+}
+
+@media (max-width: 430px) {
+  .katex {
+    font-size: 0.95em;
+  }
+}
+
+.prose-math-content .katex-display {
+  max-width: 100%;
 }
 
 /* Ensure fraction lines have adequate clearance and never collide with exponents */

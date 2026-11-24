@@ -53,6 +53,21 @@ export function ProtectedMaterialCanvas({
     setRendering(true);
 
     drawPageToCanvas(canvas, page, watermarkText, { maxCssWidth, fitMode })
+      .then(() => {
+        if (cancelled) return;
+        if (fitMode === 'width') {
+          if (maxCssWidth) {
+            canvas.style.width =
+              zoom !== 1 ? `${Math.round(maxCssWidth * zoom)}px` : `${maxCssWidth}px`;
+            canvas.style.maxWidth = zoom === 1 ? '100%' : 'none';
+            canvas.style.height = 'auto';
+          } else {
+            canvas.style.width = `${Math.round(zoom * 100)}%`;
+            canvas.style.maxWidth = zoom === 1 ? '100%' : 'none';
+            canvas.style.height = 'auto';
+          }
+        }
+      })
       .catch((err) => {
         console.warn('[ProtectedMaterialCanvas] Render error:', err);
       })
@@ -69,14 +84,18 @@ export function ProtectedMaterialCanvas({
     if (fitMode === 'height') {
       if (zoom === 1) return undefined;
       return {
-        height: `${Math.round(zoom * 90)}dvh`,
+        height: `${Math.round(zoom * 88)}dvh`,
         width: 'auto',
         maxWidth: 'none',
         maxHeight: 'none',
       };
     }
     if (maxCssWidth) {
-      return zoom !== 1 ? { transform: `scale(${zoom})`, transformOrigin: 'top center' } : undefined;
+      return {
+        width: zoom !== 1 ? `${Math.round(maxCssWidth * zoom)}px` : `${maxCssWidth}px`,
+        maxWidth: zoom === 1 ? '100%' : 'none',
+        height: 'auto',
+      };
     }
     return {
       width: `${Math.round(zoom * 100)}%`,
@@ -103,7 +122,7 @@ export function ProtectedMaterialCanvas({
             'block mx-auto bg-white rounded-xl shadow-sm pointer-events-none select-none',
             fitMode === 'height' &&
               zoom === 1 &&
-              'max-h-[calc(100dvh-7.5rem)] lg:max-h-[calc(100dvh-3.25rem)] w-auto max-w-full h-auto'
+              'max-h-[calc(100dvh-9.5rem)] lg:max-h-[calc(100dvh-3.25rem)] w-auto max-w-full h-auto'
           )}
         />
       </div>
@@ -164,17 +183,43 @@ export function FullscreenMaterialReaderModal({
   studyTheory,
   theoryImages,
 }: FullscreenMaterialReaderModalProps) {
-  const [fitMode, setFitMode] = useState<ReaderFitMode>('height');
+  const getDefaultFitMode = (): ReaderFitMode =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches
+      ? 'width'
+      : 'height';
+
+  const [fitMode, setFitMode] = useState<ReaderFitMode>(getDefaultFitMode);
   const [zoom, setZoom] = useState(1);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [viewportWidth, setViewportWidth] = useState<number | undefined>(undefined);
   const safePageIdx = Math.min(currentPageIdx, Math.max(0, pages.length - 1));
   const currentPage = pages[safePageIdx] || null;
   const isMultiPage = pages.length > 1;
 
   useEffect(() => {
     if (isOpen) {
-      setFitMode('height');
+      setFitMode(getDefaultFitMode());
       setZoom(1);
     }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const el = viewportRef.current;
+    if (!el) return;
+
+    const updateSize = () => {
+      const nextWidth = Math.max(240, Math.floor(el.clientWidth - 16));
+      setViewportWidth((prev) => (prev === nextWidth ? prev : nextWidth));
+    };
+
+    updateSize();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      updateSize();
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [isOpen]);
 
   useEffect(() => {
@@ -210,46 +255,23 @@ export function FullscreenMaterialReaderModal({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
         showCloseButton={false}
-        className="w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] sm:max-w-[calc(100vw-2rem)] h-[calc(100dvh-2rem)] max-h-[calc(100dvh-2rem)] p-0 rounded-2xl sm:rounded-3xl overflow-hidden flex flex-col lg:flex-row bg-[#E8EEF5] border border-gray-200 shadow-2xl"
+        className="fixed inset-0 lg:static w-screen max-w-none sm:max-w-none h-[100dvh] max-h-[100dvh] rounded-none lg:w-[calc(100vw-2rem)] lg:max-w-[calc(100vw-2rem)] lg:h-[calc(100dvh-2rem)] lg:max-h-[calc(100dvh-2rem)] lg:rounded-3xl p-0 overflow-hidden flex flex-col lg:flex-row bg-[#E8EEF5] border-0 lg:border lg:border-gray-200 shadow-2xl my-0"
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">
           {subtitle || 'Celoobrazovková zabezpečená čtečka výukového materiálu'}
         </DialogDescription>
 
-        {/* Mobile Compact Top Bar (< lg) */}
+        {/* Mobile Compact Top Bar (< lg): Title + Export/Print + Close */}
         <div className="lg:hidden px-3 py-2 bg-white border-b border-gray-200 flex items-center justify-between gap-2 shrink-0">
           <div className="min-w-0 flex-1">
-            <p className="font-black text-xs text-[#0F2942] truncate">{title}</p>
+            <p className="font-black text-sm text-[#0F2942] truncate">{title}</p>
+            {subtitle && (
+              <p className="text-[11px] font-medium text-gray-400 truncate">{subtitle}</p>
+            )}
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {isMultiPage && (
-              <div className="flex items-center gap-0.5 bg-gray-100 px-1.5 py-0.5 rounded-full">
-                <button
-                  type="button"
-                  onClick={() => onPageChange(Math.max(0, safePageIdx - 1))}
-                  disabled={safePageIdx === 0}
-                  aria-label="Předchozí strana"
-                  className="w-6 h-6 rounded-full hover:bg-white disabled:opacity-40 flex items-center justify-center text-gray-700 cursor-pointer"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-[11px] font-bold text-[#0F2942] px-1 select-none">
-                  {safePageIdx + 1}/{pages.length}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onPageChange(Math.min(pages.length - 1, safePageIdx + 1))}
-                  disabled={safePageIdx === pages.length - 1}
-                  aria-label="Další strana"
-                  className="w-6 h-6 rounded-full hover:bg-white disabled:opacity-40 flex items-center justify-center text-gray-700 cursor-pointer"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
-            )}
-
             {pages.length > 0 && canExport && (
               <>
                 {onPrint && (
@@ -258,9 +280,9 @@ export function FullscreenMaterialReaderModal({
                     onClick={onPrint}
                     disabled={isPrinting || isDownloading}
                     aria-label="Vytisknout"
-                    className="w-8 h-8 rounded-xl border border-gray-200 bg-white text-gray-700 flex items-center justify-center cursor-pointer"
+                    className="w-10 h-10 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 flex items-center justify-center cursor-pointer"
                   >
-                    {isPrinting ? <Loader2 size={14} className="animate-spin" /> : <Printer size={14} />}
+                    {isPrinting ? <Loader2 size={16} className="animate-spin" /> : <Printer size={16} />}
                   </button>
                 )}
                 {onDownloadPdf && (
@@ -269,9 +291,9 @@ export function FullscreenMaterialReaderModal({
                     onClick={onDownloadPdf}
                     disabled={isDownloading || isPrinting}
                     aria-label="Stáhnout PDF"
-                    className="w-8 h-8 rounded-xl bg-[#F7C948] text-[#1E1B18] border border-amber-300/80 flex items-center justify-center cursor-pointer"
+                    className="w-10 h-10 rounded-xl bg-[#F7C948] hover:bg-[#F1BE32] text-[#1E1B18] border border-amber-300/80 flex items-center justify-center cursor-pointer"
                   >
-                    {isDownloading ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                    {isDownloading ? <Loader2 size={16} className="animate-spin" /> : <Download size={16} />}
                   </button>
                 )}
               </>
@@ -281,9 +303,9 @@ export function FullscreenMaterialReaderModal({
               type="button"
               onClick={onClose}
               aria-label="Zavřít čtečku"
-              className="w-8 h-8 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center justify-center cursor-pointer"
+              className="w-10 h-10 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 flex items-center justify-center cursor-pointer"
             >
-              <X size={16} />
+              <X size={18} />
             </button>
           </div>
         </div>
@@ -315,23 +337,136 @@ export function FullscreenMaterialReaderModal({
           )}
 
           <div
-            className="w-full h-full overflow-auto flex items-center justify-center p-2 sm:p-3"
+            ref={viewportRef}
+            className="w-full h-full overflow-auto flex p-2 sm:p-3"
             onContextMenu={(e) => e.preventDefault()}
           >
             {currentPage ? (
-              <div className="m-auto flex items-center justify-center max-w-full">
+              <div className="m-auto w-fit h-fit">
                 <ProtectedMaterialCanvas
                   page={currentPage}
                   watermarkText={watermarkText}
                   zoom={zoom}
+                  maxCssWidth={fitMode === 'width' ? viewportWidth : undefined}
                   fitMode={fitMode}
                 />
               </div>
             ) : studyTheory?.trim() ? (
-              <div className="max-w-3xl mx-auto bg-white rounded-2xl p-6 sm:p-8 shadow-xs text-gray-800 text-base leading-relaxed my-auto">
+              <div className="max-w-3xl w-full m-auto bg-white rounded-2xl p-5 sm:p-8 shadow-xs text-gray-800 text-sm sm:text-base leading-relaxed overflow-x-auto">
                 <MathRenderer content={studyTheory} imageMap={theoryImages} />
               </div>
             ) : null}
+          </div>
+        </div>
+
+        {/* Mobile Bottom Toolbar (< lg): 44px touch targets for pagination, zoom, fitMode & quota */}
+        <div className="lg:hidden bg-white border-t border-gray-200 shrink-0">
+          {(quotaBadgeLabel || (!canExport && onRequestUpgrade)) && (
+            <div className="px-3 py-1.5 bg-[#FAF8F4] border-b border-gray-100 flex items-center justify-between gap-2 text-[11px]">
+              {quotaBadgeLabel && (
+                <span className="font-semibold text-gray-500 truncate">{quotaBadgeLabel}</span>
+              )}
+              {!canExport && onRequestUpgrade && (
+                <button
+                  type="button"
+                  onClick={onRequestUpgrade}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#B9D8FC] text-[#0F2942] font-black text-[11px] shrink-0 cursor-pointer"
+                >
+                  <Lock size={11} />
+                  <span>Premium</span>
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="px-2 py-1.5 pb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center justify-between gap-1">
+            {/* Pagination (< 1/N >) */}
+            {isMultiPage ? (
+              <div className="flex items-center bg-gray-100 rounded-xl p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => onPageChange(Math.max(0, safePageIdx - 1))}
+                  disabled={safePageIdx === 0}
+                  aria-label="Předchozí strana"
+                  className="w-11 h-11 rounded-lg hover:bg-white disabled:opacity-35 flex items-center justify-center text-[#0F2942] cursor-pointer"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <span className="text-xs font-black text-[#0F2942] px-1 min-w-[30px] text-center select-none">
+                  {safePageIdx + 1}/{pages.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onPageChange(Math.min(pages.length - 1, safePageIdx + 1))}
+                  disabled={safePageIdx === pages.length - 1}
+                  aria-label="Další strana"
+                  className="w-11 h-11 rounded-lg hover:bg-white disabled:opacity-35 flex items-center justify-center text-[#0F2942] cursor-pointer"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            ) : (
+              <div />
+            )}
+
+            {/* Zoom Controls */}
+            {currentPage && (
+              <div className="flex items-center bg-gray-100 rounded-xl p-0.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setZoom((z) => Math.max(0.75, Number((z - 0.25).toFixed(2))))}
+                  disabled={zoom <= 0.75}
+                  aria-label="Oddálit"
+                  className="w-11 h-11 rounded-lg hover:bg-white disabled:opacity-35 flex items-center justify-center text-[#0F2942] cursor-pointer"
+                >
+                  <ZoomOut size={17} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoom(1)}
+                  aria-label="Obnovit 100 %"
+                  className="h-11 px-1.5 min-w-[40px] rounded-lg hover:bg-white text-xs font-black text-[#0F2942] cursor-pointer"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoom((z) => Math.min(2, Number((z + 0.25).toFixed(2))))}
+                  disabled={zoom >= 2}
+                  aria-label="Přiblížit"
+                  className="w-11 h-11 rounded-lg hover:bg-white disabled:opacity-35 flex items-center justify-center text-[#0F2942] cursor-pointer"
+                >
+                  <ZoomIn size={17} />
+                </button>
+              </div>
+            )}
+
+            {/* Fit Mode Toggle */}
+            {currentPage && (
+              <button
+                type="button"
+                onClick={() => handleToggleFitMode(fitMode === 'width' ? 'height' : 'width')}
+                aria-label={
+                  fitMode === 'width'
+                    ? 'Přepnout na zobrazení celé strany'
+                    : 'Přepnout na přizpůsobení šířce'
+                }
+                className="h-11 px-2.5 sm:px-3 rounded-xl bg-gray-100 hover:bg-gray-200 text-[#0F2942] font-bold text-xs inline-flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+              >
+                {fitMode === 'width' ? (
+                  <>
+                    <MoveVertical size={15} className="shrink-0" />
+                    <span className="sm:hidden">Strana</span>
+                    <span className="hidden sm:inline">Celá strana</span>
+                  </>
+                ) : (
+                  <>
+                    <MoveHorizontal size={15} className="shrink-0" />
+                    <span>Šířka</span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 

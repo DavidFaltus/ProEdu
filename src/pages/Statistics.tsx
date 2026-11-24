@@ -101,6 +101,7 @@ export default function Statistics() {
   // Historie pokusů (ve výchozím stavu sbalená, kap. 3.7)
   const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(10);
+  const [activeTimelineIdx, setActiveTimelineIdx] = useState<number | null>(null);
 
   // Modaly
   const [selectedAttemptForDetails, setSelectedAttemptForDetails] = useState<StudentAttemptRecord | null>(null);
@@ -239,11 +240,11 @@ export default function Statistics() {
 
   if (loading) {
     return (
-      <div className="page-container max-w-7xl mx-auto space-y-8 pb-16 animate-pulse">
-        <div className="h-10 bg-gray-200 rounded-2xl w-64 mx-auto" />
-        <div className="h-5 bg-gray-200 rounded-xl w-96 mx-auto" />
+      <div className="space-y-6 md:space-y-8 pb-16 animate-pulse">
+        <div className="h-10 bg-gray-200 rounded-2xl w-64 max-w-full mx-auto" />
+        <div className="h-5 bg-gray-200 rounded-xl w-full max-w-sm mx-auto" />
         <div className="h-44 bg-gray-200 rounded-3xl w-full" />
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="h-32 bg-gray-200 rounded-3xl" />
           <div className="h-32 bg-gray-200 rounded-3xl" />
           <div className="h-32 bg-gray-200 rounded-3xl" />
@@ -254,8 +255,8 @@ export default function Statistics() {
 
   if (!hasStatsAccess) {
     return (
-      <div className="page-container max-w-3xl mx-auto py-12 px-4">
-        <Card className="p-8 sm:p-12 rounded-[2.5rem] border border-gray-200/80 bg-white text-center space-y-5 shadow-sm max-w-2xl mx-auto">
+      <div className="max-w-3xl mx-auto py-8 sm:py-12">
+        <Card className="p-6 sm:p-12 rounded-[2.5rem] border border-gray-200/80 bg-white text-center space-y-5 shadow-sm max-w-2xl mx-auto">
           <div className="w-16 h-16 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center mx-auto shadow-xs">
             <Lock size={28} />
           </div>
@@ -308,7 +309,7 @@ export default function Statistics() {
   }
 
   return (
-    <div className="page-container max-w-7xl mx-auto space-y-8 pb-16">
+    <div className="space-y-6 md:space-y-8 pb-16">
       {/* ========================================================= */}
       {/* 3.1 HLAVIČKA A FILTRY (ZAROVNÁNO NA STŘED)                */}
       {/* ========================================================= */}
@@ -337,7 +338,7 @@ export default function Statistics() {
                   onClick={() => setSubjectFilter(subj)}
                   aria-pressed={active}
                   className={cn(
-                    "px-3.5 sm:px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none",
+                    "px-3.5 sm:px-4 py-1.5 min-h-[36px] rounded-xl text-xs font-bold transition-all cursor-pointer select-none",
                     active
                       ? "bg-[#1E1B18] text-white shadow-xs"
                       : "text-gray-600 hover:text-[#1E1B18] hover:bg-gray-100"
@@ -368,7 +369,7 @@ export default function Statistics() {
                   onClick={() => setPeriodFilter(p.id as StatsPeriodFilter)}
                   aria-pressed={active}
                   className={cn(
-                    "px-3.5 sm:px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer select-none",
+                    "px-3.5 sm:px-4 py-1.5 min-h-[36px] rounded-xl text-xs font-bold transition-all cursor-pointer select-none",
                     active
                       ? "bg-[#F5C400] text-[#1E1B18] shadow-xs"
                       : "text-gray-600 hover:text-[#1E1B18] hover:bg-gray-100"
@@ -427,8 +428,8 @@ export default function Statistics() {
               <div className="absolute top-0 right-0 w-44 h-44 bg-amber-200/30 rounded-full blur-3xl pointer-events-none -mr-12 -mt-12" />
 
               <div className="space-y-4 relative z-10">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-200/80">
                       Top doporučení
                     </span>
@@ -437,7 +438,7 @@ export default function Statistics() {
                     </span>
                   </div>
 
-                  <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200/80 shadow-2xs">
+                  <span className="text-xs font-black px-2.5 py-0.5 rounded-full bg-white text-gray-700 border border-gray-200/80 shadow-2xs shrink-0">
                     ~{stats.primaryRecommendation.estimatedMinutes} min
                   </span>
                 </div>
@@ -502,7 +503,7 @@ export default function Statistics() {
                     </div>
                   </div>
 
-                  <div className="pt-3 flex items-center justify-between gap-2 border-t border-gray-100 mt-2">
+                  <div className="pt-3 flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 mt-2">
                     <button
                       type="button"
                       onClick={() => handleOpenSchedule(rec.subtopicId, rec.title, rec.subject, rec.topicId)}
@@ -533,10 +534,10 @@ export default function Statistics() {
       <section aria-labelledby="kpi-heading" className="space-y-2">
         <h2 id="kpi-heading" className="sr-only">Klíčové metriky výkonu</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* Karta 1: Úspěšnost */}
           <Card className="p-5 sm:p-6 rounded-[2rem] border border-gray-200/80 bg-white shadow-2xs flex flex-col justify-between space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                 Úspěšnost
               </span>
@@ -580,7 +581,7 @@ export default function Statistics() {
 
           {/* Karta 2: Správné odpovědi */}
           <Card className="p-5 sm:p-6 rounded-[2rem] border border-gray-200/80 bg-white shadow-2xs flex flex-col justify-between space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                 Správné odpovědi
               </span>
@@ -610,7 +611,7 @@ export default function Statistics() {
 
           {/* Karta 3: Série */}
           <Card className="p-5 sm:p-6 rounded-[2rem] border border-gray-200/80 bg-white shadow-2xs flex flex-col justify-between space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                 Pravidelnost & Série
               </span>
@@ -691,7 +692,7 @@ export default function Statistics() {
                 onClick={() => setMapFilter(tab.id as any)}
                 aria-pressed={mapFilter === tab.id}
                 className={cn(
-                  "px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer",
+                  "px-3 py-1.5 min-h-[36px] rounded-xl text-xs font-bold transition-all cursor-pointer",
                   mapFilter === tab.id
                     ? "bg-[#1E1B18] text-white shadow-xs"
                     : "text-gray-600 hover:text-[#1E1B18] hover:bg-gray-100"
@@ -746,9 +747,12 @@ export default function Statistics() {
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="text-right hidden sm:block">
-                        <span className="text-xs font-black text-gray-700">
+                    <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                      <div className="text-right">
+                        <span className="text-xs font-black text-gray-700 sm:hidden">
+                          {chap.averagePercentage} %
+                        </span>
+                        <span className="text-xs font-black text-gray-700 hidden sm:inline">
                           Průměr: {chap.averagePercentage} %
                         </span>
                       </div>
@@ -770,8 +774,8 @@ export default function Statistics() {
                           key={sub.subtopicId}
                           className="p-4 sm:px-6 hover:bg-gray-50/50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-left"
                         >
-                          <div className="space-y-1 min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
                               {/* Barevná tečka i textový štítek zároveň (kap. 3.4 & 8) */}
                               <span className={cn("w-2 h-2 rounded-full shrink-0", sub.statusBadge.dotColor)} />
                               <span className={cn(
@@ -780,16 +784,16 @@ export default function Statistics() {
                               )}>
                                 {sub.statusBadge.text}
                               </span>
-                              <h4 className="font-bold text-sm text-[#1E1B18] truncate">
+                              <h4 className="font-bold text-sm text-[#1E1B18] line-clamp-2 sm:truncate">
                                 {sub.title}
                               </h4>
                             </div>
 
-                            <div className="flex items-center gap-3 text-xs text-gray-500 pl-4">
+                            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs text-gray-500 pl-0 sm:pl-4">
                               <span>{sub.attemptsCount} {getAttemptWord(sub.attemptsCount)}</span>
-                              <span>•</span>
+                              <span className="hidden sm:inline">•</span>
                               <span>Poslední pokus: <strong className="text-gray-800">{sub.lastPercentage} %</strong></span>
-                              <span>•</span>
+                              <span className="hidden sm:inline">•</span>
                               <span>Čistý průměr: <strong className="text-gray-800">{sub.averagePercentage} %</strong></span>
                             </div>
                           </div>
@@ -887,87 +891,164 @@ export default function Statistics() {
             </div>
           ) : (
             /* Spojnicový graf s barevnými pásmy */
-            <div className="space-y-4">
+            <div className="space-y-3">
               {/* Textová alternativa pro čtečky obrazovky (kap. 3.5 & kap. 8) */}
               <p className="sr-only">
                 {stats.timeline.textSummary}
               </p>
 
-              {/* Grafické znázornění SVG */}
-              <div className="relative w-full h-56 sm:h-64 select-none">
-                {/* Barevná pásma v pozadí */}
-                <div className="absolute inset-0 flex flex-col pointer-events-none rounded-xl overflow-hidden border border-gray-100">
-                  {/* Pásmo >= 80 % (Zelené Zvládnuto) */}
-                  <div className="h-[20%] bg-emerald-50/50 border-b border-dashed border-emerald-200 flex items-center justify-end px-2">
-                    <span className="text-[10px] font-bold text-emerald-700">Zvládnuto (80 %+)</span>
-                  </div>
-                  {/* Pásmo 50–79 % (Modré Skoro to máš) */}
-                  <div className="h-[30%] bg-blue-50/30 border-b border-dashed border-blue-200 flex items-center justify-end px-2">
-                    <span className="text-[10px] font-bold text-brand-blue">Skoro to máš (50–79 %)</span>
-                  </div>
-                  {/* Pásmo < 50 % (Červené K doučení) */}
-                  <div className="h-[50%] bg-rose-50/30 flex items-center justify-end px-2">
-                    <span className="text-[10px] font-bold text-rose-700">K doučení (&lt; 50 %)</span>
-                  </div>
-                </div>
-
-                {/* SVG spojnice křivky */}
-                <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full p-2 overflow-visible" preserveAspectRatio="none">
-                  {(() => {
-                    const pts = stats.timeline.points;
-                    if (pts.length < 2) return null;
-
-                    const width = 100;
-                    const height = 100;
-
-                    const coords = pts.map((pt, i) => {
-                      const x = (i / (pts.length - 1)) * width;
-                      // Osa Y je invertovaná (100% je nahoře = y: 0)
-                      const y = height - (pt.averagePercentage / 100) * height;
-                      return { x, y, pt };
-                    });
-
-                    const pathD = coords.reduce((acc, c, idx) => {
-                      return idx === 0 ? `M ${c.x} ${c.y}` : `${acc} L ${c.x} ${c.y}`;
-                    }, '');
-
-                    return (
-                      <>
-                        <path
-                          d={pathD}
-                          fill="none"
-                          stroke="#2B44B8"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          vectorEffect="non-scaling-stroke"
-                        />
-                        {coords.map((c, i) => (
-                          <g key={c.pt.dateKey}>
-                            <circle
-                              cx={`${c.x}%`}
-                              cy={`${c.y}%`}
-                              r="4.5"
-                              fill={c.pt.averagePercentage >= 80 ? '#10B981' : c.pt.averagePercentage >= 50 ? '#2B44B8' : '#F43F5E'}
-                              stroke="#ffffff"
-                              strokeWidth="2"
-                              className="transition-all hover:scale-150 cursor-pointer"
-                            >
-                              <title>{`${c.pt.label}: ${c.pt.averagePercentage} % (${c.pt.completedExercises} cvičení)`}</title>
-                            </circle>
-                          </g>
-                        ))}
-                      </>
-                    );
-                  })()}
-                </svg>
+              {/* Legenda pásem nad grafem (nekoliduje s křivkou) */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] font-bold">
+                <span className="inline-flex items-center gap-1.5 text-emerald-700">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                  <span>Zvládnuto (80 %+)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-brand-blue">
+                  <span className="w-2.5 h-2.5 rounded-full bg-[#2B44B8] shrink-0" />
+                  <span>Skoro to máš (50–79 %)</span>
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-rose-700">
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                  <span>K doučení (&lt; 50 %)</span>
+                </span>
               </div>
 
-              {/* Popisky osy X */}
-              <div className="flex items-center justify-between text-[10px] font-bold text-gray-400 pt-1 px-1">
-                {stats.timeline.points.filter((_, i) => i % Math.ceil(stats.timeline.points.length / 7) === 0 || i === stats.timeline.points.length - 1).map(pt => (
-                  <span key={pt.dateKey}>{pt.label}</span>
-                ))}
+              {/* Grafické znázornění: SVG křivka + HTML kroužky bez deformace */}
+              {(() => {
+                const pts = stats.timeline.points;
+                const coords = pts.map((pt, i) => {
+                  const x = pts.length > 1 ? (i / (pts.length - 1)) * 100 : 50;
+                  const y = 100 - pt.averagePercentage;
+                  return { x, y, pt, i };
+                });
+                const pathD = coords.reduce((acc, c, idx) => {
+                  return idx === 0 ? `M ${c.x} ${c.y}` : `${acc} L ${c.x} ${c.y}`;
+                }, '');
+                const activeCoord =
+                  activeTimelineIdx !== null && coords[activeTimelineIdx]
+                    ? coords[activeTimelineIdx]
+                    : null;
+
+                return (
+                  <div
+                    className="relative w-full h-52 sm:h-64 select-none"
+                    onMouseLeave={() => setActiveTimelineIdx(null)}
+                  >
+                    {/* Barevná pásma v pozadí */}
+                    <div className="absolute inset-0 flex flex-col pointer-events-none rounded-xl overflow-hidden border border-gray-100">
+                      <div className="h-[20%] bg-emerald-50/55 border-b border-dashed border-emerald-200" />
+                      <div className="h-[30%] bg-blue-50/35 border-b border-dashed border-blue-200" />
+                      <div className="h-[50%] bg-rose-50/35" />
+                    </div>
+
+                    {/* Vnitřní plocha grafu se shodným souřadnicovým systémem pro SVG křivku i HTML body */}
+                    <div className="absolute inset-3 sm:inset-4">
+                      {pts.length >= 2 && (
+                        <svg
+                          viewBox="0 0 100 100"
+                          className="absolute inset-0 w-full h-full overflow-visible pointer-events-none"
+                          preserveAspectRatio="none"
+                        >
+                          <path
+                            d={pathD}
+                            fill="none"
+                            stroke="#2B44B8"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        </svg>
+                      )}
+
+                      {/* Absolutně pozicované HTML body (kruhové 1:1 bez deformace + tap/hover tooltip) */}
+                      {coords.map((c) => {
+                        const isActive = activeTimelineIdx === c.i;
+                        const dotBg =
+                          c.pt.averagePercentage >= 80
+                            ? 'bg-emerald-500'
+                            : c.pt.averagePercentage >= 50
+                              ? 'bg-[#2B44B8]'
+                              : 'bg-rose-500';
+                        return (
+                          <button
+                            key={c.pt.dateKey}
+                            type="button"
+                            onMouseEnter={() => setActiveTimelineIdx(c.i)}
+                            onFocus={() => setActiveTimelineIdx(c.i)}
+                            onClick={() =>
+                              setActiveTimelineIdx((prev) => (prev === c.i ? null : c.i))
+                            }
+                            aria-label={`${c.pt.label}: ${c.pt.averagePercentage} %, ${c.pt.completedExercises} cvičení`}
+                            style={{ left: `${c.x}%`, top: `${c.y}%` }}
+                            className="absolute -translate-x-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center cursor-pointer focus:outline-none z-10"
+                          >
+                            <span
+                              className={cn(
+                                'w-3 h-3 rounded-full border-2 border-white shadow-xs transition-transform',
+                                dotBg,
+                                isActive ? 'scale-135 ring-4 ring-blue-500/20' : 'hover:scale-125'
+                              )}
+                            />
+                          </button>
+                        );
+                      })}
+
+                      {/* Aktivní tooltip (tap i hover) */}
+                      {activeCoord && (
+                        <div
+                          style={{
+                            left: `${activeCoord.x}%`,
+                            top: `${activeCoord.y}%`,
+                          }}
+                          className={cn(
+                            'absolute z-20 pointer-events-none px-2.5 py-1.5 rounded-xl bg-[#0F2942] text-white text-[11px] font-bold shadow-lg whitespace-nowrap',
+                            activeCoord.y < 28 ? 'translate-y-3' : '-translate-y-[calc(100%+10px)]',
+                            activeCoord.x < 18
+                              ? 'translate-x-0'
+                              : activeCoord.x > 82
+                                ? '-translate-x-full'
+                                : '-translate-x-1/2'
+                          )}
+                        >
+                          <span>{activeCoord.pt.label}: </span>
+                          <span className="font-black text-amber-300">
+                            {activeCoord.pt.averagePercentage} %
+                          </span>
+                          <span className="text-white/75 font-medium">
+                            {' '}({activeCoord.pt.completedExercises} cvič.)
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Popisky osy X: na < sm max 4–5 popisků, na sm+ až 7 */}
+              <div className="flex sm:hidden items-center justify-between text-[10px] font-bold text-gray-400 pt-0.5 px-1">
+                {stats.timeline.points
+                  .filter(
+                    (_, i, arr) =>
+                      arr.length <= 4 ||
+                      i === 0 ||
+                      i === arr.length - 1 ||
+                      i % Math.ceil(arr.length / 4) === 0
+                  )
+                  .slice(0, 5)
+                  .map(pt => (
+                    <span key={pt.dateKey}>{pt.label}</span>
+                  ))}
+              </div>
+              <div className="hidden sm:flex items-center justify-between text-[10px] font-bold text-gray-400 pt-0.5 px-1">
+                {stats.timeline.points
+                  .filter(
+                    (_, i, arr) =>
+                      i % Math.ceil(arr.length / 7) === 0 || i === arr.length - 1
+                  )
+                  .map(pt => (
+                    <span key={pt.dateKey}>{pt.label}</span>
+                  ))}
               </div>
             </div>
           )}
@@ -978,7 +1059,7 @@ export default function Statistics() {
       {/* 3.6 ROZBOR TVÝCH ODPOVĚDÍ                                 */}
       {/* ========================================================= */}
       <section aria-labelledby="insights-heading" className="space-y-3">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 id="insights-heading" className="text-lg sm:text-xl font-black text-[#0F2942] tracking-tight flex items-center gap-2">
               <Target size={20} className="text-brand-purple" />
@@ -1019,14 +1100,14 @@ export default function Statistics() {
           </Card>
         ) : (
           /* 3 kompaktní karty s možností rozkliknutí (kap. 3.6) */
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             {/* 1. Typy chyb */}
             <Card
               onClick={() => setIsErrorTypesModalOpen(true)}
               className="p-5 sm:p-6 rounded-[2rem] border border-gray-200/80 bg-white hover:border-gray-300 transition-all shadow-2xs cursor-pointer flex flex-col justify-between space-y-3 group"
             >
               <div className="space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                     Typy chyb
                   </span>
@@ -1105,7 +1186,7 @@ export default function Statistics() {
               </div>
 
               {stats.insights.strugglingQuestions.length > 0 && (
-                <div className="pt-2 border-t border-gray-100 text-xs flex items-center justify-between">
+                <div className="pt-2 border-t border-gray-100 text-xs flex flex-wrap items-center justify-between gap-2">
                   <span className="text-[11px] font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
                     {stats.insights.strugglingQuestions[0].suggestedReviewText}
                   </span>
@@ -1194,7 +1275,7 @@ export default function Statistics() {
                           </h4>
                         </div>
 
-                        <div className="flex items-center gap-3 shrink-0 self-end sm:self-auto">
+                        <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3 shrink-0 self-stretch sm:self-auto">
                           <div className="text-right">
                             <span className="text-xs font-black text-[#0F2942] block">
                               {attempt.score} z {attempt.totalQuestions} ({attempt.percentage} %)

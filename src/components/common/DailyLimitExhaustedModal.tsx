@@ -28,7 +28,7 @@ export default function DailyLimitExhaustedModal({
       }
     }}>
       <DialogContent
-        className="sm:max-w-md p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl"
+        className="w-full max-w-md sm:max-w-md max-h-[90dvh] overflow-y-auto p-0 bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Denní limit energie vyčerpán</DialogTitle>
@@ -40,7 +40,7 @@ export default function DailyLimitExhaustedModal({
         <div className="absolute top-0 right-0 w-44 h-44 bg-amber-200/30 rounded-full blur-3xl pointer-events-none -mr-16 -mt-16" />
         <div className="absolute top-0 left-0 w-36 h-36 bg-blue-200/30 rounded-full blur-3xl pointer-events-none -ml-12 -mt-12" />
 
-        <div className="p-6 sm:p-8 text-center relative z-10 space-y-5">
+        <div className="p-5 sm:p-8 text-center relative z-10 space-y-5">
           {/* Badge & Icon */}
           <div className="space-y-3">
             <div className="w-16 h-16 mx-auto rounded-2xl bg-amber-50 border-2 border-amber-200/80 flex items-center justify-center text-amber-600 shadow-inner">

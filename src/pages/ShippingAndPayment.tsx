@@ -16,9 +16,9 @@ import { InfoPinkIcon, CardGrayIcon } from '../components/common/CustomIcon';
 
 export default function ShippingAndPayment() {
   return (
-    <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6 space-y-8 text-[#1E1B18]">
+    <div className="max-w-4xl mx-auto py-4 sm:py-6 space-y-8 text-[#1E1B18]">
       {/* Top Bar with Back Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link to="/">
           <Button
             variant="ghost"
@@ -42,7 +42,7 @@ export default function ShippingAndPayment() {
             Informace o platbě a dodání
           </span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-gray-700 tracking-tight">
+        <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
           Doprava a platba
         </h1>
         <p className="mt-2 text-sm text-gray-500 font-medium">
@@ -54,8 +54,8 @@ export default function ShippingAndPayment() {
       <div className="space-y-6 text-sm leading-relaxed text-gray-700">
         {/* 1. Způsob dodání (Doprava) */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Zap size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Zap size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>1. Doprava a způsob dodání služeb</span>
           </h2>
           <p>
@@ -71,8 +71,8 @@ export default function ShippingAndPayment() {
 
         {/* 2. Poskytovatel platební brány */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <ShieldCheck size={20} className="text-blue-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <ShieldCheck size={20} className="text-blue-600 shrink-0 mt-1" />
             <span>2. Poskytovatel platební brány</span>
           </h2>
           <p>
@@ -100,9 +100,9 @@ export default function ShippingAndPayment() {
 
           {/* Platby kartou (výhradní metoda pro opakované předplatné) */}
           <div className="p-5 rounded-2xl bg-[#FAF7F0] border border-gray-200/80 space-y-2.5">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
-                <CardGrayIcon size={20} />
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-gray-900 flex items-start gap-2.5">
+                <CardGrayIcon size={20} className="shrink-0 mt-1" />
                 <span>Platba platební kartou online (Visa, Mastercard, Apple Pay, Google Pay)</span>
               </h3>
               <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-md">
@@ -137,8 +137,8 @@ export default function ShippingAndPayment() {
 
         {/* 4. Kontaktní údaje Comgate pro reklamace a dotazy k platbám */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Building2 size={20} className="text-amber-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Building2 size={20} className="text-amber-600 shrink-0 mt-1" />
             <span>4. Kontaktní údaje poskytovatele platební brány (reklamace a dotazy k platbám)</span>
           </h2>
           <p className="text-gray-600">

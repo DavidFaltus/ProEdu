@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Loader2, Lock } from 'lucide-react';
+import { Loader2, Lock, ZoomIn } from 'lucide-react';
 import { getPdfJs, isPdfResource } from '../../utils/pdfToSvg';
 import { sanitizeSvg, sanitizeSafeUrl } from '../../utils/svgUtils';
 import { auth } from '../../lib/firebase';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 
 interface InlineStudyMediaProps {
   svgContent?: string | null;
@@ -104,11 +105,16 @@ function BorderlessPdfRenderer({ url, alt }: { url: string; alt: string }) {
         const pdf = await loadingTask.promise;
         const maxPages = Math.min(pdf.numPages, 25);
         const rendered: RenderedPdfPage[] = [];
+        const dpr = typeof window !== 'undefined' ? Math.min(window.devicePixelRatio || 1, 2) : 1;
+        const isNarrowViewport = typeof window !== 'undefined' && window.innerWidth < 640;
+        const adaptiveScale = isNarrowViewport
+          ? Math.max(1.15, Math.min(1.5, dpr * 0.85))
+          : Math.max(1.35, Math.min(2.0, dpr * 1.05));
 
         for (let i = 1; i <= maxPages; i++) {
           if (cancelled) return;
           const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 1.8 });
+          const viewport = page.getViewport({ scale: adaptiveScale });
           const canvas = document.createElement('canvas');
           canvas.width = Math.floor(viewport.width);
           canvas.height = Math.floor(viewport.height);
@@ -217,6 +223,7 @@ export default function InlineStudyMedia({
   const [fallbackToImg, setFallbackToImg] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
 
   const isPdf = isPdfResource({ fileType, pdfUrl, svgUrl, fileUrl, originalName, svgContent });
   const rawResolvedUrl = isPdf
@@ -323,13 +330,96 @@ export default function InlineStudyMedia({
     };
   }, [shouldTryFetchMedia, safeResolvedUrl, isProtectedEndpoint]);
 
-  if (cleanInlineSvg) {
-    return (
+  const renderZoomableSvg = (svgHtml: string) => (
+    <>
       <div
-        className={`w-full [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:block ${className}`}
-        dangerouslySetInnerHTML={{ __html: cleanInlineSvg }}
-      />
-    );
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsLightboxOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsLightboxOpen(true);
+          }
+        }}
+        title="Kliknutím zvětšíte diagram"
+        aria-label={`Zvětšit ${alt}`}
+        className={`relative group w-full overflow-x-auto cursor-zoom-in [&>svg]:max-w-full [&>svg]:h-auto [&>svg]:mx-auto [&>svg]:block ${className}`}
+      >
+        <div
+          className="[&>svg]:max-w-full [&>svg]:h-auto [&>svg]:mx-auto [&>svg]:block"
+          dangerouslySetInnerHTML={{ __html: svgHtml }}
+        />
+        <span className="inline-flex items-center gap-1 absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/65 text-white text-[11px] font-bold opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity pointer-events-none">
+          <ZoomIn className="w-3.5 h-3.5" />
+          <span>Zvětšit</span>
+        </span>
+      </div>
+      <Dialog open={isLightboxOpen} onOpenChange={setIsLightboxOpen}>
+        <DialogContent className="max-w-4xl p-3 sm:p-6 bg-white rounded-2xl sm:rounded-3xl">
+          <DialogHeader className="pb-2">
+            <DialogTitle className="text-sm sm:text-base font-black text-gray-900 pr-8">
+              {alt}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-auto max-h-[80dvh] rounded-xl bg-[#FAF7F0] p-3 border border-gray-200/80">
+            <div
+              className="min-w-[min(100%,520px)] [&>svg]:w-full [&>svg]:h-auto [&>svg]:mx-auto [&>svg]:block"
+              dangerouslySetInnerHTML={{ __html: svgHtml }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+
+  const renderZoomableImg = (src: string) => (
+    <>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setIsLightboxOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setIsLightboxOpen(true);
+          }
+        }}
+        title="Kliknutím zvětšíte obrázek"
+        aria-label={`Zvětšit ${alt}`}
+        className={`relative group w-full cursor-zoom-in ${className}`}
+      >
+        <img
+          src={src}
+          alt={alt}
+          className="max-w-full h-auto mx-auto block"
+        />
+        <span className="inline-flex items-center gap-1 absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/65 text-white text-[11px] font-bold opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity pointer-events-none">
+          <ZoomIn className="w-3.5 h-3.5" />
+          <span>Zvětšit</span>
+        </span>
+      </div>
+      <Dialog open={isLightboxOpen} onOpenChange={setIsLightboxOpen}>
+        <DialogContent className="max-w-4xl p-3 sm:p-6 bg-white rounded-2xl sm:rounded-3xl">
+          <DialogHeader className="pb-2">
+            <DialogTitle className="text-sm sm:text-base font-black text-gray-900 pr-8">
+              {alt}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="overflow-auto max-h-[80dvh] rounded-xl bg-[#FAF7F0] p-3 border border-gray-200/80 flex items-center justify-center">
+            <img
+              src={src}
+              alt={alt}
+              className="max-w-full max-h-[75dvh] w-auto h-auto object-contain rounded-lg"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+
+  if (cleanInlineSvg) {
+    return renderZoomableSvg(cleanInlineSvg);
   }
 
   if (isLocked) {
@@ -346,21 +436,10 @@ export default function InlineStudyMedia({
 
   if (shouldTryFetchMedia) {
     if (fetchedSvg) {
-      return (
-        <div
-          className={`w-full [&>svg]:w-full [&>svg]:h-auto [&>svg]:max-w-full [&>svg]:block ${className}`}
-          dangerouslySetInnerHTML={{ __html: fetchedSvg }}
-        />
-      );
+      return renderZoomableSvg(fetchedSvg);
     }
     if (protectedImgBlobUrl) {
-      return (
-        <img
-          src={protectedImgBlobUrl}
-          alt={alt}
-          className={`w-full h-auto max-w-full block ${className}`}
-        />
-      );
+      return renderZoomableImg(protectedImgBlobUrl);
     }
     if (fetching && !fallbackToImg) {
       return (
@@ -375,13 +454,7 @@ export default function InlineStudyMedia({
   }
 
   if (safeResolvedUrl) {
-    return (
-      <img
-        src={safeResolvedUrl}
-        alt={alt}
-        className={`w-full h-auto max-w-full block ${className}`}
-      />
-    );
+    return renderZoomableImg(safeResolvedUrl);
   }
 
   return null;

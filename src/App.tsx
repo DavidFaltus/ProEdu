@@ -51,7 +51,7 @@ function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 's
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-4 bg-[#FAF6EE]">
+      <div className="flex flex-col items-center justify-center h-[100dvh] gap-4 bg-[#FAF6EE]">
         <div className="w-12 h-12 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
         <p className="text-[#1E1B18] font-bold text-sm">Načítání...</p>
       </div>
@@ -64,7 +64,7 @@ function PrivateRoute({ children, role }: { children: React.ReactNode; role?: 's
 
   if (role && !profile) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-4 bg-[#FAF6EE]">
+      <div className="flex flex-col items-center justify-center h-[100dvh] gap-4 bg-[#FAF6EE]">
         <div className="w-12 h-12 border-4 border-[#F5C400] border-t-transparent rounded-full animate-spin" />
         <p className="text-[#1E1B18] font-bold text-sm">Načítání profilu...</p>
       </div>
@@ -88,7 +88,7 @@ function DashboardRedirect() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen gap-4 bg-[#FAF6EE]">
+      <div className="flex flex-col items-center justify-center h-[100dvh] gap-4 bg-[#FAF6EE]">
         <div className="w-12 h-12 border-4 border-[#1E1B18] border-t-transparent rounded-full animate-spin" />
         <p className="text-[#1E1B18] font-bold text-sm">Přesměrování...</p>
       </div>
@@ -187,7 +187,7 @@ function AppContent() {
         </Link>
 
         {/* Action icons right: Jokers, Notifications, Avatar / Login, Hamburger */}
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {user && profile ? (
             <>
               {!isPremium && (
@@ -205,7 +205,7 @@ function AppContent() {
                 ref={notificationBtnRef}
                 onClick={handleToggleNotifications}
                 className={cn(
-                  "p-2 rounded-xl transition-all relative cursor-pointer",
+                  "min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition-all relative cursor-pointer",
                   isNotificationsOpen
                     ? "bg-[#F5C400] text-[#1E1B18]"
                     : unreadCount > 0 
@@ -216,7 +216,7 @@ function AppContent() {
               >
                 <Bell size={18} />
                 {unreadCount > 0 && (
-                  <span className="absolute 1 top-1 right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
+                  <span className="absolute top-1.5 right-1.5 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
                     {unreadCount}
                   </span>
                 )}
@@ -235,17 +235,22 @@ function AppContent() {
               {/* Mobile User Avatar */}
               <button
                 onClick={() => setMobileMenuOpen(true)}
-                className="w-8 h-8 rounded-full overflow-hidden border-2 border-[#F5C400] flex items-center justify-center text-sm shadow-xs cursor-pointer"
-                style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
+                className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl cursor-pointer"
                 title={profile?.name || 'Profil'}
+                aria-label={profile?.name || 'Profil'}
               >
-                {profile?.avatarEmoji ? (
-                  <span>{profile.avatarEmoji}</span>
-                ) : sanitizeSafeUrl(profile?.photoURL) ? (
-                  <img src={sanitizeSafeUrl(profile?.photoURL)!} alt="" className="w-full h-full object-cover" />
-                ) : (
-                  <CapIcon size={18} />
-                )}
+                <span
+                  className="w-8 h-8 rounded-full overflow-hidden border-2 border-[#F5C400] flex items-center justify-center text-sm shadow-xs"
+                  style={{ backgroundColor: profile?.avatarBgColor || '#FEF3C7' }}
+                >
+                  {profile?.avatarEmoji ? (
+                    <span>{profile.avatarEmoji}</span>
+                  ) : sanitizeSafeUrl(profile?.photoURL) ? (
+                    <img src={sanitizeSafeUrl(profile?.photoURL)!} alt="" className="w-full h-full object-cover" />
+                  ) : (
+                    <CapIcon size={18} />
+                  )}
+                </span>
               </button>
             </>
           ) : loading ? (
@@ -253,16 +258,16 @@ function AppContent() {
           ) : (
             <button
               onClick={openAuthModal}
-              className="px-3 py-1.5 rounded-xl bg-[#1E1B18] text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
+              className="min-h-[44px] px-3.5 py-2 rounded-xl bg-[#1E1B18] text-white font-bold text-xs flex items-center gap-1.5 shadow-2xs"
             >
-              <LogIn size={13} />
+              <LogIn size={14} />
               <span>Přihlásit</span>
             </button>
           )}
 
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 rounded-xl text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
+            className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-gray-700 hover:bg-gray-100 transition-colors cursor-pointer"
             aria-label="Menu"
           >
             {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
@@ -280,7 +285,7 @@ function AppContent() {
           <div className="relative w-72 max-w-[85vw] bg-white h-full shadow-2xl z-10 animate-in slide-in-from-left duration-200">
             <StudentSidebar 
               onNavigate={() => setMobileMenuOpen(false)} 
-              className="h-full border-r-0"
+              className="w-full h-full border-r-0"
             />
           </div>
         </div>
@@ -394,14 +399,14 @@ function AppContent() {
         </div>
 
         {!location.pathname.startsWith('/practice/session') && (
-          <div className="pb-16 md:pb-0">
+          <div className="pb-[calc(env(safe-area-inset-bottom,0px)+4.5rem)] md:pb-0">
             <Footer />
           </div>
         )}
       </main>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-gray-200/80 px-2 py-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)] flex items-center justify-around shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-md border-t border-gray-200/80 px-1.5 py-1 pb-[calc(env(safe-area-inset-bottom,0px)+0.35rem)] flex items-center justify-around shadow-[0_-4px_20px_rgba(0,0,0,0.05)]">
         {navItems.map((item) => {
           const Icon = item.icon;
           return (
@@ -410,7 +415,7 @@ function AppContent() {
               to={item.path}
               onClick={() => trackSectionClick(`mobile_nav_${item.label}`, item.path)}
               className={cn(
-                "flex flex-col items-center justify-center min-w-[56px] py-1 px-2 rounded-2xl transition-all relative select-none",
+                "flex-1 min-w-0 flex flex-col items-center justify-center py-1 px-1 rounded-2xl transition-all relative select-none",
                 item.active 
                   ? "text-[#1E1B18] font-black" 
                   : "text-gray-500 hover:text-gray-900 font-bold"
@@ -422,11 +427,11 @@ function AppContent() {
               )}>
                 <Icon size={19} />
               </div>
-              <span className="text-[10px] tracking-tight leading-none mt-1">
+              <span className="text-[10px] tracking-tight leading-none mt-1 truncate max-w-full">
                 {item.label}
               </span>
               {item.locked && (
-                <Lock size={10} className="absolute top-1 right-2 text-amber-700" />
+                <Lock size={10} className="absolute top-1 right-1.5 text-amber-700" />
               )}
             </Link>
           );

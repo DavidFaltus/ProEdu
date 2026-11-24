@@ -239,11 +239,11 @@ export default function AuthModal() {
 
   return (
     <Dialog open={isAuthModalOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-md w-[92vw] rounded-[2.5rem] p-0 overflow-hidden border border-gray-100 shadow-3xl bg-[#FAF7F0]">
+      <DialogContent className="w-full max-w-md sm:max-w-md max-h-[92dvh] overflow-y-auto rounded-[2.5rem] p-0 border border-gray-100 shadow-3xl bg-[#FAF7F0]">
         {/* Header decoration */}
         <div className="bg-gradient-to-br from-[#DCEBFE] via-[#C7DFFC] to-[#B9D8FC] p-6 text-center relative overflow-hidden border-b border-blue-100">
           <div className="absolute top-0 right-0 w-32 h-32 bg-white/40 rounded-full blur-2xl pointer-events-none" />
-          <DialogTitle className="text-2xl font-display font-black tracking-tight text-[#0F2942] flex items-center justify-center gap-2.5">
+          <DialogTitle className="px-8 text-2xl font-display font-black tracking-tight text-[#0F2942] flex items-center justify-center gap-2.5">
             <StarYellowIcon size={22} className="shrink-0" />
             <span>
               {step === 'otp'
@@ -563,7 +563,7 @@ export default function AuthModal() {
                   value={otpCode}
                   onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                   placeholder="123456"
-                  className="h-14 text-center font-mono text-2xl tracking-[0.5em] font-black rounded-2xl border-2 border-blue-200 bg-white focus:border-blue-500 shadow-inner"
+                  className="h-14 text-center font-mono text-xl sm:text-2xl tracking-[0.3em] sm:tracking-[0.5em] pl-[0.3em] sm:pl-[0.5em] font-black rounded-2xl border-2 border-blue-200 bg-white focus:border-blue-500 shadow-inner"
                 />
               </div>
 

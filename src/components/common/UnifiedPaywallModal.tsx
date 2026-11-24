@@ -396,36 +396,42 @@ export default function UnifiedPaywallModal({
     <Dialog open={isOpen} onOpenChange={open => { if (!open) onClose(); }}>
       <DialogContent
         showCloseButton={false}
-        className="w-[94vw] sm:max-w-none md:w-[75vw] lg:w-[68vw] max-w-5xl rounded-[2.5rem] p-6 sm:p-8 md:p-10 lg:p-12 bg-white text-[#1E1B18] shadow-2xl relative border border-gray-100 overflow-hidden"
+        className="w-full sm:max-w-none md:w-[92vw] lg:w-[84vw] xl:w-[76vw] max-w-5xl max-h-[92dvh] flex flex-col overflow-hidden p-0 rounded-3xl sm:rounded-[2.5rem] bg-white text-[#1E1B18] shadow-2xl relative border border-gray-100"
       >
-        {/* Tlačítko Zpět (plovoucí vlevo nahoře – pouze na kroku objednávkového formuláře, nikoliv na samotné platbě) */}
-        {currentStep === 'order_form' && !isCourse && (
-          <button
-            type="button"
-            onClick={() => setCurrentStep('plan_overview')}
-            className="absolute top-4 left-4 sm:top-6 sm:left-7 z-30 px-3.5 py-1.5 rounded-xl bg-[#FAF6EE] hover:bg-gray-200 text-[#1E1B18] transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-gray-200/80 shadow-2xs"
-          >
-            <ArrowLeft size={16} />
-            <span>Zpět</span>
-          </button>
-        )}
-
-        {/* Tlačítko Zavřít (plovoucí vpravo nahoře) */}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Zavřít okno"
-          title="Zavřít"
-          className="absolute top-4 right-4 sm:top-6 sm:right-7 z-30 w-9 h-9 rounded-xl bg-[#FAF6EE] hover:bg-[#1E1B18] text-[#1E1B18] hover:text-white border border-gray-200/80 shadow-xs flex items-center justify-center transition-all cursor-pointer active:scale-95"
-        >
-          <X size={18} strokeWidth={2.5} />
-        </button>
-
         {/* Jemné dekorativní podsvícení */}
         <div className={`absolute -top-20 -right-20 w-80 h-80 rounded-full blur-3xl pointer-events-none ${
           isCourse ? 'bg-[#2B44B8]/10' : 'bg-[#B9D8FC]/30'
         }`} />
         <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-[#FAF6EE] rounded-full blur-2xl pointer-events-none" />
+
+        {/* Fixní horní lišta: Zpět + Zavřít (bez kolize s nadpisy) */}
+        <div className="shrink-0 relative z-20 flex items-center justify-between gap-2 px-4 sm:px-6 pt-4 sm:pt-5 pb-2">
+          <div>
+            {currentStep === 'order_form' && !isCourse && (
+              <button
+                type="button"
+                onClick={() => setCurrentStep('plan_overview')}
+                className="px-3.5 py-1.5 rounded-xl bg-[#FAF6EE] hover:bg-gray-200 text-[#1E1B18] transition-colors cursor-pointer flex items-center gap-1.5 text-xs font-bold border border-gray-200/80 shadow-2xs"
+              >
+                <ArrowLeft size={16} />
+                <span>Zpět</span>
+              </button>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Zavřít okno"
+            title="Zavřít"
+            className="w-9 h-9 rounded-xl bg-[#FAF6EE] hover:bg-[#1E1B18] text-[#1E1B18] hover:text-white border border-gray-200/80 shadow-xs flex items-center justify-center transition-all cursor-pointer active:scale-95"
+          >
+            <X size={18} strokeWidth={2.5} />
+          </button>
+        </div>
+
+        {/* Scrollovatelné tělo modálu */}
+        <div className="overflow-y-auto flex-1 min-h-0 p-5 sm:p-8 lg:p-10 pt-2 sm:pt-3 lg:pt-4 relative z-10">
 
         {/* ========================================================== */}
         {/* KROK 1: PŘEHLED NABÍDKY & VÝBĚR (PLAN OVERVIEW)           */}
@@ -434,7 +440,7 @@ export default function UnifiedPaywallModal({
           <div className="space-y-5 relative z-10">
             {/* Čistá hlavička: Pouze nadpis s hvězdičkou za ním */}
             <div className="text-center space-y-1">
-              <DialogTitle className="text-3xl sm:text-4xl font-playful text-[#1E1B18] tracking-tight flex items-center justify-center gap-2.5">
+              <DialogTitle className="text-2xl sm:text-3xl lg:text-4xl font-playful text-[#1E1B18] tracking-tight flex items-center justify-center gap-2.5">
                 <span>{title || (isCourse ? 'Výběr z aktuální nabídky kurzů' : 'Získej ProEdu Premium')}</span>
                 {!isCourse && <StarYellowIcon size={26} className="shrink-0" />}
               </DialogTitle>
@@ -448,7 +454,7 @@ export default function UnifiedPaywallModal({
 
             {/* Dvousloupcové tělo na desktopu */}
             {isCourse ? (
-              <div className="grid md:grid-cols-3 gap-4 my-auto">
+              <div className="grid lg:grid-cols-3 gap-4 my-auto">
                 {availableCourses.map(course => {
                   const isSelected = selectedCourseId === course.id;
                   return (
@@ -490,9 +496,9 @@ export default function UnifiedPaywallModal({
                 })}
               </div>
             ) : (
-              <div className="grid md:grid-cols-12 gap-4 items-stretch">
+              <div className="grid lg:grid-cols-12 gap-4 items-stretch">
                 {/* Levá karta s cenou a flexibilitou */}
-                <div className="md:col-span-4 p-4 sm:p-5 rounded-3xl border-2 border-[#B9D8FC] bg-gradient-to-br from-blue-50/80 via-sky-50/50 to-blue-50/80 flex flex-col justify-between text-center relative shadow-sm">
+                <div className="lg:col-span-4 p-4 sm:p-5 rounded-3xl border-2 border-[#B9D8FC] bg-gradient-to-br from-blue-50/80 via-sky-50/50 to-blue-50/80 flex flex-col justify-between text-center relative shadow-sm">
                   <div>
                     <span className="text-[10px] font-black uppercase tracking-wider text-[#0F2942] bg-[#B9D8FC] px-3 py-1 rounded-full inline-block mb-2 border border-blue-200/70 shadow-2xs">
                       Nabídka pro první podporovatele (-50 %)
@@ -517,7 +523,7 @@ export default function UnifiedPaywallModal({
                 </div>
 
                 {/* Pravý checklist výhod v 2-sloupcovém gridu */}
-                <div className="md:col-span-8 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/70 flex flex-col justify-center space-y-3">
+                <div className="lg:col-span-8 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/70 flex flex-col justify-center space-y-3">
                   <h4 className="text-xs font-black uppercase tracking-wider text-gray-600 flex items-center gap-1.5">
                     <StarYellowIcon size={16} />
                     <span>Konkrétní výhody balíčku Premium:</span>
@@ -588,9 +594,25 @@ export default function UnifiedPaywallModal({
               </DialogDescription>
             </div>
 
-            <div className="grid md:grid-cols-12 gap-5 items-stretch my-auto">
+            <div className="grid lg:grid-cols-12 gap-5 items-stretch my-auto">
+              {/* Kompaktní 1řádkové shrnutí na mobilu/tabletu (< lg) */}
+              <div className="lg:hidden flex flex-wrap items-center justify-between gap-2 px-4 py-3 rounded-2xl bg-[#FAF6EE] border border-gray-200/80">
+                <div className="flex items-center gap-2 min-w-0">
+                  <StarYellowIcon size={16} className="shrink-0" />
+                  <span className="font-bold text-sm text-gray-900 truncate">ProEdu Premium</span>
+                  <span className="text-[10px] font-black uppercase tracking-wider text-blue-900 bg-blue-50 px-2 py-0.5 rounded shrink-0">
+                    -50 % napořád
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-1.5 shrink-0">
+                  <span className="text-xs text-gray-400 line-through font-bold">199 Kč</span>
+                  <span className="text-lg font-black text-[#B80053]">99 Kč</span>
+                  <span className="text-xs text-gray-500 font-semibold">/ měs.</span>
+                </div>
+              </div>
+
               {/* Levý sloupec (Desktop summary) */}
-              <div className="md:col-span-4 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/80 flex flex-col justify-between gap-4">
+              <div className="hidden lg:flex lg:col-span-4 bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200/80 flex-col justify-between gap-4">
                 <div className="space-y-3">
                   <div className="p-3.5 rounded-2xl bg-white border border-gray-200 shadow-2xs">
                     <span className="text-[10px] font-black uppercase tracking-wider text-blue-900 bg-blue-50 px-2.5 py-0.5 rounded">
@@ -635,7 +657,7 @@ export default function UnifiedPaywallModal({
               </div>
 
               {/* Pravý sloupec (Formulářová pole) */}
-              <div className="md:col-span-8 space-y-3">
+              <div className="lg:col-span-8 space-y-3">
                 {/* 1. Řádek: Jméno a E-mail */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
@@ -731,12 +753,12 @@ export default function UnifiedPaywallModal({
                 {/* 3. Řádek: Způsob platby - Platební brána */}
                 <div className="space-y-2">
                   <Label className="text-xs sm:text-sm font-bold text-gray-700">Způsob platby</Label>
-                  <div className="h-11 px-4 rounded-xl border-2 border-[#2B44B8] bg-blue-50/70 text-[#0F2942] flex items-center justify-between shadow-2xs">
+                  <div className="min-h-11 py-2.5 px-3.5 rounded-xl border-2 border-[#2B44B8] bg-blue-50/70 text-[#0F2942] flex flex-wrap items-center justify-between gap-2 shadow-2xs">
                     <div className="flex items-center gap-2.5">
-                      <CardGrayIcon size={20} />
+                      <CardGrayIcon size={20} className="shrink-0" />
                       <span className="text-xs sm:text-sm font-bold">Platební brána (karta online, Apple Pay, Google Pay)</span>
                     </div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/90 border border-emerald-200 px-2 py-0.5 rounded">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-emerald-700 bg-emerald-100/90 border border-emerald-200 px-2 py-0.5 rounded shrink-0">
                       Okamžitá aktivace
                     </span>
                   </div>
@@ -820,10 +842,10 @@ export default function UnifiedPaywallModal({
               </DialogTitle>
 
               {/* Comgate platební brána karta */}
-              <div className="bg-[#FAF6EE] p-5 rounded-3xl border border-gray-200 text-left space-y-3.5 shadow-xs">
-                <div className="flex items-center justify-between pb-2.5 border-b border-gray-200">
+              <div className="bg-[#FAF6EE] p-4 sm:p-5 rounded-3xl border border-gray-200 text-left space-y-3.5 shadow-xs">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b border-gray-200">
                   <div className="flex items-center gap-2">
-                    <Lock size={14} className="text-emerald-600" />
+                    <Lock size={14} className="text-emerald-600 shrink-0" />
                     <span className="text-xs text-gray-700 font-bold uppercase tracking-wider">Platební brána Comgate</span>
                   </div>
                   <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black uppercase bg-blue-100 text-blue-900">
@@ -857,19 +879,19 @@ export default function UnifiedPaywallModal({
                 {/* Předvyplněná testovací karta v dummy bráně (pouze pokud server nevrátil reálnou Comgate redirectUrl) */}
                 {import.meta.env.DEV && !sanitizeSafeUrl(orderResult.comgate?.redirectUrl) && (
                   <div className="bg-white p-4 rounded-2xl border-2 border-blue-200 space-y-2.5">
-                    <div className="flex items-center justify-between">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Testovací platební karta</span>
                       <span className="text-[11px] font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md">VISA / Mastercard Test</span>
                     </div>
-                    <div className="grid grid-cols-12 gap-2.5 text-xs">
-                      <div className="col-span-7 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 flex items-center justify-between">
+                    <div className="grid grid-cols-2 sm:grid-cols-12 gap-2.5 text-xs">
+                      <div className="col-span-2 sm:col-span-7 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 flex items-center justify-between">
                         <span>4242 •••• •••• 4242</span>
                         <CardGrayIcon size={17} />
                       </div>
-                      <div className="col-span-3 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 text-center">
+                      <div className="col-span-1 sm:col-span-3 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 text-center">
                         12/28
                       </div>
-                      <div className="col-span-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 text-center">
+                      <div className="col-span-1 sm:col-span-2 bg-gray-50 p-2.5 rounded-xl border border-gray-200 font-mono font-bold text-gray-900 text-center">
                         ***
                       </div>
                     </div>
@@ -902,7 +924,7 @@ export default function UnifiedPaywallModal({
                     return (
                       <a
                         href={safeComgateUrl}
-                        className="flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                        className="w-full sm:flex-1 h-12 bg-[#2B44B8] hover:bg-[#1E3A8A] text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
                       >
                         <CardGrayIcon size={20} />
                         <span>Přejít na bránu Comgate k autorizaci</span>
@@ -915,7 +937,7 @@ export default function UnifiedPaywallModal({
                         type="button"
                         onClick={handleSandboxSimulate}
                         disabled={isSimulatingPayment}
-                        className="flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
+                        className="w-full sm:flex-1 h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl shadow-md text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer transition-all hover:scale-[1.01]"
                       >
                         <Check size={18} />
                         <span>
@@ -934,7 +956,7 @@ export default function UnifiedPaywallModal({
                   onClick={handleCancelCurrentOrder}
                   disabled={isCancellingOrder || isSimulatingPayment}
                   variant="outline"
-                  className="h-12 px-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs sm:text-sm rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                  className="w-full sm:w-auto h-12 px-4 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 font-bold text-xs sm:text-sm rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
                 >
                   <XCircle size={16} />
                   <span>{isCancellingOrder ? 'Ruším...' : 'Zrušit objednávku'}</span>
@@ -944,7 +966,7 @@ export default function UnifiedPaywallModal({
                   type="button"
                   onClick={onClose}
                   variant="outline"
-                  className="sm:w-28 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
+                  className="w-full sm:w-28 h-12 border-gray-200 text-gray-700 font-semibold text-xs sm:text-sm rounded-xl cursor-pointer"
                 >
                   Zavřít
                 </Button>
@@ -952,6 +974,7 @@ export default function UnifiedPaywallModal({
             </div>
           </div>
         )}
+        </div>
       </DialogContent>
     </Dialog>
   );

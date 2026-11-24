@@ -88,7 +88,7 @@ export default function Courses() {
           <Card className={`h-full rounded-[2.5rem] border ${isEnrolled ? 'border-emerald-200/90 shadow-emerald-500/5' : 'border-gray-200/80'} bg-white transition-all duration-300 relative overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-xl`}>
             <div className={`h-2.5 bg-gradient-to-r ${accentColor}`} />
             
-            <CardHeader className="p-7 pb-3 space-y-3">
+            <CardHeader className="p-5 sm:p-7 pb-3 space-y-3">
               <div className="flex items-center justify-between gap-2">
                 <div className={`w-12 h-12 ${isEnrolled ? 'bg-emerald-50 text-emerald-700' : 'bg-indigo-50 text-indigo-700'} rounded-2xl flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform duration-300`}>
                   <MaterialYellowIcon size={26} />
@@ -125,7 +125,7 @@ export default function Courses() {
               </div>
             </CardHeader>
 
-            <CardContent className="p-7 pt-2 flex flex-col justify-between flex-1">
+            <CardContent className="p-5 sm:p-7 pt-2 flex flex-col justify-between flex-1">
               <p className="text-gray-500 text-xs sm:text-sm line-clamp-3 leading-relaxed mb-4 font-medium">
                 {course.description}
               </p>
@@ -168,7 +168,7 @@ export default function Courses() {
   };
 
   return (
-    <div className="page-container space-y-8 pb-16">
+    <div className="space-y-8 pb-16">
       {/* Header */}
       <section className="text-center space-y-4 max-w-3xl mx-auto">
         <motion.h1 initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight">
@@ -188,9 +188,9 @@ export default function Courses() {
           <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="flex justify-center pt-2">
             <Link to="/teacher?tab=courses">
               <Button 
-                className="bg-[#F5C400] text-[#1E1B18] h-12 px-7 rounded-2xl font-black shadow-lg shadow-yellow-500/20 hover:bg-[#F5C400]/90 transition-all cursor-pointer flex items-center gap-2"
+                className="bg-[#F5C400] text-[#1E1B18] min-h-12 h-auto py-3 px-6 sm:px-7 rounded-2xl font-black shadow-lg shadow-yellow-500/20 hover:bg-[#F5C400]/90 transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-normal text-center"
               >
-                <Settings size={18} /> Přejít do správy kurzů v administraci
+                <Settings size={18} className="shrink-0" /> Přejít do správy kurzů v administraci
               </Button>
             </Link>
           </motion.div>
@@ -199,7 +199,7 @@ export default function Courses() {
 
       {/* Paywall Banner for non-course users */}
       {!hasAnyEnrolled && !isTeacher && (
-        <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] p-6 sm:p-8 rounded-[2.5rem] shadow-sm border-2 border-[#B9D8FC] flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
+        <div className="bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] p-5 sm:p-8 rounded-[2.5rem] shadow-sm border-2 border-[#B9D8FC] flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-80 h-80 bg-[#B9D8FC]/30 rounded-full blur-3xl pointer-events-none" />
 
           <div className="space-y-2 text-center md:text-left relative z-10">
@@ -214,11 +214,11 @@ export default function Courses() {
             </p>
           </div>
 
-          <Link to="/contact" className="shrink-0 relative z-10">
+          <Link to="/contact" className="shrink-0 relative z-10 w-full md:w-auto">
             <Button
-              className="h-13 px-8 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm shadow-sm border border-blue-200/80 cursor-pointer flex items-center gap-2 transition-all hover:scale-102"
+              className="w-full md:w-auto min-h-12 h-auto py-3 px-6 sm:px-8 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-sm shadow-sm border border-blue-200/80 cursor-pointer flex items-center justify-center gap-2 transition-all hover:scale-102 whitespace-normal text-center"
             >
-              <CapIcon size={19} />
+              <CapIcon size={19} className="shrink-0" />
               <span>Domluvit si zápis do kurzu</span>
             </Button>
           </Link>

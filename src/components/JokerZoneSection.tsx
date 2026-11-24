@@ -330,7 +330,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
         <div className="lg:col-span-6 flex flex-col justify-between gap-3.5">
           {/* CARD 1: SÉRIE 10 DNÍ V ŘADĚ */}
           <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#FDE68A]/70 text-[#92400E] flex items-center justify-center shrink-0">
                   <StreakYellowIcon size={24} />
@@ -350,7 +350,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
               </div>
 
               {isGuest ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:gap-1 pl-[54px] sm:pl-0 shrink-0">
                   <span className="px-2.5 py-0.5 rounded-full bg-[#FDE68A]/80 text-[#92400E] text-[11px] font-black">
                     limit 15
                   </span>
@@ -364,7 +364,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                   </button>
                 </div>
               ) : (
-                <span className="px-3 py-1 rounded-full bg-[#FDE68A]/80 text-[#92400E] text-xs font-black shrink-0">
+                <span className="self-start sm:self-center ml-[54px] sm:ml-0 px-3 py-1 rounded-full bg-[#FDE68A]/80 text-[#92400E] text-xs font-black shrink-0">
                   {Math.min(MAX_STREAK_DAYS, streak)} / {MAX_STREAK_DAYS} dní
                 </span>
               )}
@@ -391,7 +391,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
 
           {/* CARD 2: POZVI KAMARÁDA */}
           <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#DCFCE7] text-[#166534] flex items-center justify-center shrink-0">
                   <FriendsYellowIcon size={24} />
@@ -409,7 +409,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
               </div>
 
               {isGuest ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:gap-1 pl-[54px] sm:pl-0 shrink-0">
                   <span className="px-2.5 py-0.5 rounded-full bg-[#DCFCE7] text-[#166534] text-[11px] font-black">
                     +30 pro oba
                   </span>
@@ -423,15 +423,15 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                   </button>
                 </div>
               ) : (
-                <span className="px-3 py-1 rounded-full bg-[#DCFCE7] text-[#166534] text-xs font-black shrink-0">
+                <span className="self-start sm:self-center ml-[54px] sm:ml-0 px-3 py-1 rounded-full bg-[#DCFCE7] text-[#166534] text-xs font-black shrink-0">
                   {currentReferrals} / {MAX_REFERRALS}
                 </span>
               )}
             </div>
 
             {!isGuest && (
-              <div className="flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap pt-0.5">
-                <div className="grid grid-cols-5 gap-1.5 flex-1 min-w-[210px]">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-2 pt-0.5">
+                <div className="grid grid-cols-5 gap-1.5 w-full sm:flex-1">
                   {Array.from({ length: MAX_REFERRALS }).map((_, idx) => {
                     const isClaimed = currentReferrals >= idx + 1;
                     return (
@@ -454,7 +454,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                 <button
                   type="button"
                   onClick={handleCopyReferral}
-                  className="h-8 px-4 rounded-full bg-white hover:bg-gray-50 border border-gray-300 text-[#0F2942] font-bold text-xs shrink-0 transition-colors cursor-pointer"
+                  className="w-full sm:w-auto h-10 sm:h-9 px-4 rounded-full bg-white hover:bg-gray-50 border border-gray-300 text-[#0F2942] font-bold text-xs shrink-0 transition-colors cursor-pointer"
                 >
                   {isCopied ? 'Zkopírováno!' : 'Zkopírovat odkaz'}
                 </button>
@@ -464,7 +464,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
 
           {/* CARD 3: RYCHLÝ DOTAZNÍK */}
           <div className="rounded-3xl bg-[#FCF9F1] border border-[#EFEAD8] p-4 sm:p-5 space-y-3">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3">
               <div className="flex items-center gap-3.5 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
                   <SurveyBlueIcon size={24} />
@@ -482,7 +482,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
               </div>
 
               {isGuest ? (
-                <div className="flex flex-col items-end gap-1 shrink-0">
+                <div className="flex flex-row sm:flex-col items-center sm:items-end justify-between sm:justify-start gap-2 sm:gap-1 pl-[54px] sm:pl-0 shrink-0">
                   <span className="px-2.5 py-0.5 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-[11px] font-black">
                     +15 žolíků
                   </span>
@@ -496,7 +496,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                   </button>
                 </div>
               ) : (
-                <span className="px-3 py-1 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-xs font-black shrink-0">
+                <span className="self-start sm:self-center ml-[54px] sm:ml-0 px-3 py-1 rounded-full bg-[#DBEAFE] text-[#1E40AF] text-xs font-black shrink-0">
                   +15 žolíků
                 </span>
               )}
@@ -536,7 +536,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
               type="button"
               onClick={() => handleOpenAuth('register')}
@@ -557,7 +557,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
 
       {/* DOTAZNÍK MODAL PRO PŘIHLÁŠENÉ */}
       <Dialog open={isSurveyModalOpen} onOpenChange={setIsSurveyModalOpen}>
-        <DialogContent className="max-w-md p-6 sm:p-7 rounded-3xl bg-white border border-gray-200 shadow-2xl">
+        <DialogContent className="max-w-md max-h-[90dvh] overflow-y-auto p-5 sm:p-7 rounded-3xl bg-white border border-gray-200 shadow-2xl">
           <div className="space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-[#DBEAFE] text-[#1E40AF] flex items-center justify-center shrink-0">
@@ -635,11 +635,11 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                 </select>
               </div>
 
-              <div className="flex items-center justify-end gap-2.5 pt-2">
+              <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsSurveyModalOpen(false)}
-                  className="px-4 py-2.5 rounded-full border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold text-xs cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2.5 rounded-full border border-gray-200 hover:bg-gray-50 text-gray-600 font-bold text-xs cursor-pointer"
                 >
                   Zrušit
                 </button>
@@ -651,7 +651,7 @@ export default function JokerZoneSection({ className }: JokerZoneSectionProps = 
                     !surveyGrade ||
                     isSubmittingSurvey
                   }
-                  className="px-6 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#EAB308] disabled:opacity-50 disabled:pointer-events-none text-[#0F2942] font-black text-xs sm:text-sm transition-colors cursor-pointer"
+                  className="w-full sm:w-auto px-6 py-2.5 rounded-full bg-[#FACC15] hover:bg-[#EAB308] disabled:opacity-50 disabled:pointer-events-none text-[#0F2942] font-black text-xs sm:text-sm transition-colors cursor-pointer"
                 >
                   {isSubmittingSurvey ? 'Odesílám...' : 'Odeslat a získat +15'}
                 </button>

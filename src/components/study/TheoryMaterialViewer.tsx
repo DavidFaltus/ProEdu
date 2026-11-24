@@ -245,7 +245,7 @@ export default function TheoryMaterialViewer({
     <>
       <div className="bg-white rounded-3xl p-5 sm:p-6 border border-gray-100 shadow-xs space-y-4">
         {/* Card Header: 1 Teorie + Stáhnout PDF */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-full bg-[#DCEBFE] text-[#1D4ED8] font-black text-sm flex items-center justify-center shrink-0">
               1
@@ -261,7 +261,7 @@ export default function TheoryMaterialViewer({
                 type="button"
                 onClick={handleDownloadPdf}
                 disabled={isDownloading || isPrinting || loadingMedia}
-                className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-bold text-[#1D4ED8] hover:text-[#1E3A8A] disabled:opacity-50 transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#EEF4FF] hover:bg-[#DCEBFE] text-xs sm:text-sm font-bold text-[#1D4ED8] hover:text-[#1E3A8A] disabled:opacity-50 transition-colors cursor-pointer"
               >
                 {isDownloading ? (
                   <Loader2 size={15} className="animate-spin" />
@@ -271,7 +271,7 @@ export default function TheoryMaterialViewer({
                 <span>Stáhnout PDF</span>
               </button>
               {quotaHintText && (
-                <p className="text-[10px] font-semibold text-gray-400 leading-tight">
+                <p className="text-[10px] font-semibold text-gray-400 leading-tight mt-0.5">
                   {quotaHintText}
                 </p>
               )}
@@ -329,7 +329,7 @@ export default function TheoryMaterialViewer({
               </div>
 
               {/* Controls Row: Pagination + Fullscreen button */}
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 {isMultiPage ? (
                   <div className="flex items-center gap-2">
                     <button
@@ -337,9 +337,9 @@ export default function TheoryMaterialViewer({
                       onClick={() => setCurrentPageIdx((prev) => Math.max(0, prev - 1))}
                       disabled={safePageIdx === 0}
                       aria-label="Předchozí strana"
-                      className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:pointer-events-none text-gray-700 flex items-center justify-center transition-colors cursor-pointer"
+                      className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 disabled:opacity-40 disabled:pointer-events-none text-gray-700 flex items-center justify-center transition-colors cursor-pointer"
                     >
-                      <ChevronLeft size={16} />
+                      <ChevronLeft size={18} />
                     </button>
                     <span className="text-xs sm:text-sm font-bold text-[#0F2942] px-1 select-none">
                       Strana {safePageIdx + 1} / {pages.length}
@@ -349,9 +349,9 @@ export default function TheoryMaterialViewer({
                       onClick={() => setCurrentPageIdx((prev) => Math.min(pages.length - 1, prev + 1))}
                       disabled={safePageIdx === pages.length - 1}
                       aria-label="Další strana"
-                      className="w-8 h-8 rounded-full bg-[#DCEBFE] hover:bg-[#B9D8FC] disabled:opacity-40 disabled:pointer-events-none text-[#1D4ED8] flex items-center justify-center transition-colors cursor-pointer"
+                      className="w-9 h-9 rounded-full bg-[#DCEBFE] hover:bg-[#B9D8FC] disabled:opacity-40 disabled:pointer-events-none text-[#1D4ED8] flex items-center justify-center transition-colors cursor-pointer"
                     >
-                      <ChevronRight size={16} />
+                      <ChevronRight size={18} />
                     </button>
                   </div>
                 ) : (
@@ -411,7 +411,7 @@ export default function TheoryMaterialViewer({
           )
         ) : studyTheory?.trim() ? (
           <div className="space-y-3">
-            <div className="text-gray-700 font-medium text-sm sm:text-base leading-relaxed">
+            <div className="text-gray-700 font-medium text-sm sm:text-base leading-relaxed overflow-x-auto max-w-full">
               <MathRenderer content={studyTheory} imageMap={theoryImages} />
             </div>
             <div className="flex justify-end pt-1">

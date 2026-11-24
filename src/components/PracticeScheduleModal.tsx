@@ -396,16 +396,16 @@ export default function PracticeScheduleModal({
   return (
     <>
       <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="w-[95vw] sm:max-w-[90vw] lg:w-[75vw] lg:max-w-[75vw] xl:max-w-[1400px] lg:h-[85vh] max-h-[92vh] p-0 rounded-[2rem] border border-gray-100 bg-white shadow-2xl overflow-hidden flex flex-col">
+        <DialogContent className="w-[95vw] sm:max-w-[90vw] lg:w-[75vw] lg:max-w-[75vw] xl:max-w-[1400px] lg:h-[85dvh] max-h-[92dvh] p-0 rounded-2xl sm:rounded-[2rem] border border-gray-100 bg-white shadow-2xl overflow-hidden flex flex-col">
           {/* Header */}
-          <div className="p-5 sm:p-6 bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-amber-50/40 border-b border-gray-100 shrink-0">
+          <div className="p-4 sm:p-6 bg-gradient-to-r from-blue-50/90 via-indigo-50/50 to-amber-50/40 border-b border-gray-100 shrink-0">
             <div className="flex items-start justify-between gap-4 pr-6">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-brand-blue text-white flex items-center justify-center shadow-md shadow-blue-200 shrink-0">
+                <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-brand-blue text-white flex items-center justify-center shadow-md shadow-blue-200 shrink-0">
                   <CalendarBlueIcon size={22} />
                 </div>
                 <div>
-                  <DialogTitle className="text-xl sm:text-2xl font-sans font-black text-[#1E1B18]">
+                  <DialogTitle className="text-lg sm:text-2xl font-sans font-black text-[#1E1B18]">
                     Naplánovat procvičování do kalendáře
                   </DialogTitle>
                   <DialogDescription className="text-xs sm:text-sm text-gray-500 font-medium mt-0.5">
@@ -419,10 +419,10 @@ export default function PracticeScheduleModal({
           {/* Main Body: Two-Column Layout on PC (Left = Settings, Right = Live Schedule Preview) */}
           <div className="flex-1 overflow-y-auto lg:overflow-hidden lg:grid lg:grid-cols-[1.15fr_0.85fr] lg:divide-x lg:divide-gray-100 min-h-0">
             {/* LEFT COLUMN: Configuration Controls */}
-            <div className="p-5 sm:p-6 lg:p-7 lg:overflow-y-auto space-y-6">
+            <div className="p-4 sm:p-6 lg:p-7 lg:overflow-y-auto space-y-6">
             {/* SECTION 1: Selected Subtopics & Repetitions */}
             <div className="space-y-3">
-              <div className="flex items-start justify-between gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h4 className="text-sm font-black uppercase tracking-wider text-gray-700 leading-tight">
                     1. Vybraná cvičení a počet opakování
@@ -437,8 +437,8 @@ export default function PracticeScheduleModal({
                   </span>
                 </div>
 
-                {/* Quick global repetition presets on a single line */}
-                <div className="flex items-center gap-1.5 shrink-0 whitespace-nowrap">
+                {/* Quick global repetition presets */}
+                <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[11px] font-bold text-gray-400 mr-0.5">
                     Počet opakování:
                   </span>
@@ -452,7 +452,7 @@ export default function PracticeScheduleModal({
                         type="button"
                         onClick={() => handleApplyGlobalRepetitions(preset.value)}
                         className={cn(
-                          'w-8 h-8 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center justify-center shrink-0',
+                          'w-9 h-9 rounded-xl text-xs font-black transition-all cursor-pointer border flex items-center justify-center shrink-0',
                           isActive
                             ? 'bg-[#1E1B18] text-white border-[#1E1B18] shadow-xs'
                             : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
@@ -475,11 +475,11 @@ export default function PracticeScheduleModal({
                   </span>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                   {selections.map((item) => (
                     <div
                       key={item.subtopicId}
-                      className="flex items-center justify-between gap-3 p-3 rounded-2xl bg-[#FAF7F0] border border-gray-200/70"
+                      className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-3 p-3 rounded-2xl bg-[#FAF7F0] border border-gray-200/70"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -504,17 +504,18 @@ export default function PracticeScheduleModal({
                         </p>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0">
                         <div className="flex items-center bg-white rounded-xl border border-gray-200 p-0.5">
                           <button
                             type="button"
                             onClick={() =>
                               handleUpdateSubtopicReps(item.subtopicId, -1)
                             }
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:bg-gray-100 cursor-pointer"
+                            className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-600 hover:bg-gray-100 cursor-pointer"
                             title="Snížit počet opakování"
+                            aria-label="Snížit počet opakování"
                           >
-                            <Minus size={13} />
+                            <Minus size={14} />
                           </button>
                           <span className="px-2.5 text-xs font-black text-gray-900 min-w-[44px] text-center">
                             {item.repetitions}×
@@ -524,10 +525,11 @@ export default function PracticeScheduleModal({
                             onClick={() =>
                               handleUpdateSubtopicReps(item.subtopicId, 1)
                             }
-                            className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-600 hover:bg-gray-100 cursor-pointer"
+                            className="w-9 h-9 rounded-lg flex items-center justify-center text-gray-600 hover:bg-gray-100 cursor-pointer"
                             title="Zvýšit počet opakování"
+                            aria-label="Zvýšit počet opakování"
                           >
-                            <Plus size={13} />
+                            <Plus size={14} />
                           </button>
                         </div>
 
@@ -535,10 +537,11 @@ export default function PracticeScheduleModal({
                           <button
                             type="button"
                             onClick={() => handleRemoveSubtopic(item.subtopicId)}
-                            className="w-8 h-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                            className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
                             title="Odebrat z plánu"
+                            aria-label="Odebrat z plánu"
                           >
-                            <Trash2 size={15} />
+                            <Trash2 size={16} />
                           </button>
                         )}
                       </div>
@@ -881,7 +884,7 @@ export default function PracticeScheduleModal({
               {/* Daily Quota & Start Date Row */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 {/* Daily Quota */}
-                <div className="p-3 rounded-2xl bg-gray-50/80 border border-gray-200/70 flex items-center justify-between gap-2">
+                <div className="p-3 rounded-2xl bg-gray-50/80 border border-gray-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-2">
                   <div>
                     <div className="text-xs font-black text-gray-800">
                       Denní kvóta (dávka)
@@ -890,14 +893,14 @@ export default function PracticeScheduleModal({
                       Kolik cvičení za den splnit pro zelené pole
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     {[1, 2, 3].map((q) => (
                       <button
                         key={q}
                         type="button"
                         onClick={() => setDailyQuota(q)}
                         className={cn(
-                          'w-8 h-8 rounded-xl text-xs font-black transition-all cursor-pointer border',
+                          'w-9 h-9 rounded-xl text-xs font-black transition-all cursor-pointer border',
                           dailyQuota === q
                             ? 'bg-[#1E1B18] text-white border-[#1E1B18]'
                             : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-100'
@@ -911,11 +914,11 @@ export default function PracticeScheduleModal({
 
                 {/* Start Date */}
                 <div className="p-3 rounded-2xl bg-gray-50/80 border border-gray-200/70 space-y-2">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                     <span className="text-xs font-black text-gray-800">
                       Začátek plánu
                     </span>
-                    <div className="flex items-center gap-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {(
                         [
                           { id: 'today', label: 'Od dneška' },
@@ -928,7 +931,7 @@ export default function PracticeScheduleModal({
                           type="button"
                           onClick={() => setStartPreset(opt.id)}
                           className={cn(
-                            'px-2 py-1 rounded-lg text-[10px] font-black transition-all cursor-pointer border',
+                            'px-2.5 py-1.5 rounded-lg text-[11px] font-black transition-all cursor-pointer border',
                             startPreset === opt.id
                               ? 'bg-[#1E1B18] text-white border-[#1E1B18]'
                               : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-100'
@@ -1005,7 +1008,7 @@ export default function PracticeScheduleModal({
             </div>
 
             {/* RIGHT COLUMN: Live Schedule Preview */}
-            <div className="p-5 sm:p-6 lg:p-7 bg-gray-50/60 border-t lg:border-t-0 border-gray-100 lg:overflow-y-auto flex flex-col space-y-4">
+            <div className="p-4 sm:p-6 lg:p-7 bg-gray-50/60 border-t lg:border-t-0 border-gray-100 lg:overflow-y-auto flex flex-col space-y-4">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h4 className="text-sm font-black uppercase tracking-wider text-gray-800 flex items-center gap-1.5">
                   <StarYellowIcon size={16} />
@@ -1096,26 +1099,26 @@ export default function PracticeScheduleModal({
           </div>
 
           {/* Footer */}
-          <div className="p-4 sm:p-5 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
+          <div className="p-4 sm:p-5 bg-gray-50 border-t border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-2 text-xs text-gray-500 font-medium">
-              <CorrectCyanIcon size={16} />
+              <CorrectCyanIcon size={16} className="shrink-0" />
               <span>
                 Splněné dny v kalendáři zezelenají, zmeškané dny zčervenají.
               </span>
             </div>
 
-            <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+            <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 sm:gap-2.5 w-full sm:w-auto sm:justify-end">
               <Button
                 variant="outline"
                 onClick={onClose}
-                className="rounded-xl font-bold h-11 px-4 cursor-pointer"
+                className="w-full sm:w-auto rounded-xl font-bold h-11 px-4 cursor-pointer"
               >
                 Zrušit
               </Button>
               <Button
                 onClick={handleSaveClick}
                 disabled={isSaving || generatedItems.length === 0}
-                className="rounded-xl bg-[#1E1B18] hover:bg-black text-white font-black h-11 px-6 flex items-center gap-2 shadow-md cursor-pointer"
+                className="w-full sm:w-auto rounded-xl bg-[#1E1B18] hover:bg-black text-white font-black h-11 px-6 flex items-center justify-center gap-2 shadow-md cursor-pointer"
               >
                 {!isPremium ? (
                   <Lock size={15} className="text-amber-400" />

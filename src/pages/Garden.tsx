@@ -3,7 +3,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTimer } from '../context/TimerContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Play, Pause, RotateCcw, Sprout, Loader2, Coffee, Tag } from 'lucide-react';
+import { Play, Pause, RotateCcw, Sprout, Loader2, Coffee, Tag, X } from 'lucide-react';
 import { CalendarBlueIcon, CorrectCyanIcon } from '../components/common/CustomIcon';
 import { toast } from 'sonner';
 import { motion } from 'motion/react';
@@ -50,6 +50,7 @@ export default function Garden() {
   const [selectedTodoTitleState, setSelectedTodoTitleState] = useState('');
   const [customTag, setCustomTag] = useState('');
   const [customMinutes, setCustomMinutes] = useState(25);
+  const [selectedSessionIdx, setSelectedSessionIdx] = useState<number | null>(null);
 
   const sessions = useMemo(() => {
     if (!profile?.focusSessionsHistory) return [];
@@ -167,12 +168,12 @@ export default function Garden() {
   };
 
   return (
-    <div className="page-container">
-      <section className="text-center space-y-6 max-w-3xl mx-auto mb-12">
+    <div className="space-y-6 md:space-y-8">
+      <section className="text-center space-y-3 sm:space-y-5 max-w-3xl mx-auto">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-5xl md:text-6xl font-display font-black text-gray-700"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
         >
           Moje Zahrádka
         </motion.h1>
@@ -180,15 +181,15 @@ export default function Garden() {
           initial={{ opacity: 0 }} 
           animate={{ opacity: 1 }} 
           transition={{ delay: 0.2 }} 
-          className="text-xl text-[#19724F] font-bold leading-relaxed flex items-center justify-center gap-2"
+          className="text-base sm:text-xl text-[#19724F] font-bold leading-relaxed flex items-center justify-center gap-2"
         >
           <span>Soustřeď se na učení, pěstuj květiny a plň své úkoly!</span> 🌿
         </motion.p>
       </section>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mt-12">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
         {/* TIMER SECTION */}
-        <Card className="rounded-[2.5rem] border border-green-100 shadow-md bg-white p-8 lg:col-span-1 flex flex-col items-stretch space-y-6 text-left">
+        <Card className="rounded-2xl sm:rounded-[2.5rem] border border-green-100 shadow-md bg-white p-5 sm:p-8 lg:col-span-1 flex flex-col items-stretch space-y-6 text-left">
           <CardHeader className="p-0 text-left w-full">
             <CardTitle className={cn(
               "font-sans font-black text-2xl md:text-3xl leading-none",
@@ -198,7 +199,7 @@ export default function Garden() {
             </CardTitle>
             <CardDescription className={cn(
               "font-semibold text-xs mt-1.5 leading-relaxed",
-              isOvertime ? "text-orange-850" : isBreak ? "text-blue-500" : "text-green-600"
+              isOvertime ? "text-orange-900" : isBreak ? "text-blue-500" : "text-green-600"
             )}>
               {isOvertime 
                 ? 'Přetahuješ limit přestávky.' 
@@ -345,7 +346,7 @@ export default function Garden() {
                     const todo = todos.find(t => t.id === id);
                     setSelectedTodoTitleState(todo ? todo.title : '');
                   }}
-                  className="w-full h-11 rounded-xl bg-gray-50 border border-gray-150 px-4 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-green-400/20"
+                  className="w-full h-11 rounded-xl bg-gray-50 border border-gray-200 px-4 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-green-400/20"
                 >
                   <option value="">-- Bez úkolu --</option>
                   {todos.map(todo => (
@@ -361,7 +362,7 @@ export default function Garden() {
                   placeholder="Např. Matematika, Čeština..."
                   value={customTag}
                   onChange={(e) => setCustomTag(e.target.value)}
-                  className="w-full h-11 rounded-xl bg-gray-50 border border-gray-150 px-4 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-green-400/20"
+                  className="w-full h-11 rounded-xl bg-gray-50 border border-gray-200 px-4 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-green-400/20"
                 />
               </div>
 
@@ -396,77 +397,109 @@ export default function Garden() {
 
         {/* VIRTUAL GARDEN SECTION */}
         <div className="lg:col-span-2 space-y-6">
-          <div className="bg-gradient-to-br from-[#D5F7E5] to-[#BCEECF] rounded-[2.5rem] p-8 min-h-[400px] relative overflow-hidden border border-green-200/30 shadow-md flex flex-col">
-            <div className="flex justify-between items-center mb-6 z-10 relative">
+          <div className="bg-gradient-to-br from-[#D5F7E5] to-[#BCEECF] rounded-2xl sm:rounded-[2.5rem] p-5 sm:p-8 min-h-[320px] sm:min-h-[400px] relative overflow-hidden border border-green-200/30 shadow-md flex flex-col">
+            <div className="flex flex-wrap justify-between items-center gap-3 mb-5 sm:mb-6 z-10 relative">
               <h3 className="font-sans font-black text-2xl sm:text-3xl text-[#0F5238] m-0 leading-none">Moje úroda</h3>
-              <div className="px-4 py-1.5 bg-white/60 backdrop-blur-sm rounded-full flex items-center gap-2 border border-white/20 text-[#0F5238] font-bold">
+              <div className="px-3.5 sm:px-4 py-1.5 bg-white/60 backdrop-blur-sm rounded-full flex items-center gap-2 border border-white/20 text-[#0F5238] font-bold text-xs sm:text-sm">
                 <Sprout size={16} />
                 <span>{sessions.length} rostlinek</span>
               </div>
             </div>
 
-            <div className="flex-1 z-10 relative bg-white/30 backdrop-blur-sm rounded-[1.5rem] p-6 border border-white/40">
+            <div className="flex-1 z-10 relative bg-white/30 backdrop-blur-sm rounded-2xl sm:rounded-[1.5rem] p-4 sm:p-6 border border-white/40 flex flex-col justify-between gap-4">
               {sessions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center text-green-800/60 opacity-80 pt-10">
+                <div className="flex flex-col items-center justify-center h-full text-center text-green-800/60 opacity-80 py-8">
                   <Sprout size={48} className="mb-4 opacity-50" />
                   <p className="font-bold">Zatím tu nic neroste.</p>
                   <p className="text-sm">Dokonči svůj první Focus blok a vypěstuj svou první květinu!</p>
                 </div>
               ) : (
-                <div className="flex flex-wrap gap-6 items-end justify-start pt-4">
-                  {sessions.map((sess, idx) => (
-                    <div 
-                      key={sess.id || idx} 
-                      className="text-5xl animate-in fade-in zoom-in duration-500 delay-75 hover:scale-125 transition-transform cursor-pointer relative group" 
-                      title={`${sess.plantName} (#${sessions.length - idx})`}
-                    >
-                      <span>{sess.plantType}</span>
-                      
-                      {/* Floating tooltip on hover */}
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center w-48 bg-white border border-gray-100 p-3 rounded-xl shadow-xl z-20 text-[#1E1B18] text-xs space-y-1">
-                        <div className="font-black text-gray-800 text-sm flex items-center gap-1.5">
+                <>
+                  <div className="flex flex-wrap gap-3 sm:gap-5 items-end justify-start pt-2">
+                    {sessions.map((sess, idx) => {
+                      const isSelected = selectedSessionIdx === idx;
+                      return (
+                        <button
+                          key={sess.id || idx}
+                          type="button"
+                          onClick={() => setSelectedSessionIdx(isSelected ? null : idx)}
+                          aria-pressed={isSelected}
+                          className={cn(
+                            "text-4xl sm:text-5xl animate-in fade-in zoom-in duration-500 delay-75 hover:scale-115 transition-transform cursor-pointer relative rounded-2xl p-1.5 border-2",
+                            isSelected
+                              ? "bg-white/80 border-green-500 shadow-md scale-110"
+                              : "border-transparent hover:bg-white/40"
+                          )}
+                          title={`${sess.plantName} (#${sessions.length - idx})`}
+                        >
                           <span>{sess.plantType}</span>
-                          <span>{sess.plantName}</span>
-                        </div>
-                        <div className="text-gray-400 font-bold text-[10px]">
-                          {sess.completedAt?.toDate().toLocaleDateString('cs-CZ')} v {sess.completedAt?.toDate().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <div className="text-green-600 font-bold">
-                          Délka: {Math.round(sess.duration / 60)} min
-                        </div>
-                        {sess.todoTitle && (
-                          <div className="text-[10px] text-gray-500 font-medium truncate w-full text-center">
-                            Úkol: {sess.todoTitle}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {selectedSessionIdx !== null && sessions[selectedSessionIdx] ? (
+                    (() => {
+                      const sess = sessions[selectedSessionIdx];
+                      return (
+                        <div className="bg-white/95 backdrop-blur-sm border border-green-200/80 p-3.5 sm:p-4 rounded-2xl shadow-md text-[#1E1B18] text-xs flex items-start justify-between gap-3 animate-in fade-in duration-150">
+                          <div className="space-y-1 min-w-0">
+                            <div className="font-black text-gray-800 text-sm flex items-center gap-1.5 flex-wrap">
+                              <span className="text-lg">{sess.plantType}</span>
+                              <span>{sess.plantName}</span>
+                              <span className="text-green-600 font-bold text-xs">
+                                ({Math.round(sess.duration / 60)} min)
+                              </span>
+                            </div>
+                            <div className="text-gray-400 font-bold text-[11px]">
+                              {sess.completedAt?.toDate().toLocaleDateString('cs-CZ')} v {sess.completedAt?.toDate().toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            {sess.todoTitle && (
+                              <div className="text-xs text-gray-600 font-medium break-words">
+                                Úkol: {sess.todoTitle}
+                              </div>
+                            )}
+                            {sess.tag && (
+                              <span className="inline-block px-2 py-0.5 bg-pink-50 text-[#B80053] rounded-full text-[10px] font-bold">
+                                #{sess.tag}
+                              </span>
+                            )}
                           </div>
-                        )}
-                        {sess.tag && (
-                          <div className="px-2 py-0.5 bg-pink-50 text-[#B80053] rounded-full text-[9px] font-bold">
-                            #{sess.tag}
-                          </div>
-                        )}
-                        <div className="w-2 h-2 bg-white border-b border-r border-gray-150 rotate-45 -mb-4 mt-1" />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSessionIdx(null)}
+                            className="w-8 h-8 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 shrink-0 cursor-pointer"
+                            aria-label="Zavřít detail květiny"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <p className="text-[11px] font-semibold text-green-900/60">
+                      Klepni na květinu pro zobrazení detailu soustředění.
+                    </p>
+                  )}
+                </>
               )}
             </div>
 
             {/* Dekorativní prvky na pozadí */}
-            <div className="absolute -bottom-10 -right-10 text-9xl opacity-20 filter blur-sm">🌳</div>
-            <div className="absolute top-10 -left-10 text-8xl opacity-20 filter blur-sm">🌻</div>
+            <div className="absolute -bottom-10 -right-10 text-9xl opacity-20 filter blur-sm pointer-events-none">🌳</div>
+            <div className="absolute top-10 -left-10 text-8xl opacity-20 filter blur-sm pointer-events-none">🌻</div>
           </div>
 
           {/* HISTORICAL FOCUS LOG TABLE */}
           {sessions.length > 0 && (
-            <Card className="rounded-[2.5rem] border-none shadow-md bg-white p-6">
-              <div className="flex items-center gap-3 mb-6">
+            <Card className="rounded-2xl sm:rounded-[2.5rem] border-none shadow-md bg-white p-4 sm:p-6">
+              <div className="flex items-center gap-3 mb-4 sm:mb-6">
                 <CalendarBlueIcon size={22} />
-                <h4 className="font-sans font-black text-xl text-gray-900">Historie soustředění</h4>
+                <h4 className="font-sans font-black text-lg sm:text-xl text-gray-900">Historie soustředění</h4>
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-gray-600">
+                <table className="w-full min-w-[540px] text-left text-sm text-gray-600">
                   <thead>
                     <tr className="border-b border-gray-100 text-xs text-gray-400 font-black uppercase tracking-wider pb-3">
                       <th className="pb-3 pl-2">Květina</th>
@@ -516,13 +549,13 @@ export default function Garden() {
         </div>
       </div>
 
-      <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] w-full">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
-        <div className="relative z-10 space-y-4">
-          <h2 className="text-4xl font-sans font-bold">Nevíš si rady s výběrem?</h2>
-          <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, jak nejlépe zvýšit svou produktivitu.</p>
-          <div className="pt-4">
-            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
+      <section className="bg-[#FAF7F0] rounded-2xl sm:rounded-[3rem] p-6 sm:p-10 md:p-12 text-[#1E1B18] text-center space-y-5 sm:space-y-8 relative overflow-hidden border border-[#E6E0D4] w-full">
+        <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl pointer-events-none" />
+        <div className="relative z-10 space-y-3 sm:space-y-4">
+          <h2 className="text-2xl sm:text-4xl font-sans font-bold">Nevíš si rady s výběrem?</h2>
+          <p className="text-gray-600 text-base sm:text-xl max-w-xl mx-auto">Napiš nám a rádi ti poradíme, jak nejlépe zvýšit svou produktivitu.</p>
+          <div className="pt-2 sm:pt-4">
+            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-7 sm:px-10 h-12 sm:h-14 rounded-2xl text-base sm:text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
               Kontaktuj nás
             </Link>
           </div>

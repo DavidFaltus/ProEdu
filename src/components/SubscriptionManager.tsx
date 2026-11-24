@@ -324,11 +324,11 @@ export default function SubscriptionManager() {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-8 mt-8">
+    <div className="max-w-4xl mx-auto space-y-8 mt-8">
       {/* 1. KARTA: AKTUÁLNÍ PŘEDPLATNÉ A POROVNÁNÍ TARIFŮ */}
-      <div className="bg-white p-7 sm:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-8 relative overflow-hidden">
+      <div className="bg-white p-5 sm:p-8 md:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-8 relative overflow-hidden">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-100 pb-6">
-          <div className="space-y-1.5">
+          <div className="space-y-1.5 min-w-0">
             <div className="flex flex-wrap items-center gap-2.5">
               <span className="text-xs font-black uppercase tracking-widest text-gray-400">
                 Aktuální tarif
@@ -360,7 +360,7 @@ export default function SubscriptionManager() {
               )}
             </div>
 
-            <h2 className="text-2xl sm:text-3xl font-sans font-black text-gray-900 flex items-center gap-2.5">
+            <h2 className="text-2xl sm:text-3xl font-sans font-black text-gray-900 flex flex-wrap items-center gap-2.5">
               {isPremium ? (
                 <>
                   <StarYellowIcon size={28} />
@@ -562,7 +562,7 @@ export default function SubscriptionManager() {
                 <span className="text-[10px] font-black uppercase tracking-wider text-amber-900 bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300 inline-block">
                   Nabídka pro první podporovatele
                 </span>
-                <div className="flex items-baseline justify-between gap-2">
+                <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-black text-lg text-gray-900 flex items-center gap-1.5">
                     <StarYellowIcon size={18} /> ProEdu Premium
                   </span>
@@ -635,8 +635,8 @@ export default function SubscriptionManager() {
       </div>
 
       {/* 2. KARTA: JEDNOTLIVÉ PLATBY A OBJEDNÁVKY (VČETNĚ NEUHRAZENÝCH) */}
-      <div className="bg-white p-7 sm:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-6">
-        <div className="flex items-center justify-between gap-4">
+      <div className="bg-white p-5 sm:p-8 md:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <PaymentPinkIcon size={24} />
@@ -753,13 +753,13 @@ export default function SubscriptionManager() {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-gray-200/60">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between sm:justify-end gap-2.5 sm:gap-3 shrink-0 pt-2.5 sm:pt-0 border-t sm:border-t-0 border-gray-200/60">
                     <span className="text-base sm:text-lg font-black text-gray-900">
                       {order.amount || 99} {order.currency === 'CZK' || !order.currency ? 'Kč' : order.currency}
                     </span>
 
                     {(isPaid || isRefunded) && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                         <Button
                           type="button"
                           variant="outline"
@@ -791,7 +791,7 @@ export default function SubscriptionManager() {
                     )}
 
                     {isPending && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                         <Button
                           type="button"
                           variant="outline"
@@ -830,7 +830,7 @@ export default function SubscriptionManager() {
       {/* 3. KARTA: FAKTURAČNÍ ÚDAJE */}
       <form
         onSubmit={handleSaveBilling}
-        className="bg-white p-7 sm:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-6"
+        className="bg-white p-5 sm:p-8 md:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/80 space-y-6"
       >
         <div>
           <div className="flex items-center gap-2">
@@ -935,7 +935,7 @@ export default function SubscriptionManager() {
           <Button
             type="submit"
             disabled={isSavingBilling}
-            className="rounded-2xl h-12 px-8 bg-[#B80053] hover:bg-[#B80053]/90 text-white font-bold shadow-lg shadow-pink-100 cursor-pointer"
+            className="w-full sm:w-auto rounded-2xl h-12 px-8 bg-[#B80053] hover:bg-[#B80053]/90 text-white font-bold shadow-lg shadow-pink-100 cursor-pointer"
           >
             {isSavingBilling ? 'Ukládám...' : 'Uložit fakturační údaje'}
           </Button>
@@ -944,7 +944,7 @@ export default function SubscriptionManager() {
 
       {/* MODÁL PRO POTVRZENÍ ZRUŠENÍ PŘEDPLATNÉHO */}
       <Dialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
-        <DialogContent className="sm:max-w-lg rounded-[2rem] p-6 sm:p-8 bg-white border border-gray-100 shadow-2xl space-y-6">
+        <DialogContent className="w-full max-w-lg sm:max-w-lg max-h-[90dvh] overflow-y-auto rounded-[2rem] p-5 sm:p-8 bg-white border border-gray-100 shadow-2xl space-y-6">
           <div className="space-y-2">
             <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center mb-2">
               <Clock size={26} />
@@ -1018,7 +1018,7 @@ export default function SubscriptionManager() {
               type="button"
               disabled={isProcessingCancel}
               onClick={() => setIsCancelModalOpen(false)}
-              className="flex-1 rounded-xl h-11 bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-xs cursor-pointer"
+              className="w-full sm:flex-1 rounded-xl h-11 bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-xs cursor-pointer"
             >
               Ponechat si Premium
             </Button>
@@ -1027,7 +1027,7 @@ export default function SubscriptionManager() {
               variant="outline"
               disabled={isProcessingCancel}
               onClick={() => handleConfirmCancel(false)}
-              className="flex-1 rounded-xl h-11 border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs cursor-pointer"
+              className="w-full sm:flex-1 rounded-xl h-11 border-red-200 text-red-600 hover:bg-red-50 font-bold text-xs cursor-pointer"
             >
               {isProcessingCancel ? 'Ukládám v databázi...' : `Zrušit k ${formattedPeriodEnd}`}
             </Button>

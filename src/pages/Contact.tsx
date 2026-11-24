@@ -16,12 +16,12 @@ export default function Contact() {
   };
 
   return (
-    <div className="page-container">
-      <section className="text-center space-y-6 max-w-3xl mx-auto">
+    <div className="space-y-8 md:space-y-10">
+      <section className="text-center space-y-4 sm:space-y-6 max-w-3xl mx-auto">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful font-bold text-gray-700"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
         >
           Budeme v <span className="text-brand-orange">kontaktu</span>
         </motion.h1>
@@ -29,14 +29,14 @@ export default function Contact() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="text-xl text-gray-500 leading-relaxed"
+          className="text-base sm:text-xl text-gray-500 leading-relaxed"
         >
           Máte dotaz k našim kurzům nebo aplikaci? Napište nám nebo zavolejte. 
           Jsme tu pro vás každý pracovní den.
         </motion.p>
       </section>
 
-      <div className="grid lg:grid-cols-2 gap-12">
+      <div className="grid lg:grid-cols-2 gap-8 lg:gap-12 items-start">
         <motion.div 
           initial={{ opacity: 0, x: -30 }}
           animate={{ opacity: 1, x: 0 }}
@@ -50,7 +50,9 @@ export default function Contact() {
               </div>
               <div>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">E-mail</div>
-                <div className="text-lg font-bold text-gray-800">info@pro-edu.eu</div>
+                <a href="mailto:info@pro-edu.eu" className="text-lg font-bold text-gray-800 hover:text-brand-blue hover:underline break-all">
+                  info@pro-edu.eu
+                </a>
               </div>
             </Card>
             <Card className="rounded-3xl border-none shadow-lg bg-white p-6 space-y-4">
@@ -59,7 +61,9 @@ export default function Contact() {
               </div>
               <div>
                 <div className="text-xs font-bold text-gray-400 uppercase tracking-widest">Telefon</div>
-                <div className="text-lg font-bold text-gray-800">+420 123 456 789</div>
+                <a href="tel:+420123456789" className="text-lg font-bold text-gray-800 hover:text-brand-orange hover:underline">
+                  +420 123 456 789
+                </a>
               </div>
             </Card>
             <Card className="rounded-3xl border-none shadow-lg bg-white p-6 space-y-4">
@@ -88,9 +92,9 @@ export default function Contact() {
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.4 }}
         >
-          <Card className="rounded-[3rem] border-none shadow-2xl bg-white overflow-hidden">
+          <Card className="rounded-[2.5rem] sm:rounded-[3rem] border-none shadow-2xl bg-white overflow-hidden">
             <div className="h-4 bg-brand-orange" />
-            <CardContent className="p-10 space-y-8">
+            <CardContent className="p-5 sm:p-8 md:p-10 space-y-6 sm:space-y-8">
               <div className="space-y-2">
                 <h2 className="text-3xl font-sans font-bold text-gray-900">Napište nám</h2>
                 <p className="text-gray-500">Vyplňte formulář a my se vám ozveme co nejdříve.</p>

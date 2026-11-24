@@ -1143,13 +1143,13 @@ export default function PracticeSession() {
     const percentage = totalCount > 0 ? Math.round((earnedScore / totalCount) * 100) : 0;
 
     return (
-      <div className="max-w-4xl mx-auto space-y-8 py-6 px-4">
+      <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 py-2 sm:py-6">
         {/* Results Card */}
 
-        <div className="bg-white rounded-[2.5rem] p-8 sm:p-12 text-center shadow-xl border border-gray-100 space-y-6 relative overflow-hidden">
+        <div className="bg-white rounded-2xl sm:rounded-[2.5rem] p-5 sm:p-10 text-center shadow-xl border border-gray-100 space-y-5 sm:space-y-6 relative overflow-hidden">
           <div className="absolute top-0 right-0 w-64 h-64 bg-amber-100/30 rounded-full blur-3xl -mr-20 -mt-20 pointer-events-none" />
 
-          <div className="w-20 h-20 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-3xl shadow-inner">
+          <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto text-3xl shadow-inner">
             {percentage >= 50 ? <StarPinkIcon size={42} /> : <HeartPinkIcon size={42} />}
           </div>
 
@@ -1160,20 +1160,20 @@ export default function PracticeSession() {
             <h2 className="text-2xl sm:text-3xl font-sans font-black text-[#1E1B18]">
               {percentage >= 80 ? 'Skvělá práce!' : percentage >= 50 ? 'Dobrá práce!' : 'Trénink dělá mistra!'}
             </h2>
-            <p className="text-gray-500 font-medium text-base">
+            <p className="text-gray-500 font-medium text-sm sm:text-base">
               Úspěšně jsi dokončil procvičování pro téma "{subtopic?.title}".
             </p>
           </div>
 
           {/* Score Counter */}
-          <div className="inline-flex items-center justify-center gap-6 bg-[#FAF7F0] px-8 py-5 rounded-3xl border border-gray-200/60">
+          <div className="inline-flex flex-wrap items-center justify-center gap-4 sm:gap-6 bg-[#FAF7F0] px-5 sm:px-8 py-4 sm:py-5 rounded-2xl sm:rounded-3xl border border-gray-200/60 max-w-full">
             <div>
-              <div className="text-4xl font-display font-black text-[#1E1B18]">{formattedScore} / {totalCount}</div>
+              <div className="text-2xl sm:text-4xl font-display font-black text-[#1E1B18]">{formattedScore} / {totalCount}</div>
               <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-0.5">Získaných bodů</div>
             </div>
-            <div className="w-px h-12 bg-gray-200" />
+            <div className="w-px h-10 sm:h-12 bg-gray-200" />
             <div>
-              <div className={`text-4xl font-display font-black ${percentage >= 70 ? 'text-emerald-600' : 'text-amber-600'}`}>
+              <div className={`text-2xl sm:text-4xl font-display font-black ${percentage >= 70 ? 'text-emerald-600' : 'text-amber-600'}`}>
                 {percentage}%
               </div>
               <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-0.5">Úspěšnost</div>
@@ -1181,11 +1181,11 @@ export default function PracticeSession() {
           </div>
 
           {/* Action Buttons */}
-          <div className="flex flex-wrap justify-center gap-3 pt-2">
+          <div className="flex flex-wrap justify-center gap-2.5 sm:gap-3 pt-2">
             <Button
               onClick={handleRestart}
               variant="outline"
-              className="rounded-xl font-bold h-12 px-6 flex items-center gap-2 cursor-pointer"
+              className="rounded-xl font-bold h-11 sm:h-12 px-5 sm:px-6 flex items-center gap-2 cursor-pointer"
             >
               <RotateCcw size={16} /> Zkusit znovu
             </Button>
@@ -1194,7 +1194,7 @@ export default function PracticeSession() {
               <Link to={`/study/${subtopic.id}`}>
                 <Button
                   variant="outline"
-                  className="rounded-xl font-bold h-12 px-6 flex items-center gap-2 cursor-pointer"
+                  className="rounded-xl font-bold h-11 sm:h-12 px-5 sm:px-6 flex items-center gap-2 cursor-pointer"
                 >
                   <BookCyanIcon size={18} /> Zopakovat teorii
                 </Button>
@@ -1203,7 +1203,7 @@ export default function PracticeSession() {
 
             <Link to="/practice">
               <Button
-                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black h-12 px-6 flex items-center gap-2 cursor-pointer shadow-xs border border-blue-200/80"
+                className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black h-11 sm:h-12 px-5 sm:px-6 flex items-center gap-2 cursor-pointer shadow-xs border border-blue-200/80"
               >
                 <span>Další témata</span>
                 <ArrowRight size={16} />
@@ -1214,7 +1214,7 @@ export default function PracticeSession() {
 
         {/* Detailed Question Review */}
         <div className="space-y-4">
-          <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18] px-2">
+          <h3 className="font-sans font-black text-xl sm:text-2xl text-[#1E1B18] px-1 sm:px-2">
             Přehled otázek a vysvětlení
           </h3>
 
@@ -1230,7 +1230,7 @@ export default function PracticeSession() {
               return (
                 <div 
                   key={q.id || i} 
-                  className={`p-6 rounded-3xl border bg-white shadow-sm space-y-3 transition-all ${
+                  className={`p-4 sm:p-6 rounded-2xl sm:rounded-3xl border bg-white shadow-sm space-y-3 transition-all ${
                     !hasAnswered
                       ? 'border-gray-200'
                       : isPartial
@@ -1240,12 +1240,12 @@ export default function PracticeSession() {
                       : 'border-rose-200/80'
                   }`}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="w-8 h-8 rounded-xl bg-gray-100 font-bold text-xs flex items-center justify-center text-gray-700">
+                  <div className="flex flex-wrap items-start justify-between gap-2.5 sm:gap-3">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
+                      <span className="w-8 h-8 rounded-xl bg-gray-100 font-bold text-xs flex items-center justify-center text-gray-700 shrink-0">
                         {i + 1}
                       </span>
-                      <h4 className="font-bold text-base text-gray-900">
+                      <h4 className="font-bold text-sm sm:text-base text-gray-900 min-w-0 flex-1 max-w-full overflow-x-auto break-words">
                         <MathRenderer content={q.question} inline />
                       </h4>
                     </div>
@@ -1268,7 +1268,7 @@ export default function PracticeSession() {
                     )}
                   </div>
 
-                  <div className="text-sm space-y-1.5 pl-11">
+                  <div className="text-sm space-y-1.5 pl-0 sm:pl-11">
                     {hasAnswered && (!isCorrect || isPartial) && (
                       <div className="text-gray-500 flex items-center gap-1 flex-wrap">
                         <span>Tvoje odpověď:</span>
@@ -1324,21 +1324,24 @@ export default function PracticeSession() {
   const progressPercent = questions.length > 0 ? Math.round((answeredCount / questions.length) * 100) : 0;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-4 sm:space-y-6 py-2 sm:py-6 px-0.5 sm:px-6">
-      {/* Top Header with Breadcrumbs & Actions */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 sm:p-5 rounded-3xl border border-gray-100 shadow-sm">
-        <div className="flex items-center gap-3 min-w-0">
+    <div className="max-w-5xl mx-auto space-y-3.5 sm:space-y-6 py-1 sm:py-4">
+      {/* Top Header with Breadcrumbs & Actions — compact 1-row bar on mobile */}
+      <div className="flex items-center justify-between gap-2 sm:gap-4 bg-white px-3 py-2.5 sm:p-4 rounded-2xl sm:rounded-3xl border border-gray-100 shadow-sm">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
           <Link 
             to="/practice" 
-            className="inline-flex items-center gap-2 text-xs font-bold text-gray-600 hover:text-black transition-colors bg-gray-50 hover:bg-gray-100 px-3.5 py-2 rounded-xl border border-gray-200/60 shadow-2xs shrink-0 cursor-pointer"
+            aria-label="Zpět na přehled témat"
+            title="Zpět na přehled témat"
+            className="inline-flex items-center justify-center gap-1.5 text-xs font-bold text-gray-600 hover:text-black transition-colors bg-gray-50 hover:bg-gray-100 w-9 h-9 sm:w-auto sm:px-3.5 sm:py-2 rounded-xl border border-gray-200/60 shadow-2xs shrink-0 cursor-pointer"
           >
-            <ArrowLeft size={14} /> Ukončit
+            <ArrowLeft size={16} />
+            <span className="hidden sm:inline">Zpět</span>
           </Link>
 
           <div className="h-4 w-px bg-gray-200 hidden sm:block shrink-0" />
 
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-[10px] sm:text-xs font-black uppercase tracking-wider px-2.5 py-1 bg-amber-50 text-amber-900 rounded-full border border-amber-200/60 shadow-2xs shrink-0">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <span className="hidden md:inline-flex text-[10px] sm:text-xs font-black uppercase tracking-wider px-2.5 py-1 bg-amber-50 text-amber-900 rounded-full border border-amber-200/60 shadow-2xs shrink-0">
               Procvičování
             </span>
             <span className="text-xs sm:text-sm font-bold text-gray-800 truncate">
@@ -1347,23 +1350,23 @@ export default function PracticeSession() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 self-end sm:self-auto shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {!hasUnlimitedAccess && user ? (
             <div
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-950 border border-amber-300/80 rounded-xl text-xs font-bold shadow-2xs select-none"
+              className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 bg-amber-50 text-amber-950 border border-amber-300/80 rounded-xl text-xs font-bold shadow-2xs select-none"
               title="Zbývající žolíky pro dnešní den"
             >
-              <JokerBlueIcon size={16} />
+              <JokerBlueIcon size={15} />
               <span className="font-mono font-black">{jokers}</span>
               <span className="text-[11px] text-amber-800 font-semibold hidden sm:inline">žolíků</span>
             </div>
           ) : hasUnlimitedAccess ? (
-            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
+            <span className="flex items-center gap-1 sm:gap-1.5 px-2.5 sm:px-3 py-1.5 bg-amber-100/80 text-amber-900 border border-amber-300/60 rounded-xl text-xs font-black select-none">
               <StarPinkIcon size={14} />
-              <span>{isTeacher ? 'Učitel' : isCourseUser ? 'Kurz' : 'Premium'}</span>
+              <span className="hidden sm:inline">{isTeacher ? 'Učitel' : isCourseUser ? 'Kurz' : 'Premium'}</span>
             </span>
           ) : (
-            <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold select-none">
+            <div className="flex items-center gap-1 px-2 sm:px-2.5 py-1.5 bg-gray-100 text-gray-700 rounded-xl text-xs font-bold select-none">
               <span>Host{guestRemaining !== null ? ` (${guestRemaining})` : ''}</span>
             </div>
           )}
@@ -1374,20 +1377,22 @@ export default function PracticeSession() {
           <Button
             size="sm"
             onClick={handleFinishPractice}
-            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 px-4 cursor-pointer shadow-xs border border-blue-200/80 transition-transform hover:scale-102"
+            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] font-black text-xs h-9 px-3 sm:px-4 cursor-pointer shadow-xs border border-blue-200/80 transition-transform md:hover:scale-102 shrink-0"
           >
-            Ukončit a vyhodnotit
+            <span className="sm:hidden">Vyhodnotit</span>
+            <span className="hidden sm:inline">Ukončit a vyhodnotit</span>
           </Button>
         </div>
       </div>
 
       {/* TOP HORIZONTAL QUESTION SLIDER / PICKER */}
-      <div className="bg-white p-3.5 sm:p-4 rounded-3xl border border-gray-200/80 shadow-sm space-y-3">
+      <div className="bg-white p-3 sm:p-4 rounded-2xl sm:rounded-3xl border border-gray-200/80 shadow-sm space-y-2.5 sm:space-y-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => scrollSlider('left')}
-            className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-600 flex items-center justify-center shrink-0 border border-gray-200 cursor-pointer transition-colors shadow-2xs"
+            className="hidden sm:flex w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-600 items-center justify-center shrink-0 border border-gray-200 cursor-pointer transition-colors shadow-2xs"
             title="Posunout doleva"
+            aria-label="Posunout otázky doleva"
           >
             <ChevronLeft size={16} />
           </button>
@@ -1446,8 +1451,9 @@ export default function PracticeSession() {
 
           <button
             onClick={() => scrollSlider('right')}
-            className="w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-600 flex items-center justify-center shrink-0 border border-gray-200 cursor-pointer transition-colors shadow-2xs"
+            className="hidden sm:flex w-9 h-9 rounded-xl bg-gray-50 hover:bg-gray-100 text-gray-600 items-center justify-center shrink-0 border border-gray-200 cursor-pointer transition-colors shadow-2xs"
             title="Posunout doprava"
+            aria-label="Posunout otázky doprava"
           >
             <ChevronRight size={16} />
           </button>
@@ -1469,20 +1475,22 @@ export default function PracticeSession() {
       </div>
 
       {/* Question Card */}
-      <Card className="rounded-[2.5rem] border-none shadow-xl bg-white p-7 sm:p-12 space-y-7 relative overflow-hidden">
-        {/* Soft background accent blob */}
-        <div className="absolute top-0 right-0 w-80 h-80 bg-amber-100/25 rounded-full blur-3xl -mr-28 -mt-28 pointer-events-none" />
+      <Card className="rounded-2xl sm:rounded-3xl border-none shadow-xl bg-white p-4 sm:p-7 lg:p-10 space-y-5 sm:space-y-7 relative">
+        {/* Soft background accent blob isolated in its own overflow-hidden layer */}
+        <div className="absolute inset-0 overflow-hidden rounded-[inherit] pointer-events-none">
+          <div className="absolute top-0 right-0 w-80 h-80 bg-amber-100/25 rounded-full blur-3xl -mr-28 -mt-28" />
+        </div>
 
         {/* Card Header with Question Type, Hint & Inquiry buttons */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 pb-5 relative z-10">
-          <div className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-xl bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 text-xs font-black flex items-center justify-center shadow-2xs">
+        <div className="flex flex-wrap items-center justify-between gap-2.5 sm:gap-3 border-b border-gray-100 pb-4 sm:pb-5 relative z-10">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <span className="w-8 h-8 rounded-xl bg-[#B9D8FC] text-[#0F2942] border border-blue-200/80 text-xs font-black flex items-center justify-center shadow-2xs shrink-0">
               {currentIndex + 1}
             </span>
-            <span className="px-3.5 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider bg-gray-100 text-gray-700">
+            <span className="px-2.5 sm:px-3.5 py-1.5 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-wider bg-gray-100 text-gray-700">
               {currentQuestion.type === 'choice' ? 'Výběr z možností' : currentQuestion.type === 'self_check' ? 'Self check otázka' : 'Vepisovací otázka'}
             </span>
-            <span className={`px-3 py-1.5 rounded-xl text-xs font-black uppercase tracking-wider border ${
+            <span className={`px-2.5 sm:px-3 py-1.5 rounded-xl text-[11px] sm:text-xs font-black uppercase tracking-wider border ${
               (currentQuestion.difficulty || 'Střední') === 'Lehká'
                 ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
                 : (currentQuestion.difficulty || 'Střední') === 'Těžká'
@@ -1493,13 +1501,14 @@ export default function PracticeSession() {
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             {/* Bookmark / Mark question button */}
             <Button
               variant="ghost"
               size="sm"
               onClick={handleToggleBookmark}
-              className={`rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5 transition-colors ${
+              aria-label={bookmarkedSet.has(currentIndex) ? 'Zrušit označení otázky' : 'Označit otázku k návratu'}
+              className={`rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-2.5 sm:px-3.5 transition-colors ${
                 bookmarkedSet.has(currentIndex)
                   ? 'bg-orange-50 text-orange-950 border border-orange-200/80 hover:bg-orange-100 shadow-2xs'
                   : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
@@ -1507,16 +1516,18 @@ export default function PracticeSession() {
               title={bookmarkedSet.has(currentIndex) ? 'Zrušit označení otázky' : 'Označit otázku k návratu'}
             >
               <Bookmark
-                size={15}
+                size={16}
                 className={bookmarkedSet.has(currentIndex) ? 'fill-orange-500 text-orange-500' : 'text-gray-500'}
               />
-              <span>{bookmarkedSet.has(currentIndex) ? 'Označeno' : 'Označit otázku'}</span>
+              <span className="hidden sm:inline">{bookmarkedSet.has(currentIndex) ? 'Označeno' : 'Označit otázku'}</span>
             </Button>
 
             {/* Ask Tutor button (Decision Q3 = Option A) */}
             <Button
               variant="ghost"
               size="sm"
+              aria-label="Doptat se lektora"
+              title="Doptat se lektora"
               onClick={() => {
                 if (!hasUnlimitedAccess) {
                   setIsPremiumFeatureModalOpen(true);
@@ -1524,10 +1535,10 @@ export default function PracticeSession() {
                   setIsInquiryModalOpen(true);
                 }
               }}
-              className="text-amber-800 hover:text-amber-950 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5"
+              className="text-amber-800 hover:text-amber-950 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-2.5 sm:px-3.5"
             >
               <DialogCyanIcon size={16} />
-              <span>Doptat se lektora</span>
+              <span className="hidden sm:inline">Doptat se lektora</span>
               {askedInquirySet.has(currentIndex) && (
                 <span className="w-2 h-2 rounded-full bg-emerald-500" title="Dotaz odeslán" />
               )}
@@ -1539,7 +1550,7 @@ export default function PracticeSession() {
                 variant="ghost"
                 size="sm"
                 onClick={handleToggleHint}
-                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-3.5"
+                className="text-amber-600 hover:text-amber-700 hover:bg-amber-50 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer h-9 px-2.5 sm:px-3.5"
               >
                 <BulbYellowIcon size={16} />
                 <span>{isHintOpen ? 'Skrýt nápovědu' : 'Nápověda'}</span>
@@ -1559,7 +1570,7 @@ export default function PracticeSession() {
             >
               <div className="p-4 sm:p-5 bg-amber-50 border border-amber-200 rounded-2xl text-xs sm:text-sm text-amber-900 font-medium flex items-start gap-3 shadow-xs">
                 <BulbYellowIcon size={20} className="shrink-0 mt-0.5" />
-                <div className="leading-relaxed flex-1">
+                <div className="leading-relaxed flex-1 min-w-0 overflow-x-auto">
                   <MathRenderer content={currentQuestion.hint} />
                 </div>
               </div>
@@ -1568,8 +1579,8 @@ export default function PracticeSession() {
         </AnimatePresence>
 
         {/* Question Text */}
-        <div className="py-2 relative z-10">
-          <div className="text-2xl sm:text-3xl font-display font-black text-gray-900 leading-snug">
+        <div className="py-1 sm:py-2 relative z-10 min-w-0 max-w-full overflow-x-auto">
+          <div className="text-lg sm:text-2xl lg:text-[1.75rem] font-display font-black text-gray-900 leading-snug break-words">
             <MathRenderer content={currentQuestion.question} />
           </div>
         </div>
@@ -1634,7 +1645,7 @@ export default function PracticeSession() {
                   key={idx}
                   disabled={isAnswerSubmitted || isSubmittingAnswer}
                   onClick={() => handleSelectChoice(option, idx)}
-                  className={`p-5 sm:p-6 rounded-2xl border text-left font-medium text-sm sm:text-base flex items-center gap-4 transition-all cursor-pointer ${optionStyle} ${
+                  className={`p-3.5 sm:p-5 rounded-2xl border text-left font-medium text-sm sm:text-base flex items-center gap-3 sm:gap-4 transition-all cursor-pointer min-w-0 max-w-full ${optionStyle} ${
                     isAnswerSubmitted ? 'cursor-default' : ''
                   }`}
                 >
@@ -1643,7 +1654,7 @@ export default function PracticeSession() {
                   }`}>
                     {letter}
                   </span>
-                  <span className="flex-1 min-w-0 font-bold">
+                  <span className="flex-1 min-w-0 max-w-full overflow-x-auto font-bold">
                     <MathRenderer content={option} inline />
                   </span>
                 </button>
@@ -1667,7 +1678,7 @@ export default function PracticeSession() {
                       const prevVal = openInputs[currentIndex] ?? '';
                       handleOpenInputChange(prevVal + sym);
                     }}
-                    className="w-8 h-8 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-sm border border-gray-200 transition-colors cursor-pointer"
+                    className="min-w-[40px] h-10 px-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold text-sm border border-gray-200 transition-colors cursor-pointer"
                     title={`Vložit symbol ${sym}`}
                   >
                     {sym}
@@ -1677,7 +1688,7 @@ export default function PracticeSession() {
             )}
 
             <div className="flex flex-col sm:flex-row gap-3">
-                <Input
+              <Input
                 disabled={isAnswerSubmitted || isSubmittingAnswer}
                 value={openInputs[currentIndex] ?? currentAnswer?.userAnswer ?? ''}
                 onChange={e => handleOpenInputChange(e.target.value)}
@@ -1691,13 +1702,13 @@ export default function PracticeSession() {
                     ? 'Napiš svou odpověď sem...'
                     : 'Napiš svou odpověď sem (např. 1/2 nebo 3)...'
                 }
-                className="h-16 rounded-2xl border-gray-300 bg-gray-50 text-base sm:text-lg font-bold px-6 focus:bg-white flex-1"
+                className="h-12 sm:h-14 rounded-2xl border-gray-300 bg-gray-50 text-base sm:text-lg font-bold px-4 sm:px-6 focus:bg-white flex-1"
               />
               {!isAnswerSubmitted && (
                 <Button
                   onClick={handleCheckOpenAnswer}
                   disabled={!(openInputs[currentIndex] || '').trim() || isSubmittingAnswer}
-                  className="h-16 rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 font-black text-base cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
+                  className="h-12 sm:h-14 w-full sm:w-auto justify-center rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-6 sm:px-8 font-black text-base cursor-pointer shadow-xs shrink-0 disabled:opacity-50"
                 >
                   Zkontrolovat
                 </Button>
@@ -1730,9 +1741,9 @@ export default function PracticeSession() {
                 <Button
                   onClick={handleRevealSolution}
                   disabled={isSubmittingAnswer}
-                  className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 px-8 py-6 font-black text-base shadow-sm flex items-center gap-2.5 transition-transform hover:scale-102 cursor-pointer disabled:opacity-50"
+                  className="whitespace-normal text-center w-full sm:w-auto min-h-12 h-auto py-3.5 px-5 sm:px-8 justify-center rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm sm:text-base shadow-sm flex items-center gap-2.5 transition-transform md:hover:scale-102 cursor-pointer disabled:opacity-50"
                 >
-                  <Eye size={20} />
+                  <Eye size={20} className="shrink-0" />
                   <span>Zobrazit vzorové řešení pro kontrolu</span>
                 </Button>
               </div>
@@ -1910,13 +1921,24 @@ export default function PracticeSession() {
           </motion.div>
         )}
 
-        {/* Footer Actions: Next Question / Finish */}
-        <div className="pt-4 flex items-center justify-end border-t border-gray-100">
+        {/* Footer Actions: Previous / Next Question / Finish */}
+        <div className="pt-4 flex items-center justify-between gap-3 border-t border-gray-100 relative z-10">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={currentIndex === 0}
+            onClick={() => navigateToQuestion(currentIndex - 1)}
+            className="rounded-2xl font-bold text-sm px-4 sm:px-6 h-12 flex items-center gap-2 cursor-pointer disabled:opacity-40"
+          >
+            <ArrowLeft size={16} />
+            <span>Předchozí</span>
+          </Button>
+
           <div className="flex items-center gap-2">
             {currentIndex + 1 < questions.length ? (
               <Button
                 onClick={handleNext}
-                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-7 h-12 shadow-xs flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
+                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-5 sm:px-7 h-12 shadow-xs flex items-center gap-2 transition-transform md:hover:scale-105 cursor-pointer"
               >
                 <span>Další otázka</span>
                 <ArrowRight size={16} />
@@ -1924,7 +1946,7 @@ export default function PracticeSession() {
             ) : (
               <Button
                 onClick={handleFinishPractice}
-                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-7 h-12 shadow-xs flex items-center gap-2 transition-transform hover:scale-105 cursor-pointer"
+                className="rounded-2xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black text-sm px-5 sm:px-7 h-12 shadow-xs flex items-center gap-2 transition-transform md:hover:scale-105 cursor-pointer"
               >
                 <span>Zobrazit vyhodnocení</span>
                 <ArrowRight size={16} />

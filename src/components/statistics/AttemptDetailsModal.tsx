@@ -47,14 +47,14 @@ export default function AttemptDetailsModal({
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent 
         showCloseButton={false}
-        className="max-w-2xl p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl max-h-[90vh] flex flex-col"
+        className="max-w-2xl p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl max-h-[90dvh] flex flex-col"
       >
         <DialogTitle className="sr-only">Detail pokusu: {attempt.subtopicTitle}</DialogTitle>
         <DialogDescription className="sr-only">Rozbor jednotlivých odpovědí z cvičení</DialogDescription>
 
         {/* Modal Header */}
-        <div className="bg-gradient-to-r from-blue-50 via-amber-50 to-[#FAF7F0] px-6 py-5 border-b border-gray-100 flex items-start justify-between shrink-0">
-          <div className="space-y-1 pr-4 min-w-0">
+        <div className="bg-gradient-to-r from-blue-50 via-amber-50 to-[#FAF7F0] px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-100 flex items-start justify-between gap-2 shrink-0">
+          <div className="space-y-1 pr-2 min-w-0 flex-1">
             <div className="flex items-center gap-2 flex-wrap">
               <span className={`text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border ${
                 attempt.subject === 'Matematika'
@@ -68,19 +68,19 @@ export default function AttemptDetailsModal({
               </span>
             </div>
 
-            <h3 className="text-lg sm:text-xl font-black text-[#0F2942] tracking-tight truncate">
+            <h3 className="text-lg sm:text-xl font-black text-[#0F2942] tracking-tight line-clamp-2 leading-snug">
               {attempt.subtopicTitle}
             </h3>
 
-            <div className="flex items-center gap-3 text-xs text-gray-500 pt-0.5">
+            <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-gray-500 pt-0.5">
               <span>{formatDate(attempt.createdAt)}</span>
-              <span>•</span>
+              <span className="hidden sm:inline">•</span>
               <span className={`font-black px-2 py-0.5 rounded-md border text-[11px] ${getScoreBadgeClass(attempt.percentage)}`}>
                 {attempt.score} z {attempt.totalQuestions} správně ({attempt.percentage} %)
               </span>
               {attempt.durationSeconds && attempt.durationSeconds > 0 && (
                 <>
-                  <span>•</span>
+                  <span className="hidden sm:inline">•</span>
                   <span className="flex items-center gap-1 font-medium">
                     <Clock size={12} />
                     {Math.round(attempt.durationSeconds / 60)} min
@@ -95,13 +95,14 @@ export default function AttemptDetailsModal({
             onClick={onClose}
             className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-white/80 transition-all cursor-pointer shrink-0"
             title="Zavřít"
+            aria-label="Zavřít"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* Answers List */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
           {!hasDetailedAnswers ? (
             <div className="p-8 text-center rounded-2xl bg-gray-50 border border-dashed border-gray-200 space-y-3">
               <HelpCircle className="w-10 h-10 text-gray-400 mx-auto stroke-1" />
@@ -147,23 +148,23 @@ export default function AttemptDetailsModal({
                   </div>
 
                   {/* Question body */}
-                  <div className="text-sm font-bold text-[#1E1B18] leading-relaxed">
+                  <div className="text-sm font-bold text-[#1E1B18] leading-relaxed overflow-x-auto max-w-full">
                     <MathRenderer content={ans.questionText} />
                   </div>
 
                   {/* Answers comparison */}
-                  <div className="p-3 rounded-xl bg-white/80 border border-gray-100 space-y-1.5 text-xs">
-                    <div className="flex items-start gap-2">
-                      <span className="text-gray-400 font-bold shrink-0 w-28">Tvá odpověď:</span>
-                      <span className={`font-black ${isCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  <div className="p-3 rounded-xl bg-white/80 border border-gray-100 space-y-2 text-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-2">
+                      <span className="text-gray-400 font-bold shrink-0 sm:w-28">Tvá odpověď:</span>
+                      <span className={`min-w-0 flex-1 overflow-x-auto font-black ${isCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
                         {ans.userAnswer ? <MathRenderer content={ans.userAnswer} /> : 'Bez odpovědi'}
                       </span>
                     </div>
 
                     {!isCorrect && ans.correctAnswer && (
-                      <div className="flex items-start gap-2 pt-1 border-t border-gray-100">
-                        <span className="text-gray-400 font-bold shrink-0 w-28">Správné řešení:</span>
-                        <span className="font-black text-emerald-700">
+                      <div className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-2 pt-2 border-t border-gray-100">
+                        <span className="text-gray-400 font-bold shrink-0 sm:w-28">Správné řešení:</span>
+                        <span className="min-w-0 flex-1 overflow-x-auto font-black text-emerald-700">
                           <MathRenderer content={ans.correctAnswer} />
                         </span>
                       </div>
@@ -174,10 +175,10 @@ export default function AttemptDetailsModal({
                   {ans.explanation && (
                     <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200/70 text-xs text-amber-950 space-y-1">
                       <div className="flex items-center gap-1.5 font-black text-[11px] text-amber-900 uppercase tracking-wider">
-                        <BookOpen size={12} className="text-amber-700" />
+                        <BookOpen size={12} className="text-amber-700 shrink-0" />
                         <span>Autorské vysvětlení postupu</span>
                       </div>
-                      <div className="leading-relaxed font-medium">
+                      <div className="leading-relaxed font-medium overflow-x-auto max-w-full">
                         <MathRenderer content={ans.explanation} />
                       </div>
                     </div>
@@ -189,12 +190,12 @@ export default function AttemptDetailsModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 px-6 bg-gray-50/80 border-t border-gray-100 flex items-center justify-between gap-3 shrink-0">
+        <div className="p-4 sm:px-6 bg-gray-50/80 border-t border-gray-100 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0">
           <Button
             type="button"
             variant="outline"
             onClick={onClose}
-            className="rounded-xl font-bold text-xs h-10 px-4 border-gray-200 cursor-pointer"
+            className="w-full sm:w-auto rounded-xl font-bold text-xs h-10 px-4 border-gray-200 cursor-pointer"
           >
             Zavřít
           </Button>
@@ -205,7 +206,7 @@ export default function AttemptDetailsModal({
               onClose();
               navigate(`/practice/session/${attempt.subtopicId}`);
             }}
-            className="rounded-xl bg-[#0F2942] hover:bg-[#1E1B18] text-white font-black text-xs h-10 px-5 flex items-center gap-2 shadow-sm cursor-pointer"
+            className="w-full sm:w-auto rounded-xl bg-[#0F2942] hover:bg-[#1E1B18] text-white font-black text-xs h-10 px-5 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
           >
             <RotateCcw size={13} />
             <span>Procvičit toto téma znovu</span>

@@ -445,10 +445,10 @@ export default function StudyView() {
   return (
     <div className="w-full max-w-7xl mx-auto space-y-6 pb-16 relative">
       {/* Top Breadcrumb Navigation */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <Link
           to="/practice"
-          className="inline-flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-[#1E1B18] transition-colors bg-white px-4 py-2 rounded-xl shadow-2xs border border-gray-100"
+          className="inline-flex items-center justify-center sm:justify-start gap-2 text-sm font-bold text-gray-500 hover:text-[#1E1B18] transition-colors bg-white px-4 py-2.5 sm:py-2 rounded-xl shadow-2xs border border-gray-100 w-fit"
         >
           <ArrowLeft size={16} /> Zpět na témata
         </Link>
@@ -456,16 +456,16 @@ export default function StudyView() {
         {questionCount > 0 && (
           <Button
             onClick={() => navigate(`/practice/session/${subtopic.id}`)}
-            className="rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-5 h-11 flex items-center gap-2 shadow-2xs hover:scale-[1.01] transition-transform cursor-pointer"
+            className="w-full sm:w-auto justify-center whitespace-normal text-center rounded-xl bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 font-black px-5 h-auto min-h-11 py-2.5 flex items-center gap-2 shadow-2xs md:hover:scale-[1.01] transition-transform cursor-pointer"
           >
-            <Play size={16} className="fill-[#0F2942] text-[#0F2942]" />
+            <Play size={16} className="fill-[#0F2942] text-[#0F2942] shrink-0" />
             <span>Spustit procvičování ({questionCount} úloh)</span>
           </Button>
         )}
       </div>
 
       {/* Main Topic Header */}
-      <header className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-2xs relative overflow-hidden">
+      <header className="bg-white rounded-2xl sm:rounded-3xl p-4 sm:p-8 border border-gray-100 shadow-2xs relative overflow-hidden">
         <div className="relative z-10 space-y-1.5">
           <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-bold text-gray-500 flex-wrap">
             <span>{subtopic.subjectId}</span>
@@ -485,13 +485,13 @@ export default function StudyView() {
       <div
         className={
           isTwoColumnLayout
-            ? 'grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8 items-start'
+            ? 'grid grid-cols-1 xl:grid-cols-12 gap-6 xl:gap-8 items-start'
             : 'max-w-4xl mx-auto w-full space-y-6'
         }
       >
-        {/* LEFT COLUMN: 1 Teorie (Sticky on desktop) */}
+        {/* LEFT COLUMN: 1 Teorie (Sticky on xl desktop) */}
         {hasTheorySection && (
-          <div className={isTwoColumnLayout ? 'lg:col-span-5 lg:sticky lg:top-6' : 'w-full'}>
+          <div className={isTwoColumnLayout ? 'xl:col-span-5 xl:sticky xl:top-6 xl:max-h-[calc(100dvh-3rem)] xl:overflow-y-auto' : 'w-full'}>
             <TheoryMaterialViewer
               materialId={linkedMaterialId}
               title={subtopic.title}
@@ -514,7 +514,7 @@ export default function StudyView() {
 
         {/* RIGHT COLUMN: 2 Postup řešení krok za krokem */}
         {hasStepsSection && (
-          <div className={isTwoColumnLayout ? 'lg:col-span-7 space-y-4' : 'w-full space-y-4'}>
+          <div className={isTwoColumnLayout ? 'xl:col-span-7 space-y-4' : 'w-full space-y-4'}>
             {/* Section Header */}
             <div className="flex items-center justify-between gap-3 px-1">
               <div className="flex items-center gap-3">
@@ -573,23 +573,23 @@ export default function StudyView() {
                           toggleCompletedStepExpand(idx);
                         }
                       }}
-                      className="bg-white rounded-2xl px-5 py-4 border border-gray-100 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all flex items-center justify-between gap-4 cursor-pointer"
+                      className="bg-white rounded-2xl px-4 sm:px-5 py-3.5 sm:py-4 border border-gray-100 shadow-2xs hover:border-emerald-200 hover:shadow-xs transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 sm:gap-4 cursor-pointer"
                     >
-                      <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                         <div className="w-9 h-9 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
                           <Check size={18} strokeWidth={2.5} />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
                             KROK {idx + 1}
                           </span>
-                          <h3 className="font-black text-sm sm:text-base text-[#0F2942] truncate">
+                          <h3 className="font-black text-sm sm:text-base text-[#0F2942] line-clamp-2 sm:truncate">
                             <MathRenderer content={step.title} inline />
                           </h3>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
+                      <div className="flex items-center justify-between sm:justify-end gap-2 shrink-0 pl-12 sm:pl-0">
                         <span className="px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 text-xs font-black">
                           Splněno
                         </span>
@@ -604,23 +604,23 @@ export default function StudyView() {
                   return (
                     <div
                       key={idx}
-                      className="bg-white/75 rounded-2xl px-5 py-4 border border-gray-200/70 flex items-center justify-between gap-4 select-none"
+                      className="bg-white/75 rounded-2xl px-4 sm:px-5 py-3.5 sm:py-4 border border-gray-200/70 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-4 select-none"
                     >
-                      <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="flex items-start sm:items-center gap-3.5 min-w-0">
                         <div className="w-9 h-9 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center shrink-0">
                           <Lock size={16} />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
                           <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
                             KROK {idx + 1}
                           </span>
-                          <h3 className="font-bold text-sm sm:text-base text-gray-500 truncate">
+                          <h3 className="font-bold text-sm sm:text-base text-gray-500 line-clamp-2 sm:truncate">
                             <MathRenderer content={step.title} inline />
                           </h3>
                         </div>
                       </div>
 
-                      <span className="text-xs font-bold text-gray-400 shrink-0">
+                      <span className="text-xs font-bold text-gray-400 shrink-0 pl-12 sm:pl-0">
                         Odemkne se po kroku {idx}
                       </span>
                     </div>
@@ -633,15 +633,15 @@ export default function StudyView() {
                     key={idx}
                     initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    className={`p-5 sm:p-6 bg-white rounded-3xl transition-all flex flex-col gap-4 ${
+                    className={`p-4 sm:p-6 bg-white rounded-2xl sm:rounded-3xl transition-all flex flex-col gap-4 ${
                       isActive
                         ? 'border-2 border-[#B9D8FC] shadow-sm'
                         : 'border border-emerald-200 shadow-2xs'
                     }`}
                   >
                     {/* Step Header */}
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 sm:gap-3.5 flex-1 min-w-0">
                         {isCompleted ? (
                           <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
                             <Check size={18} strokeWidth={2.5} />
@@ -656,41 +656,43 @@ export default function StudyView() {
                           <span className="text-[10px] font-black uppercase tracking-wider text-gray-400 block">
                             KROK {idx + 1} Z {steps.length}
                           </span>
-                          <h3 className="font-black text-lg sm:text-xl text-[#0F2942] tracking-tight leading-snug">
+                          <h3 className="font-black text-base sm:text-xl text-[#0F2942] tracking-tight leading-snug">
                             <MathRenderer content={step.title} inline />
                           </h3>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2 shrink-0">
-                        {step.tutorTip && (
-                          <button
-                            type="button"
-                            onClick={() => toggleTip(idx)}
-                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold text-xs transition-all cursor-pointer ${
-                              expandedTips[idx]
-                                ? 'bg-amber-400 text-[#1E1B18] shadow-2xs ring-2 ring-amber-400/40'
-                                : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80'
-                            }`}
-                            title={expandedTips[idx] ? 'Skrýt tip od lektora' : 'Zobrazit tip od lektora'}
-                          >
-                            <BulbYellowIcon size={15} />
-                            <span>Tip od lektora</span>
-                          </button>
-                        )}
+                      {(step.tutorTip || isCompleted) && (
+                        <div className="flex flex-wrap items-center gap-2 shrink-0 pl-12 sm:pl-0">
+                          {step.tutorTip && (
+                            <button
+                              type="button"
+                              onClick={() => toggleTip(idx)}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full font-bold text-xs transition-all cursor-pointer ${
+                                expandedTips[idx]
+                                  ? 'bg-amber-400 text-[#1E1B18] shadow-2xs ring-2 ring-amber-400/40'
+                                  : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80'
+                              }`}
+                              title={expandedTips[idx] ? 'Skrýt tip od lektora' : 'Zobrazit tip od lektora'}
+                            >
+                              <BulbYellowIcon size={15} />
+                              <span>Tip od lektora</span>
+                            </button>
+                          )}
 
-                        {isCompleted && (
-                          <button
-                            type="button"
-                            onClick={() => toggleCompletedStepExpand(idx)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-black transition-colors cursor-pointer"
-                            title="Sbalit krok"
-                          >
-                            <span>Splněno</span>
-                            <ChevronUp size={14} />
-                          </button>
-                        )}
-                      </div>
+                          {isCompleted && (
+                            <button
+                              type="button"
+                              onClick={() => toggleCompletedStepExpand(idx)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-black transition-colors cursor-pointer"
+                              title="Sbalit krok"
+                            >
+                              <span>Splněno</span>
+                              <ChevronUp size={14} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* Tutor Tip Bubble */}
@@ -728,10 +730,10 @@ export default function StudyView() {
                       </div>
                     )}
 
-                    {/* Step Embedded SVG Image (purely embedded, non-interactive, no download) */}
+                    {/* Step Embedded SVG Image (tap-to-zoom enabled on mobile, no download) */}
                     {hasStepAttachment && (
                       <div
-                        className="py-1 pointer-events-none select-none"
+                        className="py-1 select-none"
                         onContextMenu={(e) => e.preventDefault()}
                       >
                         <InlineStudyMedia
@@ -910,7 +912,7 @@ export default function StudyView() {
 
       {/* Prominent Bottom Action Banner to Practice */}
       <div
-        className={`rounded-[2.5rem] p-8 sm:p-10 shadow-xs border-2 flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-hidden transition-all ${
+        className={`rounded-2xl sm:rounded-3xl p-5 sm:p-8 shadow-xs border-2 flex flex-col md:flex-row items-center justify-between gap-5 sm:gap-6 relative overflow-hidden transition-all ${
           allStepsCompleted
             ? 'bg-gradient-to-br from-blue-50/90 via-sky-50/70 to-blue-50/90 text-[#0F2942] border-[#B9D8FC]'
             : 'bg-gray-50 text-gray-600 border-gray-200/80'
@@ -938,7 +940,7 @@ export default function StudyView() {
               </>
             )}
           </div>
-          <h3 className="text-2xl sm:text-3xl font-display font-black tracking-tight text-[#0F2942]">
+          <h3 className="text-xl sm:text-3xl font-display font-black tracking-tight text-[#0F2942]">
             {allStepsCompleted ? 'Máš látku nastudovanou?' : 'Nejprve dokonči všechny kroky studia'}
           </h3>
           <p className="text-gray-600 font-medium text-sm sm:text-base max-w-xl">
@@ -951,20 +953,20 @@ export default function StudyView() {
         <Button
           onClick={() => allStepsCompleted && navigate(`/practice/session/${subtopic.id}`)}
           disabled={!allStepsCompleted}
-          className={`rounded-2xl font-black text-base px-8 h-14 shadow-xs shrink-0 flex items-center gap-3 z-10 transition-all ${
+          className={`w-full md:w-auto h-auto min-h-12 py-3 px-6 sm:px-8 whitespace-normal text-center justify-center rounded-2xl font-black text-sm sm:text-base shadow-xs shrink-0 flex items-center gap-2.5 z-10 transition-all ${
             allStepsCompleted
-              ? 'bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 hover:scale-105 cursor-pointer'
+              ? 'bg-[#B9D8FC] hover:bg-[#A3CCFA] text-[#0F2942] border border-blue-200/80 md:hover:scale-105 cursor-pointer'
               : 'bg-gray-200 text-gray-500 cursor-not-allowed opacity-75'
           }`}
         >
           {allStepsCompleted ? (
             <>
-              <Play size={20} className="fill-[#0F2942] text-[#0F2942]" />
+              <Play size={20} className="fill-[#0F2942] text-[#0F2942] shrink-0" />
               <span>Spustit procvičování</span>
             </>
           ) : (
             <>
-              <Lock size={18} />
+              <Lock size={18} className="shrink-0" />
               <span>Odemkne se po splnění kroků</span>
             </>
           )}

@@ -172,12 +172,12 @@ export default function Settings() {
   };
 
   return (
-    <div className="page-container">
+    <div className="space-y-8">
       <section className="text-center space-y-6 max-w-3xl mx-auto mb-8">
         <motion.h1 
           initial={{ opacity: 0, y: -20 }} 
           animate={{ opacity: 1, y: 0 }} 
-          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful font-black text-gray-700"
+          className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-playful text-gray-700 tracking-tight"
         >
           Nastavení profilu
         </motion.h1>
@@ -185,24 +185,24 @@ export default function Settings() {
           initial={{ opacity: 0 }} 
           animate={{ opacity: 1 }} 
           transition={{ delay: 0.2 }} 
-          className="text-xl text-gray-500 leading-relaxed"
+          className="text-base sm:text-xl text-gray-500 leading-relaxed"
         >
           Uprav si své údaje, heslo, zabezpečení účtu a správu předplatného.
         </motion.p>
 
         {/* Přepínací záložky: Osobní profil vs. Správa předplatného */}
-        <div className="inline-flex items-center p-1.5 bg-white rounded-2xl shadow-md border border-gray-100 mt-4">
+        <div className="grid grid-cols-2 w-full max-w-md mx-auto p-1.5 bg-white rounded-2xl shadow-md border border-gray-100 mt-4">
           <button
             type="button"
             onClick={() => setSearchParams({ tab: 'profile' })}
             className={cn(
-              'flex items-center gap-2 px-5 sm:px-7 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
+              'flex items-center justify-center gap-2 px-3 sm:px-5 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
               activeTab === 'profile'
                 ? 'bg-[#F5C400] text-[#1E1B18] shadow-sm'
                 : 'text-gray-500 hover:text-gray-900'
             )}
           >
-            <AccountIcon size={20} />
+            <AccountIcon size={20} className="shrink-0" />
             <span>Osobní profil</span>
           </button>
 
@@ -210,14 +210,14 @@ export default function Settings() {
             type="button"
             onClick={() => setSearchParams({ tab: 'subscription' })}
             className={cn(
-              'flex items-center gap-2 px-5 sm:px-7 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
+              'flex items-center justify-center gap-2 px-3 sm:px-5 py-3 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer',
               activeTab === 'subscription'
                 ? 'bg-[#F5C400] text-[#1E1B18] shadow-sm'
                 : 'text-gray-500 hover:text-gray-900'
             )}
           >
-            <CardGrayIcon size={20} />
-            <span>Správa předplatného</span>
+            <CardGrayIcon size={20} className="shrink-0" />
+            <span>Předplatné</span>
           </button>
         </div>
       </section>
@@ -225,7 +225,7 @@ export default function Settings() {
       {activeTab === 'subscription' ? (
         <SubscriptionManager />
       ) : (
-      <div className="max-w-2xl mx-auto bg-white p-8 md:p-12 rounded-[2.5rem] shadow-xl border border-gray-100/50 space-y-8 mt-8">
+      <div className="max-w-4xl mx-auto bg-white p-5 sm:p-8 md:p-10 rounded-[2.5rem] shadow-xl border border-gray-100/50 space-y-8 mt-8">
         {/* Avatar Section */}
         <div className="flex flex-col items-center gap-6">
           <div className="relative group">
@@ -295,7 +295,7 @@ export default function Settings() {
           <div className="w-full max-w-md space-y-4 pt-6 border-t border-gray-100">
             <div>
               <Label className="text-sm font-bold text-gray-400 uppercase tracking-widest block mb-2 text-center">Vyber si emoji</Label>
-              <div className="grid grid-cols-5 gap-2 max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-2xl border border-gray-100">
+              <div className="grid grid-cols-5 justify-items-center gap-2 max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-2xl border border-gray-100">
                 {EMOJIS.map(emoji => (
                   <button
                     key={emoji}
@@ -320,7 +320,7 @@ export default function Settings() {
 
             <div>
               <Label className="text-sm font-bold text-gray-400 uppercase tracking-widest block mb-2 text-center">Barva pozadí</Label>
-              <div className="grid grid-cols-5 gap-2 p-2 bg-gray-50 rounded-2xl border border-gray-100">
+              <div className="grid grid-cols-5 justify-items-center gap-2 p-2 bg-gray-50 rounded-2xl border border-gray-100">
                 {COLORS.map(color => (
                   <button
                     key={color}
@@ -442,9 +442,9 @@ export default function Settings() {
                       toast.error(e.message || 'Nepodařilo se odeslat odkaz pro obnovení.');
                     }
                   }}
-                  className="text-xs font-bold text-gray-500 hover:text-gray-800 hover:underline cursor-pointer"
+                  className="text-xs font-bold text-gray-500 hover:text-gray-800 hover:underline cursor-pointer break-words max-w-full"
                 >
-                  Nebo poslat odkaz pro obnovení hesla na e-mail ({profile?.email || user?.email})
+                  Nebo poslat odkaz pro obnovení hesla na e-mail (<span className="break-all">{profile?.email || user?.email}</span>)
                 </button>
               </div>
             )}
@@ -453,20 +453,20 @@ export default function Settings() {
       </div>
       )}
 
-      <section className="bg-[#FAF7F0] rounded-[3rem] p-12 text-[#1E1B18] text-center space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] max-w-2xl mx-auto w-full">
+      <section className="bg-[#FAF7F0] rounded-[2.5rem] sm:rounded-[3rem] p-5 sm:p-8 md:p-10 text-[#1E1B18] text-center space-y-6 sm:space-y-8 relative overflow-hidden mt-12 border border-[#E6E0D4] max-w-4xl mx-auto w-full">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/40 rounded-full -mr-32 -mt-32 blur-3xl" />
         <div className="relative z-10 space-y-4">
-          <h2 className="text-4xl font-sans font-bold">Potřebuješ s něčím pomoci?</h2>
-          <p className="text-gray-600 text-xl max-w-xl mx-auto">Napiš nám na podporu a my ti rádi pomůžeme vyřešit jakýkoliv problém s tvým účtem.</p>
-          <div className="pt-4">
-            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-10 h-14 rounded-2xl text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-sans font-bold">Potřebuješ s něčím pomoci?</h2>
+          <p className="text-gray-600 text-base sm:text-xl max-w-xl mx-auto">Napiš nám na podporu a my ti rádi pomůžeme vyřešit jakýkoliv problém s tvým účtem.</p>
+          <div className="pt-2 sm:pt-4">
+            <Link to="/contact" className="inline-flex items-center justify-center bg-[#F5C400] text-[#1E1B18] px-8 sm:px-10 h-12 sm:h-14 rounded-2xl text-base sm:text-xl font-black hover:scale-105 transition-transform shadow-xl hover:bg-[#F5C400]/90">
               Kontaktuj nás
             </Link>
           </div>
         </div>
       </section>
 
-      <div className="pt-6 pb-12 flex items-center justify-center gap-4 text-xs text-gray-400 font-medium">
+      <div className="pt-6 pb-12 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-gray-400 font-medium">
         <Link to="/terms" className="hover:text-gray-700 hover:underline">
           Obchodní podmínky
         </Link>

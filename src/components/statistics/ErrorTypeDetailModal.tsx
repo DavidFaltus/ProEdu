@@ -22,19 +22,19 @@ export default function ErrorTypeDetailModal({
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent 
         showCloseButton={false}
-        className="max-w-xl p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl max-h-[88vh] flex flex-col"
+        className="max-w-xl p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl max-h-[88dvh] flex flex-col"
       >
         <DialogTitle className="sr-only">Přehled typických chyb a doporučení</DialogTitle>
         <DialogDescription className="sr-only">Rozbor slabých míst a strategie pro jejich odstranění</DialogDescription>
 
         {/* Modal Header */}
-        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-[#FAF7F0] px-6 py-5 border-b border-gray-100 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/20 font-black text-lg">
+        <div className="bg-gradient-to-r from-rose-50 via-amber-50 to-[#FAF7F0] px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-100 flex items-start justify-between gap-3 shrink-0">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/20 font-black text-lg shrink-0">
               🎯
             </div>
-            <div>
-              <h3 className="text-lg font-black text-[#0F2942] tracking-tight">
+            <div className="min-w-0">
+              <h3 className="text-lg font-black text-[#0F2942] tracking-tight line-clamp-2 leading-snug">
                 Rozbor typů chyb
               </h3>
               <p className="text-xs text-gray-500 font-medium">
@@ -46,28 +46,29 @@ export default function ErrorTypeDetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-white/80 transition-all cursor-pointer"
+            className="w-9 h-9 rounded-xl flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-white/80 transition-all cursor-pointer shrink-0"
             title="Zavřít"
+            aria-label="Zavřít"
           >
             <X size={18} />
           </button>
         </div>
 
         {/* List of Error Categories */}
-        <div className="p-5 sm:p-6 overflow-y-auto space-y-4 flex-1">
+        <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
           {errorTypes.map(err => {
             return (
               <div
                 key={err.id}
                 className="p-4 sm:p-5 rounded-2xl border border-gray-200/80 bg-white hover:border-gray-300 transition-all space-y-3 text-left shadow-2xs"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-2.5">
+                <div className="flex flex-wrap items-start justify-between gap-2 sm:gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <span className="w-8 h-8 rounded-xl bg-gray-50 border border-gray-200 flex items-center justify-center text-base shrink-0 font-bold">
                       {err.icon}
                     </span>
-                    <div>
-                      <h4 className="font-black text-sm text-[#0F2942] leading-tight">
+                    <div className="min-w-0">
+                      <h4 className="font-black text-sm text-[#0F2942] leading-tight line-clamp-2">
                         {err.title}
                       </h4>
                       <span className="text-[11px] text-gray-400 font-medium">
@@ -104,12 +105,12 @@ export default function ErrorTypeDetailModal({
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 px-6 bg-gray-50/80 border-t border-gray-100 flex items-center justify-between gap-3 shrink-0">
+        <div className="p-4 sm:px-6 bg-gray-50/80 border-t border-gray-100 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-2.5 sm:gap-3 shrink-0">
           <Button
             type="button"
             variant="outline"
             onClick={onClose}
-            className="rounded-xl font-bold text-xs h-10 px-4 border-gray-200 cursor-pointer"
+            className="w-full sm:w-auto rounded-xl font-bold text-xs h-10 px-4 border-gray-200 cursor-pointer"
           >
             Rozumím
           </Button>
@@ -120,7 +121,7 @@ export default function ErrorTypeDetailModal({
               onClose();
               navigate('/practice');
             }}
-            className="rounded-xl bg-[#0F2942] hover:bg-[#1E1B18] text-white font-black text-xs h-10 px-5 flex items-center gap-2 shadow-sm cursor-pointer"
+            className="w-full sm:w-auto rounded-xl bg-[#0F2942] hover:bg-[#1E1B18] text-white font-black text-xs h-10 px-5 flex items-center justify-center gap-2 shadow-sm cursor-pointer"
           >
             <span>Přejít na procvičování</span>
             <ArrowRight size={13} />

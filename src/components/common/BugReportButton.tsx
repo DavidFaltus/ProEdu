@@ -24,8 +24,8 @@ export default function BugReportButton() {
 
   // Dynamická pozice v pravém dolním rohu (s ohledem na spodní mobilní lištu a FloatingTimer)
   const positionClasses = isTimerActive
-    ? 'bottom-36 sm:bottom-22 right-3.5 sm:right-6'
-    : 'bottom-20 sm:bottom-6 right-3.5 sm:right-6';
+    ? 'bottom-[calc(env(safe-area-inset-bottom,0px)+9.5rem)] md:bottom-24 right-3.5 md:right-6'
+    : 'bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 right-3.5 md:right-6';
 
   return (
     <>

@@ -6,9 +6,9 @@ import { Button } from '../components/ui/button';
 
 export default function PrivacyPolicy() {
   return (
-    <div className="max-w-4xl mx-auto py-6 px-4 sm:px-6 space-y-8 text-[#1E1B18]">
+    <div className="max-w-4xl mx-auto py-4 sm:py-6 space-y-8 text-[#1E1B18]">
       {/* Top Bar with Back Button */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link to="/">
           <Button variant="ghost" className="gap-2 font-bold text-gray-600 hover:text-gray-900 rounded-2xl cursor-pointer">
             <ArrowLeft size={18} />
@@ -29,7 +29,7 @@ export default function PrivacyPolicy() {
             Ochrana soukromí
           </span>
         </div>
-        <h1 className="text-3xl sm:text-4xl font-black text-gray-700 tracking-tight">
+        <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
           Zásady ochrany osobních údajů (GDPR)
         </h1>
         <p className="mt-2 text-sm text-gray-500 font-medium">
@@ -47,8 +47,8 @@ export default function PrivacyPolicy() {
 
         {/* 1. Totožnost a kontaktní údaje správce */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-4">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Building2 size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Building2 size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>1. Totožnost a kontaktní údaje správce</span>
           </h2>
           <p>Správcem vašich osobních údajů je společnost:</p>
@@ -74,8 +74,8 @@ export default function PrivacyPolicy() {
 
         {/* 2. Jaké údaje zpracováváme a proč? */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Eye size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Eye size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>2. Jaké údaje zpracováváme a proč?</span>
           </h2>
           <p>Zpracováváme pouze údaje nezbytné k tomu, abychom vám mohli poskytnout kvalitní doučování:</p>
@@ -92,8 +92,8 @@ export default function PrivacyPolicy() {
 
         {/* 3. Právní základ zpracování */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Scale size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Scale size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>3. Právní základ zpracování</span>
           </h2>
           <p>Vaše údaje zpracováváme na základě těchto právních titulů (podle čl. 6 odst. 1 GDPR):</p>
@@ -127,8 +127,8 @@ export default function PrivacyPolicy() {
 
         {/* 5. Kdo má k údajům přístup? */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <TeamBlueIcon size={22} />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <TeamBlueIcon size={22} className="shrink-0 mt-1" />
             <span>5. Kdo má k údajům přístup? (Příjemci a zpracovatelé)</span>
           </h2>
           <p>Osobní údaje nepředáváme neoprávněným třetím osobám ani je neprodáváme. Pro zajištění provozu využíváme tyto prověřené zpracovatele:</p>
@@ -159,8 +159,8 @@ export default function PrivacyPolicy() {
 
         {/* 7. Doba uchování údajů */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Clock size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Clock size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>7. Doba uchování údajů</span>
           </h2>
           <p>
@@ -206,8 +206,8 @@ export default function PrivacyPolicy() {
 
         {/* 9. Zabezpečení dat */}
         <section className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-200/70 shadow-xs space-y-3">
-          <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
-            <Lock size={20} className="text-emerald-600" />
+          <h2 className="text-xl font-bold text-gray-900 flex items-start gap-2.5">
+            <Lock size={20} className="text-emerald-600 shrink-0 mt-1" />
             <span>9. Zabezpečení dat</span>
           </h2>
           <p>

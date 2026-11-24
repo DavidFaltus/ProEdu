@@ -229,7 +229,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                     ref={notificationBtnRef}
                     onClick={handleToggleNotifications}
                     className={cn(
-                      "p-1.5 rounded-xl transition-all shrink-0 cursor-pointer relative",
+                      "w-10 h-10 md:w-9 md:h-9 flex items-center justify-center rounded-xl transition-all shrink-0 cursor-pointer relative",
                       isNotificationsOpen
                         ? "bg-[#F5C400] text-[#1E1B18] shadow-xs"
                         : unreadCount > 0 
@@ -241,7 +241,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                   >
                     <Bell size={16} />
                     {unreadCount > 0 && (
-                      <span className="absolute -top-1 -right-1 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
+                      <span className="absolute -top-0.5 -right-0.5 bg-red-500 text-white font-black text-[9px] w-4 h-4 rounded-full flex items-center justify-center animate-pulse">
                         {unreadCount}
                       </span>
                     )}
@@ -249,8 +249,9 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
                   <button 
                     onClick={handleSignOut} 
-                    className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-white rounded-xl transition-all shrink-0 cursor-pointer"
+                    className="w-10 h-10 md:w-9 md:h-9 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-white rounded-xl transition-all shrink-0 cursor-pointer"
                     title="Odhlásit se"
+                    aria-label="Odhlásit se"
                   >
                     <LogOut size={16} />
                   </button>
@@ -344,7 +345,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
 
       <Dialog open={isAvatarModalOpen} onOpenChange={setIsAvatarModalOpen}>
-        <DialogContent className="rounded-[2.5rem] p-8 border-none shadow-2xl max-w-md bg-white">
+        <DialogContent className="rounded-[2rem] sm:rounded-[2.5rem] p-5 sm:p-7 max-h-[90dvh] overflow-y-auto border-none shadow-2xl max-w-md bg-white">
           <DialogHeader className="mb-4">
             <DialogTitle className="text-2xl font-display font-black text-[#1E1B18]">
               Vyber si svůj profil
@@ -354,7 +355,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
           <div className="space-y-6">
             <div>
               <label className="font-bold text-gray-700 text-sm block mb-3">Vyber si emoji</label>
-              <div className="grid grid-cols-5 gap-3 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-2xl border border-gray-100">
+              <div className="grid grid-cols-5 gap-2 sm:gap-3 max-h-40 overflow-y-auto p-2 bg-gray-50 rounded-2xl border border-gray-100">
                 {EMOJIS.map(emoji => (
                   <button
                     key={emoji}
@@ -367,7 +368,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                       }
                     }}
                     className={cn(
-                      "w-12 h-12 rounded-xl text-2xl flex items-center justify-center hover:bg-white hover:scale-110 hover:shadow-sm transition-all cursor-pointer",
+                      "w-full aspect-square max-w-12 mx-auto rounded-xl text-2xl flex items-center justify-center hover:bg-white hover:scale-110 hover:shadow-sm transition-all cursor-pointer",
                       profile?.avatarEmoji === emoji ? "bg-white border-2 border-[#B80053]" : "border border-transparent"
                     )}
                   >
@@ -379,7 +380,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
 
             <div>
               <label className="font-bold text-gray-700 text-sm block mb-3">Vyber si barvu pozadí</label>
-              <div className="grid grid-cols-5 gap-3 p-2 bg-gray-50 rounded-2xl border border-gray-100">
+              <div className="grid grid-cols-5 gap-2 sm:gap-3 p-2 bg-gray-50 rounded-2xl border border-gray-100">
                 {COLORS.map(color => (
                   <button
                     key={color}
@@ -393,7 +394,7 @@ export default function StudentSidebar({ onNavigate, className }: StudentSidebar
                     }}
                     style={{ backgroundColor: color }}
                     className={cn(
-                      "w-12 h-12 rounded-xl flex items-center justify-center hover:scale-110 hover:shadow-sm transition-all cursor-pointer border-2",
+                      "w-full aspect-square max-w-12 mx-auto rounded-xl flex items-center justify-center hover:scale-110 hover:shadow-sm transition-all cursor-pointer border-2",
                       profile?.avatarBgColor === color ? "border-[#B80053]" : "border-white"
                     )}
                   >

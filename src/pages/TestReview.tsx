@@ -5,6 +5,7 @@ import { db } from '../lib/firebase';
 import { doc, getDoc } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { ArrowLeft, CheckCircle2, XCircle, Award } from 'lucide-react';
+import { MathRenderer } from '../components/common/MathRenderer';
 
 export default function TestReview() {
   const { id, testId } = useParams<{ id?: string; testId?: string }>();
@@ -67,7 +68,7 @@ export default function TestReview() {
 
   if (!user) {
     return (
-      <div className="page-container max-w-xl mx-auto py-16 text-center space-y-4">
+      <div className="max-w-xl mx-auto py-12 sm:py-16 text-center space-y-4">
         <h1 className="text-2xl font-bold text-gray-800">Přihlas se pro vyhodnocení testu</h1>
         <p className="text-sm text-gray-500">Vyhodnocení testu je přístupné pouze majiteli testu.</p>
         <button
@@ -88,7 +89,7 @@ export default function TestReview() {
       : {};
 
   return (
-    <div className="page-container max-w-3xl mx-auto space-y-6 pb-16">
+    <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6 pb-10">
       <div>
         <Link to="/statistics" className="inline-flex items-center gap-1.5 text-sm font-bold text-gray-600 hover:text-black">
           <ArrowLeft size={16} />
@@ -97,15 +98,15 @@ export default function TestReview() {
       </div>
 
       {loading ? (
-        <Card className="rounded-3xl border-gray-200">
+        <Card className="rounded-2xl sm:rounded-3xl border-gray-200">
           <CardContent className="py-12 text-center text-gray-500 font-bold text-sm">
             Načítání vyhodnocení testu...
           </CardContent>
         </Card>
       ) : error || !reviewDoc ? (
-        <Card className="rounded-3xl border-gray-200">
+        <Card className="rounded-2xl sm:rounded-3xl border-gray-200">
           <CardHeader>
-            <CardTitle className="text-xl font-bold text-gray-800">Vyhodnocení: {resolvedTestId}</CardTitle>
+            <CardTitle className="text-xl font-bold text-gray-800 break-words">Vyhodnocení: {resolvedTestId}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-sm text-gray-600">
             <p>{error || 'Detailní přehled svých odevzdaných testů najdeš v sekci Statistiky.'}</p>
@@ -113,31 +114,31 @@ export default function TestReview() {
         </Card>
       ) : (
         <>
-          <Card className="rounded-3xl border-gray-200 shadow-xs">
+          <Card className="rounded-2xl sm:rounded-3xl border-gray-200 shadow-xs">
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <CardTitle className="text-2xl font-bold text-gray-900">
+                <CardTitle className="text-xl sm:text-2xl font-bold text-gray-900 min-w-0 break-words">
                   {reviewDoc.title || reviewDoc.testTitle || `Vyhodnocení: ${resolvedTestId}`}
                 </CardTitle>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
                   {reviewDoc.grade !== undefined && reviewDoc.grade !== null && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-xs font-black shrink-0">
                       <Award size={14} /> Známka: {reviewDoc.grade}
                     </span>
                   )}
                   {typeof reviewDoc.score === 'number' && (
-                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-black">
+                    <span className="px-3 py-1 rounded-full bg-emerald-100 text-emerald-900 text-xs font-black shrink-0">
                       Skóre: {reviewDoc.score} / {reviewDoc.maxScore ?? reviewDoc.totalQuestions ?? questions.length}
                     </span>
                   )}
                 </div>
               </div>
               {reviewDoc.feedback && (
-                <div className="mt-3 p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-sm text-gray-800">
+                <div className="mt-3 p-3.5 sm:p-4 rounded-2xl bg-blue-50/70 border border-blue-200 text-sm text-gray-800 break-words overflow-x-auto">
                   <span className="font-bold block text-xs uppercase tracking-wider text-blue-800 mb-1">
                     Hodnocení učitele
                   </span>
-                  {reviewDoc.feedback}
+                  <MathRenderer content={String(reviewDoc.feedback)} />
                 </div>
               )}
             </CardHeader>
@@ -157,15 +158,15 @@ export default function TestReview() {
                   : undefined;
 
               return (
-                <Card key={qKey} className="rounded-3xl border-gray-200 shadow-xs">
+                <Card key={qKey} className="rounded-2xl sm:rounded-3xl border-gray-200 shadow-xs">
                   <CardHeader className="pb-2">
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                         Otázka {idx + 1}
                       </span>
                       {isCorrect !== undefined && (
                         <span
-                          className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                          className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full shrink-0 ${
                             isCorrect ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                           }`}
                         >
@@ -174,22 +175,30 @@ export default function TestReview() {
                         </span>
                       )}
                     </div>
-                    <CardTitle className="text-base font-bold text-gray-900 mt-1">{qText}</CardTitle>
+                    <CardTitle className="text-base font-bold text-gray-900 mt-1 min-w-0 max-w-full break-words overflow-x-auto">
+                      <MathRenderer content={qText} />
+                    </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2 text-sm">
-                    <p className="text-gray-700">
+                    <div className="text-gray-700 break-words overflow-x-auto">
                       <span className="font-bold">Tvoje odpověď:</span>{' '}
-                      {userAns ? String(userAns) : <span className="italic text-gray-400">Nezodpovězeno</span>}
-                    </p>
+                      {userAns ? (
+                        <MathRenderer content={String(userAns)} inline />
+                      ) : (
+                        <span className="italic text-gray-400">Nezodpovězeno</span>
+                      )}
+                    </div>
                     {correctAns !== undefined && (
-                      <p className="text-emerald-800">
-                        <span className="font-bold">Správná odpověď:</span> {String(correctAns)}
-                      </p>
+                      <div className="text-emerald-800 break-words overflow-x-auto">
+                        <span className="font-bold">Správná odpověď:</span>{' '}
+                        <MathRenderer content={String(correctAns)} inline />
+                      </div>
                     )}
                     {q?.explanation && (
-                      <p className="text-xs text-gray-600 bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2">
-                        <span className="font-bold">Vysvětlení:</span> {q.explanation}
-                      </p>
+                      <div className="text-xs sm:text-sm text-gray-600 bg-gray-50 p-3 rounded-xl border border-gray-100 mt-2 break-words overflow-x-auto">
+                        <span className="font-bold block mb-1">Vysvětlení:</span>
+                        <MathRenderer content={String(q.explanation)} />
+                      </div>
                     )}
                   </CardContent>
                 </Card>

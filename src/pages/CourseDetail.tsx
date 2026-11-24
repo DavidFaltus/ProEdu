@@ -100,7 +100,7 @@ export default function CourseDetail() {
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-20">
       {/* Top Breadcrumb */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Link 
           to="/courses" 
           className="inline-flex items-center gap-2 text-sm font-bold text-gray-500 hover:text-[#1E1B18] transition-colors bg-white px-4 py-2 rounded-xl shadow-xs border border-gray-100"
@@ -194,11 +194,11 @@ export default function CourseDetail() {
         <div className="lg:col-span-2 space-y-8">
           {/* Syllabus Section */}
           <div className="bg-white rounded-3xl p-6 sm:p-8 border border-gray-100 shadow-sm space-y-6">
-            <div className="flex items-center justify-between border-b border-gray-100 pb-4">
+            <div className="flex items-start sm:items-center justify-between gap-3 border-b border-gray-100 pb-4">
               <div>
                 <h3 className="text-xl sm:text-2xl font-display font-black text-gray-900 flex items-center gap-2.5">
-                  <MaterialYellowIcon size={25} />
-                  Přehled látky a osnova kurzu
+                  <MaterialYellowIcon size={25} className="shrink-0" />
+                  <span>Přehled látky a osnova kurzu</span>
                 </h3>
                 <p className="text-gray-500 text-xs sm:text-sm font-medium mt-0.5">
                   Kompletní tematický plán přípravy na přijímací zkoušky.
@@ -206,7 +206,7 @@ export default function CourseDetail() {
               </div>
 
               {course.syllabus && (
-                <span className="px-3 py-1 bg-indigo-50 text-indigo-800 text-xs font-black rounded-xl">
+                <span className="px-3 py-1 bg-indigo-50 text-indigo-800 text-xs font-black rounded-xl shrink-0 whitespace-nowrap">
                   {course.syllabus.length} témat
                 </span>
               )}
@@ -280,10 +280,10 @@ export default function CourseDetail() {
         </div>
 
         {/* Right Column: Enrollment & Meet Link */}
-        <div className="space-y-6">
+        <div className="space-y-6 lg:sticky lg:top-24 lg:self-start">
           {hasAccess ? (
             /* Zapsaný student / Lektor */
-            <div className="bg-white rounded-3xl p-6 sm:p-7 border border-emerald-100 shadow-lg shadow-emerald-500/5 space-y-6">
+            <div className="bg-white rounded-3xl p-5 sm:p-7 border border-emerald-100 shadow-lg shadow-emerald-500/5 space-y-6">
               <div className="flex items-center gap-2.5 text-emerald-700 font-bold text-sm bg-emerald-50 p-3 rounded-2xl border border-emerald-200/60">
                 <ShieldCheck size={20} className="shrink-0" />
                 <span>Máš aktivní přístup k tomuto kurzu!</span>
@@ -306,10 +306,10 @@ export default function CourseDetail() {
                       rel="noopener noreferrer"
                       className="block"
                     >
-                      <Button className="w-full h-13 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md cursor-pointer">
-                        <Video size={18} />
+                      <Button className="w-full min-h-12 h-auto py-3 px-4 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm flex items-center justify-center gap-2 shadow-md cursor-pointer whitespace-normal text-center">
+                        <Video size={18} className="shrink-0" />
                         <span>Vstoupit do Google Meet lekce</span>
-                        <ExternalLink size={14} className="opacity-70 ml-1" />
+                        <ExternalLink size={14} className="opacity-70 ml-1 shrink-0" />
                       </Button>
                     </a>
                   ) : (
@@ -321,19 +321,19 @@ export default function CourseDetail() {
               </div>
 
               <div className="pt-4 border-t border-gray-100 space-y-2 text-xs text-gray-600">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-gray-400">Pravidelný čas:</span>
-                  <span className="font-bold text-gray-900">{course.schedule || 'Dle rozvrhu'}</span>
+                  <span className="font-bold text-gray-900 text-right">{course.schedule || 'Dle rozvrhu'}</span>
                 </div>
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <span className="text-gray-400">Lektor:</span>
-                  <span className="font-bold text-gray-900">{course.instructorName || 'Lektor'}</span>
+                  <span className="font-bold text-gray-900 text-right">{course.instructorName || 'Lektor'}</span>
                 </div>
               </div>
             </div>
           ) : (
             /* Ne-kurzový uživatel: Cenová karta a pokyn k individuálnímu zápisu lektorem */
-            <div className="bg-white rounded-3xl p-6 sm:p-7 border border-indigo-100 shadow-xl shadow-indigo-500/5 space-y-6">
+            <div className="bg-white rounded-3xl p-5 sm:p-7 border border-indigo-100 shadow-xl shadow-indigo-500/5 space-y-6">
               <div className="space-y-1">
                 <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-md inline-block">
                   Cena kurzu
@@ -348,9 +348,9 @@ export default function CourseDetail() {
 
               <Link to="/contact" className="block">
                 <Button
-                  className="w-full h-14 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-base shadow-lg shadow-yellow-500/25 transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full min-h-12 h-auto py-3 px-4 rounded-2xl bg-[#F5C400] hover:bg-[#F5C400]/90 text-[#1E1B18] font-black text-sm sm:text-base shadow-lg shadow-yellow-500/25 transition-transform hover:scale-[1.02] flex items-center justify-center gap-2 cursor-pointer whitespace-normal text-center"
                 >
-                  <CapIcon size={22} />
+                  <CapIcon size={22} className="shrink-0" />
                   <span>Domluvit si zápis do kurzu</span>
                 </Button>
               </Link>

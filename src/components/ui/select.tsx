@@ -5,8 +5,8 @@ import { ChevronDownIcon, CheckIcon } from "lucide-react"
 import { cn } from "../../lib/utils"
 
 // @ts-expect-error Generic type 'Props' requires between 1 and 2 type arguments depending on version
-function Select({ ...props }: SelectPrimitive.Root.Props) {
-  return <SelectPrimitive.Root data-slot="select" {...props} />
+function Select({ modal = false, ...props }: SelectPrimitive.Root.Props) {
+  return <SelectPrimitive.Root data-slot="select" modal={modal} {...props} />
 }
 
 function SelectTrigger({
@@ -42,7 +42,11 @@ function SelectContent({
 }: SelectPrimitive.Popup.Props) {
   return (
     <SelectPrimitive.Portal>
-      <SelectPrimitive.Positioner className="isolate z-50 outline-none">
+      <SelectPrimitive.Positioner
+        alignItemWithTrigger={false}
+        sideOffset={6}
+        className="isolate z-50 outline-none"
+      >
         <SelectPrimitive.Popup
           data-slot="select-content"
           className={cn(

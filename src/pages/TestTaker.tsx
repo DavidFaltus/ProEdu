@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input';
 import { toast } from 'sonner';
 import { CheckCircle2, ArrowLeft, Clock, Send } from 'lucide-react';
+import { MathRenderer } from '../components/common/MathRenderer';
 
 interface AssignedTestQuestion {
   id?: string;
@@ -84,7 +85,7 @@ export default function TestTaker() {
 
   if (!user) {
     return (
-      <div className="page-container max-w-xl mx-auto py-16 text-center space-y-4">
+      <div className="max-w-xl mx-auto py-12 sm:py-16 text-center space-y-4">
         <h1 className="text-2xl font-bold text-gray-800">Přihlas se pro zobrazení testu</h1>
         <p className="text-sm text-gray-500">Testy jsou dostupné pouze přihlášeným studentům.</p>
         <button
@@ -129,16 +130,20 @@ export default function TestTaker() {
 
   const questions = Array.isArray(testDoc?.questions) ? testDoc!.questions! : [];
   const isCompleted = testDoc?.status === 'submitted' || testDoc?.status === 'graded';
+  const answeredCount = questions.reduce((count, q, idx) => {
+    const qKey = q.id || String(idx);
+    return count + ((answers[qKey] ?? '').trim().length > 0 ? 1 : 0);
+  }, 0);
 
   return (
-    <div className="page-container max-w-3xl mx-auto space-y-6 pb-16">
-      <div className="flex items-center justify-between gap-4">
-        <Link to="/practice" className="inline-flex items-center gap-1.5 text-sm font-bold text-gray-600 hover:text-black">
+    <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6 pb-10">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link to="/practice" className="inline-flex items-center gap-1.5 text-sm font-bold text-gray-600 hover:text-black shrink-0">
           <ArrowLeft size={16} />
           Zpět na procvičování
         </Link>
         {isCompleted && (
-          <Link to={`/review/${encodeURIComponent(resolvedTestId)}`}>
+          <Link to={`/review/${encodeURIComponent(resolvedTestId)}`} className="shrink-0">
             <Button variant="outline" className="rounded-xl font-bold text-xs cursor-pointer">
               Zobrazit vyhodnocení
             </Button>
@@ -178,25 +183,32 @@ export default function TestTaker() {
           </CardContent>
         </Card>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <Card className="rounded-3xl border-gray-200 shadow-xs">
+        <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
+          <Card className="rounded-2xl sm:rounded-3xl border-gray-200 shadow-xs">
             <CardHeader>
-              <div className="flex items-center justify-between gap-2">
-                <CardTitle className="text-2xl font-bold text-gray-900">
+              <div className="flex flex-wrap items-center justify-between gap-2.5">
+                <CardTitle className="text-xl sm:text-2xl font-bold text-gray-900 min-w-0 break-words">
                   {testDoc.title || testDoc.testTitle || 'Přiřazený test'}
                 </CardTitle>
-                <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full">
-                  <Clock size={13} /> {questions.length} otázek
-                </span>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-800 bg-blue-50 px-3 py-1 rounded-full shrink-0">
+                    Zodpovězeno {answeredCount} / {questions.length}
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full shrink-0">
+                    <Clock size={13} /> {questions.length} otázek
+                  </span>
+                </div>
               </div>
               {testDoc.description && (
-                <p className="text-sm text-gray-500 mt-1">{testDoc.description}</p>
+                <div className="text-sm text-gray-500 mt-1 break-words">
+                  <MathRenderer content={testDoc.description} />
+                </div>
               )}
             </CardHeader>
           </Card>
 
           {questions.length === 0 ? (
-            <Card className="rounded-3xl border-gray-200">
+            <Card className="rounded-2xl sm:rounded-3xl border-gray-200">
               <CardContent className="py-8 text-center text-sm text-gray-500">
                 Tento test zatím neobsahuje žádné otázky.
               </CardContent>
@@ -209,13 +221,13 @@ export default function TestTaker() {
               const currentVal = answers[qKey] ?? '';
 
               return (
-                <Card key={qKey} className="rounded-3xl border-gray-200 shadow-xs">
+                <Card key={qKey} className="rounded-2xl sm:rounded-3xl border-gray-200 shadow-xs">
                   <CardHeader className="pb-3">
                     <span className="text-xs font-black uppercase tracking-wider text-gray-400">
                       Otázka {idx + 1} z {questions.length}
                     </span>
-                    <CardTitle className="text-base font-bold text-gray-900 leading-snug mt-1">
-                      {qText}
+                    <CardTitle className="text-base sm:text-lg font-bold text-gray-900 leading-snug mt-1 min-w-0 max-w-full overflow-x-auto break-words">
+                      <MathRenderer content={qText} />
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
@@ -228,13 +240,13 @@ export default function TestTaker() {
                               key={optIdx}
                               type="button"
                               onClick={() => setAnswers((prev) => ({ ...prev, [qKey]: opt }))}
-                              className={`w-full text-left px-4 py-3 rounded-2xl border text-sm font-medium transition-all cursor-pointer ${
+                              className={`w-full text-left px-3.5 sm:px-4 py-3 rounded-xl sm:rounded-2xl border text-sm font-medium transition-all cursor-pointer min-w-0 max-w-full overflow-x-auto ${
                                 selected
                                   ? 'border-black bg-gray-900 text-white font-bold'
                                   : 'border-gray-200 bg-white hover:border-gray-400 text-gray-800'
                               }`}
                             >
-                              {opt}
+                              <MathRenderer content={opt} inline />
                             </button>
                           );
                         })}
@@ -244,7 +256,7 @@ export default function TestTaker() {
                         value={currentVal}
                         onChange={(e) => setAnswers((prev) => ({ ...prev, [qKey]: e.target.value }))}
                         placeholder="Zadej svou odpověď..."
-                        className="rounded-xl"
+                        className="h-12 text-base rounded-xl"
                       />
                     )}
                   </CardContent>
@@ -254,11 +266,14 @@ export default function TestTaker() {
           )}
 
           {questions.length > 0 && (
-            <div className="flex justify-end">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <span className="text-xs font-bold text-gray-500 text-center sm:text-left">
+                Zodpovězeno {answeredCount} z {questions.length} otázek
+              </span>
               <Button
                 type="submit"
                 disabled={submitting}
-                className="rounded-2xl bg-[#1E1B18] text-white font-bold text-sm h-12 px-8 flex items-center gap-2 cursor-pointer"
+                className="w-full sm:w-auto justify-center rounded-2xl bg-[#1E1B18] text-white font-bold text-sm h-12 px-8 flex items-center gap-2 cursor-pointer"
               >
                 <Send size={16} />
                 {submitting ? 'Odevzdávám...' : 'Odevzdat test'}

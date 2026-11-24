@@ -42,7 +42,7 @@ export default function MandatorySetPromoModal({
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open && canContinue) onFinish(); }}>
       <DialogContent 
         showCloseButton={false}
-        className="max-w-md p-0 overflow-hidden bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl text-center relative"
+        className="w-full max-w-md sm:max-w-md max-h-[90dvh] flex flex-col overflow-hidden p-0 bg-white text-[#1E1B18] border border-gray-100 shadow-2xl rounded-3xl text-center relative"
       >
         <DialogTitle className="sr-only">Dokončená sada procvičování</DialogTitle>
         <DialogDescription className="sr-only">Vyhodnocení sady a nabídka ProEdu Premium</DialogDescription>
@@ -51,7 +51,7 @@ export default function MandatorySetPromoModal({
         <div className="absolute top-0 left-0 w-36 h-36 bg-blue-200/40 rounded-full blur-3xl pointer-events-none -ml-12 -mt-12" />
 
         {/* Header */}
-        <div className="pt-8 px-6 pb-4 relative z-10 space-y-3">
+        <div className="pt-6 sm:pt-8 px-6 pb-4 relative z-10 space-y-3 shrink-0">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#F5C400] to-amber-300 text-[#1E1B18] shadow-lg shadow-amber-300/30 mx-auto">
             <Crown size={32} className="animate-bounce" />
           </div>
@@ -71,7 +71,7 @@ export default function MandatorySetPromoModal({
         </div>
 
         {/* Benefits list */}
-        <div className="px-6 py-2.5 space-y-2 text-left text-xs font-bold text-gray-700">
+        <div className="px-6 py-2.5 space-y-2 text-left text-xs font-bold text-gray-700 overflow-y-auto flex-1 min-h-0 relative z-10">
           {PREMIUM_BENEFITS.map((benefit) => (
             <div
               key={benefit.id}
@@ -96,7 +96,7 @@ export default function MandatorySetPromoModal({
         </div>
 
         {/* Actions & Countdown */}
-        <div className="p-6 pt-4 space-y-3 relative z-10 border-t border-gray-100 mt-2">
+        <div className="p-5 sm:p-6 pt-4 space-y-3 relative z-10 border-t border-gray-100 shrink-0 bg-white">
           {/* Tlačítko pro aktivaci Premium */}
           <button
             type="button"

@@ -28,11 +28,11 @@ function DialogContent({
         data-slot="dialog-overlay"
         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
       />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 overflow-y-auto pointer-events-none">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto pointer-events-none">
         <DialogPrimitive.Popup
           data-slot="dialog-content"
           className={cn(
-            "bg-background relative w-full max-w-[calc(100%-2rem)] rounded-2xl border p-6 shadow-2xl pointer-events-auto my-auto sm:max-w-lg",
+            "bg-background relative w-full max-h-[92dvh] overflow-y-auto rounded-2xl border p-6 shadow-2xl pointer-events-auto my-auto sm:max-w-lg",
             className
           )}
           {...props}

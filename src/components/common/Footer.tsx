@@ -6,7 +6,7 @@ import { PaymentLogosBar } from './PaymentLogos';
 export default function Footer() {
   return (
     <footer className="mt-10 border-t border-gray-200/80 bg-white/70 backdrop-blur-md text-gray-600 text-xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-6 space-y-4">
+      <div className="max-w-[1600px] mx-auto px-3.5 sm:px-5 md:px-8 lg:px-10 py-5 sm:py-6 space-y-4">
         {/* Main Grid: Operator, Links & Payment info */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 lg:gap-8 items-start">
           
@@ -44,24 +44,24 @@ export default function Footer() {
             <h4 className="font-bold text-gray-800 uppercase tracking-wider text-[11px]">
               Informace & Podmínky
             </h4>
-            <ul className="space-y-1 text-xs">
+            <ul className="space-y-0.5 text-xs">
               <li>
-                <Link to="/terms" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
+                <Link to="/terms" className="py-1.5 inline-flex items-center gap-1 hover:text-black hover:underline transition-colors">
                   <span>Obchodní podmínky</span>
                 </Link>
               </li>
               <li>
-                <Link to="/doprava-a-platba" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
+                <Link to="/doprava-a-platba" className="py-1.5 inline-flex items-center gap-1 hover:text-black hover:underline transition-colors">
                   <span>Doprava a platba</span>
                 </Link>
               </li>
               <li>
-                <Link to="/privacy" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
+                <Link to="/privacy" className="py-1.5 inline-flex items-center gap-1 hover:text-black hover:underline transition-colors">
                   <span>Zásady osobních údajů</span>
                 </Link>
               </li>
               <li>
-                <Link to="/contact" className="hover:text-black hover:underline transition-colors flex items-center gap-1">
+                <Link to="/contact" className="py-1.5 inline-flex items-center gap-1 hover:text-black hover:underline transition-colors">
                   <span>Kontakt</span>
                 </Link>
               </li>
@@ -70,7 +70,7 @@ export default function Footer() {
             <div className="pt-0.5 text-xs text-gray-500">
               <div className="flex items-center gap-1.5">
                 <Mail size={13} className="text-gray-400" />
-                <a href="mailto:info@pro-edu.eu" className="hover:underline font-medium text-gray-700">info@pro-edu.eu</a>
+                <a href="mailto:info@pro-edu.eu" className="py-1.5 inline-flex items-center hover:underline font-medium text-gray-700">info@pro-edu.eu</a>
               </div>
             </div>
           </div>

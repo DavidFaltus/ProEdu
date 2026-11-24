@@ -81,7 +81,11 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
         ...KATEX_SAFE_OPTIONS,
       });
       const idx = mathPlaceholders.length;
-      mathPlaceholders.push(sanitizeMathHtml(rendered));
+      const sanitized = sanitizeMathHtml(rendered);
+      const wrapped = isDisplay
+        ? `<div class="max-w-full overflow-x-auto my-2">${sanitized}</div>`
+        : `<span class="inline-block max-w-full overflow-x-auto align-middle">${sanitized}</span>`;
+      mathPlaceholders.push(wrapped);
       return `__PROEDU_KATEX_PLACEHOLDER_${idx}__`;
     } catch {
       return match;
@@ -153,6 +157,17 @@ function renderSanitizedHtmlWithMath(rawHtml: string, imageMap?: Record<string, 
         }
 
         sanitizeNode(el);
+
+        if ((tag === 'table' || tag === 'pre') && el.parentNode) {
+          const parentEl = el.parentElement;
+          const alreadyWrapped = parentEl?.classList.contains('math-scroll-wrapper');
+          if (!alreadyWrapped) {
+            const wrapper = doc.createElement('div');
+            wrapper.setAttribute('class', 'math-scroll-wrapper overflow-x-auto max-w-full my-2');
+            el.parentNode.insertBefore(wrapper, el);
+            wrapper.appendChild(el);
+          }
+        }
       } else if (child.nodeType === Node.COMMENT_NODE) {
         child.remove();
       }
@@ -239,7 +254,7 @@ export function renderInlineMathSegments(text: string): React.ReactNode {
         return (
           <span 
             key={idx} 
-            className="inline-block align-middle my-1" 
+            className="inline-block max-w-full overflow-x-auto align-middle my-1" 
             dangerouslySetInnerHTML={{ __html: html }} 
           />
         );
@@ -260,7 +275,7 @@ export function renderInlineMathSegments(text: string): React.ReactNode {
         return (
           <span 
             key={idx} 
-            className="inline-block align-middle mx-0.5" 
+            className="inline-block max-w-full overflow-x-auto align-middle mx-0.5" 
             dangerouslySetInnerHTML={{ __html: html }} 
           />
         );
@@ -352,6 +367,16 @@ export const MathRenderer: React.FC<MathRendererProps> = ({
             if (!safeSrc) return null;
             return <img src={safeSrc} alt={alt || ''} loading="lazy" className="max-w-full h-auto rounded-lg" />;
           },
+          table: ({ children }) => (
+            <div className="overflow-x-auto max-w-full my-3">
+              <table className="min-w-full border-collapse">{children}</table>
+            </div>
+          ),
+          pre: ({ children }) => (
+            <div className="overflow-x-auto max-w-full my-3">
+              <pre>{children}</pre>
+            </div>
+          ),
         }}
       >
         {normalized}

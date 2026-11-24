@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTimer } from '../context/TimerContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { Play, Pause, Coffee, Sprout, AlertCircle, Maximize2 } from 'lucide-react';
@@ -23,6 +23,25 @@ export default function FloatingTimer() {
   } = useTimer();
 
   const [isHovered, setIsHovered] = useState(false);
+  const [isPinned, setIsPinned] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isExpanded = isHovered || isPinned;
+
+  useEffect(() => {
+    if (!isPinned) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsPinned(false);
+        setIsHovered(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [isPinned]);
 
   // Determine if we should show the widget
   // Show if it is active, or if it has started but paused, or if it is in break/overtime
@@ -72,12 +91,13 @@ export default function FloatingTimer() {
 
   return (
     <div 
-      className="fixed bottom-18 sm:bottom-6 right-3.5 sm:right-6 z-40 sm:z-50 flex flex-col items-end"
+      ref={containerRef}
+      className="fixed bottom-[calc(env(safe-area-inset-bottom,0px)+4.75rem)] md:bottom-6 right-3.5 md:right-6 z-40 md:z-50 flex flex-col items-end"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       <AnimatePresence>
-        {isHovered && (
+        {isExpanded && (
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -136,9 +156,19 @@ export default function FloatingTimer() {
 
       {/* Circle Floating Button */}
       <motion.button
+        type="button"
         layout
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
+        onClick={() => {
+          setIsPinned((prev) => {
+            const next = !prev;
+            if (!next) setIsHovered(false);
+            return next;
+          });
+        }}
+        aria-label={isExpanded ? 'Skrýt časovač' : 'Zobrazit časovač'}
+        aria-expanded={isExpanded}
         className={cn(
           "w-16 h-16 rounded-full flex items-center justify-center relative cursor-pointer shadow-lg select-none border-4 border-white transition-colors duration-500",
           themeBg,

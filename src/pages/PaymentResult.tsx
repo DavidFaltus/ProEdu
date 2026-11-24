@@ -148,12 +148,12 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
         : 'bg-[#f5c400]';
 
   return (
-    <div className="py-6 sm:py-10 flex items-center justify-center">
+    <div className="min-h-[60vh] py-6 sm:py-10 flex items-center justify-center">
       <div className="w-full max-w-xl bg-white rounded-[2.5rem] border border-[#efe6d8] shadow-xl overflow-hidden">
         {/* Horní barevný pruh podle stavu */}
         <div className={`h-2.5 w-full ${accentBarColor}`} />
 
-        <div className="p-6 sm:p-10 space-y-6 text-center">
+        <div className="p-5 sm:p-10 space-y-6 text-center">
           {/* STAV 0: OVĚŘOVÁNÍ */}
           {(authLoading || resolvedState === 'verifying') && (
             <div className="py-10 space-y-4">
@@ -161,7 +161,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                 <RefreshCw size={28} className="text-amber-600 animate-spin" />
               </div>
               <div className="space-y-1.5">
-                <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
+                <h1 className="text-2xl sm:text-4xl font-playful text-gray-700 tracking-tight">
                   Ověřujeme stav platby
                 </h1>
                 <p className="text-sm text-gray-500 font-medium">
@@ -179,7 +179,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
               </div>
 
               <div className="space-y-2">
-                <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
+                <h1 className="text-2xl sm:text-4xl font-playful text-gray-700 tracking-tight">
                   Platba proběhla úspěšně!
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600 font-medium leading-relaxed">
@@ -205,7 +205,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                 <p className="text-[11px] text-gray-600 pt-2 border-t border-[#c9e8de]">
                   Potvrzení o platbě a fakturu (PDF) jsme odeslali na tvůj e-mail.
                   {orderId && (
-                    <span className="block mt-0.5 font-mono text-[11px] text-gray-500">
+                    <span className="block mt-0.5 font-mono text-[11px] text-gray-500 break-all">
                       Číslo objednávky: {orderId}
                     </span>
                   )}
@@ -213,13 +213,13 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
               </div>
 
               <div className="flex flex-col sm:flex-row gap-3 pt-1">
-                <Link to="/practice" className="flex-1">
+                <Link to="/practice" className="w-full sm:flex-1">
                   <Button className="w-full h-12 rounded-2xl bg-[#0fa384] hover:bg-[#0c8a70] text-white font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2">
                     <span>Pustit se do procvičování</span>
                     <ArrowRight size={17} />
                   </Button>
                 </Link>
-                <Link to="/settings?tab=subscription">
+                <Link to="/settings?tab=subscription" className="w-full sm:w-auto">
                   <Button
                     variant="outline"
                     className="w-full sm:w-auto h-12 px-5 rounded-2xl border-gray-200 text-gray-700 font-bold text-sm cursor-pointer"
@@ -239,7 +239,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
               </div>
 
               <div className="space-y-2">
-                <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
+                <h1 className="text-2xl sm:text-4xl font-playful text-gray-700 tracking-tight">
                   Platba byla zrušena
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600 font-medium leading-relaxed">
@@ -249,10 +249,10 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
 
               <div className="p-4 rounded-2xl bg-[#f8e9f0] border border-[#efcddd] text-left text-xs sm:text-sm text-[#6b2f4a] font-semibold flex items-start gap-2.5">
                 <ShieldCheck size={18} className="text-[#c47294] shrink-0 mt-0.5" />
-                <div>
+                <div className="min-w-0">
                   <p>Z tvé platební karty nebyla stržena žádná částka.</p>
                   {orderId && (
-                    <p className="mt-1 font-mono text-[11px] opacity-80">Objednávka: {orderId}</p>
+                    <p className="mt-1 font-mono text-[11px] opacity-80 break-all">Objednávka: {orderId}</p>
                   )}
                 </div>
               </div>
@@ -267,12 +267,12 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                       setIsPaywallOpen(true);
                     }
                   }}
-                  className="flex-1 h-12 rounded-2xl bg-[#c47294] hover:bg-[#b05d80] text-white font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
+                  className="w-full sm:flex-1 h-12 rounded-2xl bg-[#c47294] hover:bg-[#b05d80] text-white font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
                 >
                   <CreditCard size={17} />
                   <span>Zkusit zaplatit znovu</span>
                 </Button>
-                <Link to="/">
+                <Link to="/" className="w-full sm:w-auto">
                   <Button
                     variant="outline"
                     className="w-full sm:w-auto h-12 px-5 rounded-2xl border-gray-200 text-gray-700 font-bold text-sm cursor-pointer flex items-center justify-center gap-2"
@@ -293,7 +293,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
               </div>
 
               <div className="space-y-2">
-                <h1 className="text-3xl sm:text-4xl font-playful text-gray-700 tracking-tight">
+                <h1 className="text-2xl sm:text-4xl font-playful text-gray-700 tracking-tight">
                   Platba čeká na vyřízení
                 </h1>
                 <p className="text-sm sm:text-base text-gray-600 font-medium leading-relaxed">
@@ -309,7 +309,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                   Pokud platba proběhla, dorazí ti za chvilku potvrzovací e-mail s fakturou a ProEdu Premium se ihned odemkne. Pokud platba v bance neprošla, můžeš stav zkontrolovat tlačítkem níže nebo objednávku vyřešit ve správě předplatného.
                 </p>
                 {orderId && (
-                  <p className="pt-1 font-mono text-[11px] text-[#7a5a00]">
+                  <p className="pt-1 font-mono text-[11px] text-[#7a5a00] break-all">
                     Číslo objednávky: {orderId}
                   </p>
                 )}
@@ -320,7 +320,7 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                   <Button
                     type="button"
                     onClick={openAuthModal}
-                    className="flex-1 h-12 rounded-2xl bg-[#f5c400] hover:bg-[#e0b400] text-[#26354d] font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full sm:flex-1 h-12 rounded-2xl bg-[#f5c400] hover:bg-[#e0b400] text-[#26354d] font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
                   >
                     <LogIn size={17} />
                     <span>Přihlásit se a ověřit platbu</span>
@@ -330,20 +330,20 @@ export default function PaymentResult({ routeStatus }: PaymentResultProps) {
                     type="button"
                     disabled={isManualChecking}
                     onClick={() => runVerification(true)}
-                    className="flex-1 h-12 rounded-2xl bg-[#f5c400] hover:bg-[#e0b400] text-[#26354d] font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
+                    className="w-full sm:flex-1 h-12 rounded-2xl bg-[#f5c400] hover:bg-[#e0b400] text-[#26354d] font-black text-sm shadow-md cursor-pointer flex items-center justify-center gap-2"
                   >
                     <RefreshCw size={16} className={isManualChecking ? 'animate-spin' : undefined} />
                     <span>{isManualChecking ? 'Kontroluji…' : 'Zkontrolovat stav platby'}</span>
                   </Button>
                 ) : (
-                  <Link to="/settings?tab=subscription" className="flex-1">
+                  <Link to="/settings?tab=subscription" className="w-full sm:flex-1">
                     <Button className="w-full h-12 rounded-2xl bg-[#f5c400] hover:bg-[#e0b400] text-[#26354d] font-black text-sm shadow-md cursor-pointer">
                       Přejít do správy předplatného
                     </Button>
                   </Link>
                 )}
 
-                <Link to="/">
+                <Link to="/" className="w-full sm:w-auto">
                   <Button
                     variant="outline"
                     className="w-full sm:w-auto h-12 px-5 rounded-2xl border-gray-200 text-gray-700 font-bold text-sm cursor-pointer flex items-center justify-center gap-2"
