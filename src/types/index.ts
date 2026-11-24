@@ -150,6 +150,7 @@ export interface PracticeTopic {
   subjectId: string;
   title: string;
   description?: string;
+  shortDescription?: string;
   order?: number;
   isHidden?: boolean;
   subtopicCount?: number;

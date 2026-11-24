@@ -2144,7 +2144,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
         <div className="flex flex-wrap gap-2">
           <Button
             onClick={() => {
-              setEditingTopic({ title: '', description: '', subjectId: activeSubject, isHidden: true });
+              setEditingTopic({ title: '', description: '', shortDescription: '', subjectId: activeSubject, isHidden: true });
               setIsTopicModalOpen(true);
             }}
             className="rounded-xl bg-[#1E1B18] hover:bg-[#332f2b] text-white font-bold h-10 px-4 flex items-center gap-2 cursor-pointer shadow-sm text-xs"
@@ -2255,7 +2255,7 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
           <div className="flex justify-center gap-3 pt-2">
             <Button
               onClick={() => {
-                setEditingTopic({ title: '', description: '', subjectId: activeSubject, isHidden: true });
+                setEditingTopic({ title: '', description: '', shortDescription: '', subjectId: activeSubject, isHidden: true });
                 setIsTopicModalOpen(true);
               }}
               className="rounded-xl bg-[#1E1B18] text-white font-bold h-10 px-5 text-xs"
@@ -3138,6 +3138,19 @@ export default function PracticeManager({ userId }: PracticeManagerProps) {
                 onChange={e => setEditingTopic(prev => ({ ...prev, description: e.target.value }))}
                 placeholder="Stručný přehled okruhů v tomto tématu..."
                 className="w-full rounded-xl border border-gray-200 p-3 text-sm focus:border-black outline-none font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-700 block mb-1">
+                Krátký popis <span className="font-medium text-gray-400">(volitelné – zobrazí se na mobilech)</span>
+              </label>
+              <Input
+                value={editingTopic?.shortDescription || ''}
+                onChange={e => setEditingTopic(prev => ({ ...prev, shortDescription: e.target.value }))}
+                maxLength={300}
+                placeholder="Kratší verze popisu pro menší obrazovky..."
+                className="rounded-xl h-11 font-medium"
               />
             </div>
 

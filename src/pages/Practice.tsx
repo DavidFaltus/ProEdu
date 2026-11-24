@@ -304,8 +304,21 @@ export default function Practice() {
                       } transition-colors duration-300`}>
                         {topic.title}
                       </h3>
-                      {topic.description && (
-                        <p className="text-gray-500 text-sm font-medium mt-0.5">{topic.description}</p>
+                      {(topic.shortDescription || topic.description) && (
+                        topic.shortDescription && topic.description ? (
+                          <>
+                            <p className="md:hidden text-gray-500 text-sm font-medium mt-0.5">
+                              {topic.shortDescription}
+                            </p>
+                            <p className="hidden md:block text-gray-500 text-sm font-medium mt-0.5">
+                              {topic.description}
+                            </p>
+                          </>
+                        ) : (
+                          <p className="text-gray-500 text-sm font-medium mt-0.5">
+                            {topic.shortDescription || topic.description}
+                          </p>
+                        )
                       )}
                     </div>
 

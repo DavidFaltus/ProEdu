@@ -215,7 +215,7 @@ service cloud.firestore {
 
     function isValidTopic(data) {
       return data.keys().hasOnly([
-          'id', 'name', 'title', 'subjectId', 'description',
+          'id', 'name', 'title', 'subjectId', 'description', 'shortDescription',
           'icon', 'color', 'order', 'isHidden',
           'createdAt', 'createdBy', 'updatedAt'
         ]) &&
@@ -225,6 +225,7 @@ service cloud.firestore {
         isOptionalString(data, 'title', 200) &&
         isNonEmptyString(data.get('subjectId', ''), 128) &&
         isOptionalString(data, 'description', 2000) &&
+        isOptionalString(data, 'shortDescription', 300) &&
         isOptionalString(data, 'icon', 64) &&
         isOptionalString(data, 'color', 32) &&
         isOptionalNumber(data, 'order', -1000, 10000) &&

@@ -510,6 +510,7 @@ export async function getTopics(subjectId?: string): Promise<PracticeTopic[]> {
             title: data.title || data.name || 'Bez názvu',
             subjectId: normalizeSubjectName(data.subjectId || data.subject),
             description: data.description || '',
+            shortDescription: data.shortDescription || '',
             order: typeof data.order === 'number' ? data.order : 0,
             isHidden: Boolean(data.isHidden),
             createdAt: data.createdAt,
@@ -556,6 +557,7 @@ export async function getTopicById(topicId: string): Promise<PracticeTopic | nul
       title: data.title || data.name || 'Téma',
       subjectId: normalizeSubjectName(data.subjectId || data.subject),
       description: data.description || '',
+      shortDescription: data.shortDescription || '',
       order: typeof data.order === 'number' ? data.order : 0,
       isHidden: Boolean(data.isHidden),
       createdAt: data.createdAt,
@@ -581,6 +583,7 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
       title: title,
       subjectId: subjectId,
       description: topicData.description?.trim() || '',
+      shortDescription: (topicData.shortDescription || '').trim().slice(0, 300),
       updatedAt: now
     };
     if (typeof topicData.order === 'number') {
@@ -620,6 +623,7 @@ export async function saveTopic(topicData: Partial<PracticeTopic>, userId?: stri
       title: title,
       subjectId: subjectId,
       description: topicData.description?.trim() || '',
+      shortDescription: (topicData.shortDescription || '').trim().slice(0, 300),
       order: assignedOrder,
       isHidden,
       createdAt: now,
