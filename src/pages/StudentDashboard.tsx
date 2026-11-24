@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogFooter } f
 import UnifiedPaywallModal from '../components/common/UnifiedPaywallModal';
 import DailyLimitExhaustedModal from '../components/common/DailyLimitExhaustedModal';
 import PracticeScheduleModal from '../components/PracticeScheduleModal';
+import { PREMIUM_BENEFITS } from '../constants/premiumBenefits';
 import CustomIcon, { 
   StarPinkIcon, 
   BulbYellowIcon, 
@@ -868,16 +869,27 @@ export default function StudentDashboard() {
               Vítej v ProEdu Premium! 🎉
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-600 leading-relaxed">
-              Tvá platba proběhla úspěšně a předplatné bylo aktivováno. Nyní máš neomezený přístup ke všem CERMAT testům, podrobným vysvětlením a chytrému plánování.
+              Tvá platba proběhla úspěšně a předplatné bylo aktivováno. Nyní máš plně odemčené všechny výhody balíčku ProEdu Premium:
             </DialogDescription>
           </div>
 
-          <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-amber-200/80 text-left text-xs space-y-1.5 text-gray-700">
-            <div className="flex items-center gap-2 font-bold text-gray-900">
-              <CheckCircle2 size={15} className="text-emerald-600" />
+          <div className="p-4 rounded-2xl bg-[#FAF7F0] border border-amber-200/80 text-left text-xs space-y-2.5 text-gray-700">
+            <div className="flex items-center gap-2 font-bold text-gray-900 pb-2 border-b border-amber-200/60">
+              <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
               <span>Aktivní balíček: ProEdu Premium (99 Kč / měsíc)</span>
             </div>
-            <p className="text-[11px] text-gray-500 pl-6">
+            <ul className="space-y-1.5">
+              {PREMIUM_BENEFITS.map((benefit) => (
+                <li key={benefit.id} className="flex items-start gap-2 font-semibold text-gray-700">
+                  <CheckCircle2
+                    size={14}
+                    className={`shrink-0 mt-0.5 ${benefit.highlighted ? 'text-amber-700' : 'text-emerald-600'}`}
+                  />
+                  <span>{benefit.label}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[11px] text-gray-500 pt-1 border-t border-amber-200/60">
               Potvrzení o platbě a daňový doklad jsme odeslali na tvůj e-mail. Předplatné můžeš kdykoliv spravovat v Nastavení profilu.
             </p>
           </div>

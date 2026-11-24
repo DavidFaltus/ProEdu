@@ -79,7 +79,7 @@ export default function DailyLimitExhaustedModal({
               </div>
               <div>
                 <strong className="text-[#1E1B18] block font-bold">Nechceš čekat do zítra?</strong>
-                <span>S ProEducator Premium získáš neomezené procvičování bez limitu žolíků, 100% bez reklam a s autorskými postupy.</span>
+                <span>S ProEducator Premium získáš neomezené procvičování bez žolíků a čekání, podrobné statistiky a chytrá doporučení, studijní plánovač v kalendáři, přehledné grafické listy, 100% bez reklam i všechny budoucí funkce v ceně 99 Kč/měsíc.</span>
               </div>
             </div>
           </div>

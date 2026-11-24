@@ -149,7 +149,7 @@ export default function Terms() {
           </div>
           
           <p>
-            <strong>6.1. Charakteristika služby:</strong> Služba ProEdu Premium představuje časově omezený přístup k prémiovému digitálnímu obsahu (neomezené procvičování CERMAT testů, podrobná vysvětlení krok za krokem, studijní karty a analytika).
+            <strong>6.1. Charakteristika služby:</strong> Služba ProEdu Premium představuje časově omezený přístup k prémiovému digitálnímu obsahu (neomezené procvičování bez žolíků a čekání, podrobné statistiky a chytrá doporučení k procvičování, chytrý studijní plánovač v kalendáři, přehledné grafické listy, provoz 100% bez reklam a přerušování a všechny budoucí funkce v ceně tarifu).
           </p>
 
           <p>

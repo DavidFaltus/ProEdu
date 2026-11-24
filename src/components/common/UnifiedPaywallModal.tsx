@@ -36,6 +36,7 @@ import { Order } from '../../types';
 import { Link, useNavigate } from 'react-router-dom';
 import { PaymentLogosBar } from './PaymentLogos';
 import { sanitizeSafeUrl } from '../../utils/svgUtils';
+import { PREMIUM_BENEFITS } from '../../constants/premiumBenefits';
 
 export type PaywallType = 'premium' | 'course';
 
@@ -523,65 +524,29 @@ export default function UnifiedPaywallModal({
                   </h4>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs sm:text-sm">
-                    {/* 1. Neomezené procvičování */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
+                    {PREMIUM_BENEFITS.map((benefit) => (
+                      <div
+                        key={benefit.id}
+                        className={`flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl border shadow-2xs ${
+                          benefit.highlighted
+                            ? 'bg-amber-50/70 border-amber-200/80'
+                            : 'bg-white/80 border-gray-100'
+                        }`}
+                      >
+                        <div
+                          className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                            benefit.highlighted
+                              ? 'bg-amber-200 text-amber-900'
+                              : 'bg-emerald-100 text-emerald-700'
+                          }`}
+                        >
+                          <Check size={13} strokeWidth={3} />
+                        </div>
+                        <div className="leading-snug">
+                          <span>{benefit.label}</span>
+                        </div>
                       </div>
-                      <div className="leading-snug">
-                        <span>Neomezené procvičování bez žolíků a čekání</span>
-                      </div>
-                    </div>
-
-                    {/* 2. Podrobné statistiky */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
-                      </div>
-                      <div className="leading-snug">
-                        <span>Podrobné statistiky a chytrá doporučení k procvičování</span>
-                      </div>
-                    </div>
-
-                    {/* 3. Plánovač v kalendáři */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
-                      </div>
-                      <div className="leading-snug">
-                        <span>Chytrý studijní plánovač v kalendáři</span>
-                      </div>
-                    </div>
-
-                    {/* 4. Grafické listy */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
-                      </div>
-                      <div className="leading-snug">
-                        <span>Přehledné grafické listy</span>
-                      </div>
-                    </div>
-
-                    {/* 5. Bez reklam */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-white/80 border border-gray-100 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
-                      </div>
-                      <div className="leading-snug">
-                        <span>100% bez reklam a přerušování</span>
-                      </div>
-                    </div>
-
-                    {/* 6. Všechny budoucí funkce */}
-                    <div className="flex items-start gap-2.5 font-bold text-[#1E1B18] p-2.5 rounded-xl bg-amber-50/70 border border-amber-200/80 shadow-2xs">
-                      <div className="w-5 h-5 rounded-full bg-amber-200 text-amber-900 flex items-center justify-center shrink-0 mt-0.5">
-                        <Check size={13} strokeWidth={3} />
-                      </div>
-                      <div className="leading-snug">
-                        <span className="text-[#1E1B18]">Všechny budoucí funkce v ceně 99 Kč</span>
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -641,19 +606,25 @@ export default function UnifiedPaywallModal({
                     <p className="text-xs text-gray-500 mt-0.5">Zvýhodněná cena 99 Kč/měsíc zafixovaná napořád</p>
                   </div>
 
-                  <div className="space-y-2 text-xs sm:text-sm text-gray-700">
-                    <div className="flex items-center gap-2.5 font-semibold">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Neomezené procvičování bez žolíků a reklam</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 font-semibold">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Statistiky, doporučení i studijní plánovač</span>
-                    </div>
-                    <div className="flex items-center gap-2.5 font-semibold">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Všechny budoucí funkce i ostré testy v ceně</span>
-                    </div>
+                  <div className="space-y-2 text-xs text-gray-700">
+                    {PREMIUM_BENEFITS.map((benefit) => (
+                      <div
+                        key={benefit.id}
+                        className={`flex items-start gap-2 font-semibold leading-snug ${
+                          benefit.highlighted
+                            ? 'text-[#1E1B18] bg-amber-50/80 border border-amber-200/70 rounded-xl px-2.5 py-1.5 -mx-1'
+                            : ''
+                        }`}
+                      >
+                        <CheckCircle2
+                          size={15}
+                          className={`shrink-0 mt-0.5 ${
+                            benefit.highlighted ? 'text-amber-700' : 'text-emerald-600'
+                          }`}
+                        />
+                        <span>{benefit.label}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
 

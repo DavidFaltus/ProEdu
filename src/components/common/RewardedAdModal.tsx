@@ -210,7 +210,7 @@ export default function RewardedAdModal({
                   ProEdu Premium
                 </h4>
                 <p className="text-xs text-gray-600 mt-1 leading-relaxed font-medium">
-                  Cermat testy bez limitu žolíků, kompletní postupy řešení a živé konzultace s lektorem.
+                  Neomezené procvičování bez žolíků a čekání, podrobné statistiky a doporučení, studijní plánovač v kalendáři, přehledné grafické listy, 100% bez reklam i všechny budoucí funkce v ceně 99 Kč.
                 </p>
               </div>
 

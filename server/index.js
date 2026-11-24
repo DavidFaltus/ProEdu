@@ -2417,14 +2417,20 @@ function buildPremiumActivationUpdate(existingUser, options = {}) {
   const rawExistingEnd = existingUser?.subscriptionPeriodEnd ?? existingUser?.subscriptionExpiresAt;
   const existingEndMs = parseIsoMillis(rawExistingEnd) || 0;
   const nowMs = Number.isFinite(options.nowMs) ? options.nowMs : Date.now();
-  // Plynulé navázání +30 dní na stávající konec období, pokud je uživatel v aktivním předplaceném období
-  // nebo v 3denní ochranné lhůtě (Grace Period) – zachovává zaplacené dny i při mid-cycle prodloužení/aktualizaci karty.
+  const existingStatus = String(existingUser?.subscriptionStatus || '').toLowerCase();
+  const hasCurrentlyActivePremium =
+    existingUser?.role === 'premium' &&
+    existingStatus !== 'inactive' &&
+    existingStatus !== 'expired';
+  // Plynulé navázání +30 dní na stávající konec období pouze tehdy, pokud má uživatel skutečně aktivní
+  // předplatné Premium (nebo běží 3denní ochranná lhůta). U přepnutí z Free / po refundu / po okamžitém zrušení
+  // začíná 30denní období vždy od okamžiku platby (nowMs), aby se nenačítala stará/zbytková data.
   const isWithinActiveOrGracePeriod =
+    hasCurrentlyActivePremium &&
     existingEndMs > 0 &&
-    (existingEndMs > nowMs ||
-      (existingUser?.role === 'premium' && nowMs <= existingEndMs + SUBSCRIPTION_GRACE_MS));
+    (existingEndMs > nowMs || nowMs <= existingEndMs + SUBSCRIPTION_GRACE_MS);
   const baseMs =
-    existingEndMs > nowMs
+    hasCurrentlyActivePremium && existingEndMs > nowMs
       ? Math.max(nowMs, existingEndMs)
       : options.extendFromExisting !== false && isWithinActiveOrGracePeriod
         ? existingEndMs
@@ -2436,6 +2442,7 @@ function buildPremiumActivationUpdate(existingUser, options = {}) {
     premiumSince: existingUser?.premiumSince || new Date(nowMs).toISOString(),
     subscriptionStatus: 'active',
     subscriptionPeriodEnd: periodEnd,
+    subscriptionExpiresAt: FieldValue.delete(),
     subscriptionGraceUntil: FieldValue.delete(),
     subscriptionExpiredAt: FieldValue.delete(),
     lastRecurringPaymentFailed: FieldValue.delete(),
@@ -2939,9 +2946,9 @@ app.post('/api/orders/create', requireAuth, orderCreateLimiter, async (req, res)
         initRecurring: true,
         country: 'CZ',
         lang: 'cs',
-        url_paid: `${appBaseUrl}/?payment=success&orderId=${encodeURIComponent(orderId)}`,
-        url_cancelled: `${appBaseUrl}/?payment=cancelled&orderId=${encodeURIComponent(orderId)}`,
-        url_pending: `${appBaseUrl}/?payment=pending&orderId=${encodeURIComponent(orderId)}`
+        url_paid: `${appBaseUrl}/payment/success?refId=${encodeURIComponent(orderId)}`,
+        url_cancelled: `${appBaseUrl}/payment/cancelled?refId=${encodeURIComponent(orderId)}`,
+        url_pending: `${appBaseUrl}/payment/pending?refId=${encodeURIComponent(orderId)}`
       };
 
       try {
@@ -3738,7 +3745,8 @@ app.post('/api/subscription/cancel', requireAuth, subscriptionCancelLimiter, asy
           subscriptionStatus: 'inactive',
           subscriptionCancelledAt: nowIso,
           subscriptionCancelReason: safeReason,
-          subscriptionPeriodEnd: periodEnd,
+          subscriptionPeriodEnd: FieldValue.delete(),
+          subscriptionExpiresAt: FieldValue.delete(),
           subscriptionGraceUntil: FieldValue.delete(),
           subscriptionExpiredAt: nowIso,
           initRecurringTransId: FieldValue.delete(),
@@ -3790,7 +3798,7 @@ app.post('/api/subscription/cancel', requireAuth, subscriptionCancelLimiter, asy
       success: true,
       immediate: Boolean(immediate),
       subscriptionStatus: updateData.subscriptionStatus,
-      subscriptionPeriodEnd: periodEnd,
+      subscriptionPeriodEnd: immediate ? null : periodEnd,
       message: immediate
         ? `Předplatné bylo okamžitě ukončeno a účet byl přepnut na tarif ${fallbackRole === 'course' ? 'Kurz' : 'Free'}.`
         : `Automatické prodlužování předplatného bylo zrušeno. Výhody Premium ti zůstanou plně aktivní až do konce zaplaceného období (${formattedEndDate}). Další platba z karty již neproběhne.`
@@ -4810,6 +4818,8 @@ app.post('/api/orders/:orderId/refund', requireAuth, requireTeacher, async (req,
           userUpdates.role = revertedRole;
           userUpdates.subscriptionStatus = 'inactive';
           userUpdates.subscriptionExpiredAt = nowIso;
+          userUpdates.subscriptionPeriodEnd = FieldValue.delete();
+          userUpdates.subscriptionExpiresAt = FieldValue.delete();
           userUpdates.subscriptionGraceUntil = FieldValue.delete();
         }
         await uRef.set(userUpdates, { merge: true });
@@ -5031,6 +5041,8 @@ app.post('/api/students/:studentId/update-access', requireAuth, requireTeacher, 
       } else if (effectiveRole === 'free' || effectiveRole === 'student') {
         updateData.subscriptionStatus = 'inactive';
         updateData.subscriptionExpiredAt = nowIso;
+        updateData.subscriptionPeriodEnd = FieldValue.delete();
+        updateData.subscriptionExpiresAt = FieldValue.delete();
         updateData.subscriptionGraceUntil = FieldValue.delete();
         updateData.initRecurringTransId = FieldValue.delete();
         updateData.recurringCancelled = true;

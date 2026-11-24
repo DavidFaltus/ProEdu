@@ -273,7 +273,7 @@ export default function CourseDetail() {
                 <div className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 mt-0.5">
                   <CorrectCyanIcon size={16} />
                 </div>
-                <span><strong>Kompletní balíček ProEdu Premium</strong> (neomezené procvičování) v ceně.</span>
+                <span><strong>Kompletní balíček ProEdu Premium</strong> (neomezené procvičování bez žolíků a reklam, podrobné statistiky a doporučení, studijní plánovač v kalendáři, přehledné grafické listy i všechny budoucí funkce) v ceně.</span>
               </div>
             </div>
           </div>

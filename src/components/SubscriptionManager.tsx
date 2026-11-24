@@ -39,6 +39,7 @@ import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { cn } from '../lib/utils';
 import { sanitizeSafeUrl } from '../utils/svgUtils';
+import { PREMIUM_BENEFITS } from '../constants/premiumBenefits';
 import {
   trackPurchase,
   trackCheckoutCancelled,
@@ -441,31 +442,16 @@ export default function SubscriptionManager() {
         {/* Stavový informační box pro aktivní Premium */}
         {isPremium && !isCancelledAtPeriodEnd && !isPastDueOrGrace && (
           <div className="bg-[#FAF7F0] border border-[#E6E0D4] rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-[#F5C400]/20 text-[#1E1B18] flex items-center justify-center shrink-0 mt-0.5">
+            <div className="flex items-center gap-3.5">
+              <div className="w-10 h-10 rounded-xl bg-[#F5C400]/20 text-[#1E1B18] flex items-center justify-center shrink-0">
                 <Calendar size={20} />
               </div>
-              <div className="space-y-1">
-                <p className="text-sm font-black text-gray-900">
-                  Další automatické prodloužení: <span className="text-[#B80053]">{formattedPeriodEnd}</span>
-                </p>
-                <p className="text-xs text-gray-600 font-medium">
-                  Máš neomezený přístup ke všem procvičováním bez žolíků, studijním tahákům a vysvětlením.
-                </p>
-              </div>
+              <p className="text-sm font-black text-gray-900">
+                Další automatické prodloužení: <span className="text-[#B80053]">{formattedPeriodEnd}</span>
+              </p>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 shrink-0">
-              <Button
-                variant="outline"
-                onClick={handleOpenNewOrderModal}
-                title="Autorizovat novou platební kartu pro opakované platby a předplatit další období (+30 dní)"
-                className="rounded-xl border-gray-300 text-gray-700 hover:bg-white hover:text-gray-900 font-bold text-xs h-10 px-3.5 shrink-0 cursor-pointer flex items-center gap-1.5"
-              >
-                <CardGrayIcon size={15} />
-                <span>Změnit kartu</span>
-              </Button>
-
               <Button
                 variant="outline"
                 onClick={() => setIsCancelModalOpen(true)}
@@ -589,30 +575,14 @@ export default function SubscriptionManager() {
                   Zafixuj si poloviční cenu 99 Kč/měsíc napořád a získej okamžitý přístup ke všem nástrojům bez limitu žolíků.
                 </p>
                 <ul className="space-y-2 text-xs text-gray-700 font-medium">
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>Neomezené procvičování bez žolíků a čekání</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>Podrobné statistiky a chytrá doporučení k procvičování</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>Chytrý studijní plánovač v kalendáři</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>Přehledné grafické listy</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>100% bez reklam a přerušování</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CorrectCyanIcon size={14} className="shrink-0" />
-                    <span>Všechny budoucí funkce v ceně 99 Kč</span>
-                  </li>
+                  {PREMIUM_BENEFITS.map((benefit) => (
+                    <li key={benefit.id} className="flex items-start gap-2">
+                      <CorrectCyanIcon size={14} className="shrink-0 mt-0.5" />
+                      <span className={benefit.highlighted ? 'font-bold text-[#1E1B18]' : undefined}>
+                        {benefit.label}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
               </div>
 
@@ -1079,8 +1049,7 @@ export default function SubscriptionManager() {
         }}
         initialOrder={selectedOrderForPayment}
         type="premium"
-        title="Přejdi na ProEducator Premium"
-        description="Získej neomezené procvičování všech témat bez žolíků a kompletní studijní materiály."
+        title="Získej ProEdu Premium"
       />
     </div>
   );

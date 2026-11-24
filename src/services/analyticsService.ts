@@ -157,6 +157,20 @@ export const resolveRouteSeo = (pagePath: string): RouteSeoConfig => {
       indexable: false,
     };
   }
+  if (cleanPath === '/payment/success' || cleanPath === '/payment/cancelled' || cleanPath === '/payment/pending') {
+    const titleByPath =
+      cleanPath === '/payment/success'
+        ? 'Platba úspěšná | ProEdu'
+        : cleanPath === '/payment/cancelled'
+          ? 'Platba zrušena | ProEdu'
+          : 'Stav platby | ProEdu';
+    return {
+      title: titleByPath,
+      description: 'Výsledek platby předplatného ProEducator Premium.',
+      canonicalPath: cleanPath,
+      indexable: false,
+    };
+  }
   return {
     title: 'Stránka nenalezena (404) | ProEdu',
     description: 'Požadovaná stránka nebyla nalezena.',

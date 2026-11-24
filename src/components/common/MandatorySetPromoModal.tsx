@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Crown, Sparkles, Check, ArrowRight, Zap } from 'lucide-react';
-import { StarYellowIcon } from './CustomIcon';
+import { Crown, Sparkles, Check, ArrowRight } from 'lucide-react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/dialog';
+import { PREMIUM_BENEFITS } from '../../constants/premiumBenefits';
 
 interface MandatorySetPromoModalProps {
   isOpen: boolean;
@@ -71,27 +71,28 @@ export default function MandatorySetPromoModal({
         </div>
 
         {/* Benefits list */}
-        <div className="px-6 py-3 space-y-2.5 text-left text-xs font-bold text-gray-700">
-          <div className="flex items-center gap-2.5 p-2.5 rounded-2xl bg-[#FAF7F0] border border-amber-200/50">
-            <div className="w-6 h-6 rounded-xl bg-amber-400 text-[#1E1B18] flex items-center justify-center shrink-0">
-              <Zap size={14} />
+        <div className="px-6 py-2.5 space-y-2 text-left text-xs font-bold text-gray-700">
+          {PREMIUM_BENEFITS.map((benefit) => (
+            <div
+              key={benefit.id}
+              className={`flex items-start gap-2.5 px-3 py-2 rounded-2xl border ${
+                benefit.highlighted
+                  ? 'bg-amber-50/80 border-amber-200/80 text-[#1E1B18]'
+                  : 'bg-[#FAF7F0] border-gray-200/60'
+              }`}
+            >
+              <div
+                className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                  benefit.highlighted
+                    ? 'bg-amber-200 text-amber-900'
+                    : 'bg-emerald-100 text-emerald-700'
+                }`}
+              >
+                <Check size={12} strokeWidth={3} />
+              </div>
+              <span className="leading-snug">{benefit.label}</span>
             </div>
-            <span>Neomezený počet žolíků i otázek každý den</span>
-          </div>
-
-          <div className="flex items-center gap-2.5 p-2.5 rounded-2xl bg-blue-50/70 border border-blue-100">
-            <div className="w-6 h-6 rounded-xl bg-blue-500 text-white flex items-center justify-center shrink-0">
-              <Check size={14} />
-            </div>
-            <span>Všechny úlohy 100% bez reklam a bez čekání</span>
-          </div>
-
-          <div className="flex items-center gap-2.5 p-2.5 rounded-2xl bg-rose-50/70 border border-rose-100">
-            <div className="w-6 h-6 rounded-xl bg-[#B80053] text-white flex items-center justify-center shrink-0">
-              <StarYellowIcon size={14} />
-            </div>
-            <span>Kompletní autorská řešení a video vysvětlení</span>
-          </div>
+          ))}
         </div>
 
         {/* Actions & Countdown */}

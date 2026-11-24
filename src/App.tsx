@@ -40,6 +40,7 @@ const PracticeSession = React.lazy(() => import('./pages/PracticeSession'));
 const Terms = React.lazy(() => import('./pages/Terms'));
 const PrivacyPolicy = React.lazy(() => import('./pages/PrivacyPolicy'));
 const ShippingAndPayment = React.lazy(() => import('./pages/ShippingAndPayment'));
+const PaymentResult = React.lazy(() => import('./pages/PaymentResult'));
 
 import Footer from './components/common/Footer';
 import DevMonetizationToolbar from './components/common/DevMonetizationToolbar';
@@ -346,6 +347,11 @@ function AppContent() {
               <Route path="/contact" element={<Contact />} />
               <Route path="/login" element={<Login />} />
               <Route path="/reset-password" element={<ResetPassword />} />
+
+              {/* Návratové stránky z platební brány Comgate */}
+              <Route path="/payment/success" element={<PaymentResult routeStatus="success" />} />
+              <Route path="/payment/cancelled" element={<PaymentResult routeStatus="cancelled" />} />
+              <Route path="/payment/pending" element={<PaymentResult routeStatus="pending" />} />
 
               {/* Právní dokumenty */}
               <Route path="/terms" element={<Terms />} />

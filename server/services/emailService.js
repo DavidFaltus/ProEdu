@@ -12,6 +12,12 @@ const SMTP_FROM = (process.env.SMTP_FROM || 'ProEdu <info@pro-edu.eu>').trim();
 const ADMIN_ORDER_NOTIFICATION_EMAIL = (process.env.ADMIN_ORDER_NOTIFICATION_EMAIL || 'info@pro-edu.eu').trim();
 const APP_URL = process.env.APP_URL || 'https://proeducator.eu';
 const SAFE_APP_URL = sanitizeHttpUrl(APP_URL) || 'https://proeducator.eu';
+const PUBLIC_ASSET_BASE_URL =
+  SAFE_APP_URL && !/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?(?:\/|$)/i.test(SAFE_APP_URL)
+    ? SAFE_APP_URL.replace(/\/+$/, '')
+    : 'https://www.proeducator.eu';
+const BRAND_LOGO_URL = `${PUBLIC_ASSET_BASE_URL}/photo/proeducator-logo-email.png`;
+const BRAND_FONT_URL = `${PUBLIC_ASSET_BASE_URL}/fonts/PetitCochon.ttf`;
 
 function sanitizeHeaderValue(value) {
   return String(value ?? '').replace(/[\r\n\0]+/g, ' ').trim();
@@ -249,6 +255,122 @@ export async function sendEmail({
 // ŠABLONY E-MAILŮ V DESIGNU PROEDU
 // -------------------------------------------------------------
 
+function renderBrandedEmailLayout({
+  accentColor = '#0fa384',
+  linkColor = '#0a6f5a',
+  previewText,
+  headline,
+  subheadline,
+  bodyHtml
+}) {
+  const safeHeadline = escapeHtml(headline);
+  const safeSubheadline = escapeHtml(subheadline);
+  const safePreview = escapeHtml(previewText || headline);
+  const safeAccent = escapeHtml(accentColor);
+  const safeLinkColor = escapeHtml(linkColor);
+  const safeLogoUrl = escapeHtml(BRAND_LOGO_URL);
+  const safeFontUrl = escapeHtml(BRAND_FONT_URL);
+
+  return `
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${safeHeadline}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Caveat+Brush&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    @font-face {
+      font-family: 'Le Petit Cochon';
+      src: url('${safeFontUrl}') format('truetype');
+      font-weight: 400;
+      font-style: normal;
+      font-display: swap;
+    }
+    body { margin: 0; padding: 0; background-color: #faf5ee; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #26354d; -webkit-font-smoothing: antialiased; }
+    a { color: ${safeLinkColor}; }
+    @media only screen and (max-width: 560px) {
+      .outer-pad { padding: 16px 10px !important; }
+      .card-logo { padding: 24px 20px 0 !important; }
+      .card-body { padding: 18px 22px 28px !important; font-size: 15px !important; }
+      .card-title { font-size: 32px !important; }
+      .card-footer { padding: 20px 20px 24px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#faf5ee;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#26354d;">
+  <div style="display:none;font-size:1px;color:#faf5ee;line-height:1px;max-height:0px;max-width:0px;opacity:0;overflow:hidden;">
+    ${safePreview}
+  </div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#faf5ee;width:100%;">
+    <tr>
+      <td align="center" class="outer-pad" style="padding:28px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;width:100%;background-color:#ffffff;border:1px solid #efe6d8;border-radius:28px;overflow:hidden;box-shadow:0 6px 20px rgba(120,90,40,0.08);">
+          <tr>
+            <td style="height:10px;line-height:10px;font-size:10px;background-color:${safeAccent};">&nbsp;</td>
+          </tr>
+          <tr>
+            <td align="center" class="card-logo" style="padding:30px 40px 0;text-align:center;">
+              <img src="${safeLogoUrl}" alt="ProEdu-cator" width="230" height="53" style="display:inline-block;width:230px;max-width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+            </td>
+          </tr>
+          <tr>
+            <td class="card-body" style="padding:22px 44px 36px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:16px;line-height:1.65;color:#26354d;">
+              <h1 class="card-title" style="margin:0 0 6px;text-align:center;font-family:'Le Petit Cochon','Caveat Brush','Comic Sans MS',cursive,Arial,sans-serif;font-weight:400;font-size:38px;line-height:1.15;color:#26354d;">${safeHeadline}</h1>
+              <p style="margin:0 0 26px;text-align:center;font-size:15px;line-height:1.5;color:#5a6578;">${safeSubheadline}</p>
+              ${bodyHtml}
+              <p style="margin:26px 0 0;font-size:16px;line-height:1.65;color:#26354d;">Měj se fajn,<br><strong style="color:#26354d;">tvůj tým ProEdu</strong></p>
+            </td>
+          </tr>
+          <tr>
+            <td class="card-footer" style="background-color:#faf5ee;border-top:1px solid #efe6d8;padding:22px 40px 26px;text-align:center;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:13px;line-height:1.7;color:#5a6578;">
+              <strong style="color:#26354d;">ProEdu, s. r. o.</strong> – příprava na přijímací zkoušky<br>
+              Aplikace <a href="https://proeducator.eu" style="color:${safeLinkColor};text-decoration:underline;">proeducator.eu</a> &middot; Dotazy a podpora: <a href="mailto:info@pro-edu.eu" style="color:${safeLinkColor};text-decoration:underline;">info@pro-edu.eu</a>
+              <div style="margin-top:8px;font-size:12px;color:#5a6578;">Tento e-mail byl vygenerován automaticky pro tvůj účet. Pokud jsi o nic nežádal(a), můžeš ho ignorovat.</div>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
+
+function renderBrandedCtaButton({ href, label, bgColor, textColor = '#ffffff' }) {
+  const safeHref = escapeHtml(href);
+  const safeLabel = escapeHtml(label);
+  return `
+    <div style="margin:24px 0;text-align:center;">
+      <a href="${safeHref}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background-color:${escapeHtml(bgColor)};color:${escapeHtml(textColor)} !important;text-decoration:none;font-family:'Inter',Arial,sans-serif;font-weight:700;font-size:16px;line-height:1.2;padding:14px 30px;border-radius:999px;box-shadow:0 4px 0 rgba(0,0,0,0.14);">${safeLabel}</a>
+    </div>
+  `.trim();
+}
+
+function renderTealRecapTable(rows) {
+  const trHtml = rows
+    .map(
+      ({ label, value, highlight = false }, idx) => `
+      <tr>
+        <td style="padding:11px 0;${idx > 0 ? 'border-top:1px solid #c9e8de;' : ''}font-size:15px;color:#3d6b5f;vertical-align:top;">${escapeHtml(label)}</td>
+        <td style="padding:11px 0 11px 16px;${idx > 0 ? 'border-top:1px solid #c9e8de;' : ''}font-size:15px;font-weight:700;color:${highlight ? '#0a6f5a' : '#26354d'};text-align:right;word-break:break-all;vertical-align:top;">${escapeHtml(value)}</td>
+      </tr>
+    `
+    )
+    .join('');
+
+  return `
+    <div style="background-color:#e5f6f1;border:1px solid #c9e8de;border-radius:18px;padding:6px 20px;margin:0 0 14px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
+        ${trHtml}
+      </table>
+    </div>
+  `.trim();
+}
+
 function renderEmailLayout({ previewText, headline, subheadline, bodyHtml }) {
   const safeHeadline = escapeHtml(headline);
   const safeSubheadline = escapeHtml(subheadline);
@@ -312,27 +434,38 @@ function renderEmailLayout({ previewText, headline, subheadline, bodyHtml }) {
  */
 export async function sendOtpEmail({ to, name, code }) {
   const safeCode = escapeHtml(code);
-  const safeName = escapeHtml(name || 'studente');
-  const subject = 'Váš ověřovací kód ProEdu';
-  const headline = 'Ověření e-mailové adresy';
-  const subheadline = 'Dokončení registrace vašeho účtu ProEdu';
-  const previewText = `Váš 6místný ověřovací kód je ${code}. Platnost 15 minut.`;
+  const subject = 'Potvrď svůj e-mail – ověřovací kód ProEdu';
+  const headline = 'Potvrď svůj e-mail';
+  const subheadline = 'Dokončení registrace do ProEdu';
+  const previewText = `Tvůj 6místný ověřovací kód do ProEdu je ${code}. Kód platí 15 minut.`;
 
   const bodyHtml = `
-    <p style="margin-top:0;">Ahoj <strong>${safeName}</strong>,</p>
-    <p>děkujeme za registraci do vzdělávací platformy <strong>ProEdu</strong>. Pro dokončení vytvoření účtu a ověření vaší e-mailové adresy zadejte prosím následující šestimístný kód:</p>
-    
-    <div class="code-box">
-      <div class="code-note">JEDNORÁZOVÝ OVĚŘOVACÍ KÓD</div>
-      <div class="code-digits">${safeCode}</div>
-      <div class="code-note">⏱️ Kód je platný <strong>15 minut</strong></div>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 18px;">díky za registraci do <strong style="color:#26354d;">ProEdu!</strong> Pro dokončení vytvoření účtu zadej tento 6místný ověřovací kód v aplikaci:</p>
+
+    <div style="background-color:#eaf1fd;border:1px solid #c8daf8;border-radius:18px;padding:22px 24px;text-align:center;margin:0 0 20px;">
+      <div style="font-size:12px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#3b5d9a;margin-bottom:8px;">Jednorázový ověřovací kód</div>
+      <div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;font-variant-numeric:tabular-nums;font-size:40px;font-weight:700;letter-spacing:10px;padding-left:10px;line-height:1.15;color:#1e3a8a;margin:4px 0 10px;">${safeCode}</div>
+      <div style="font-size:13px;font-weight:600;color:#3b5d9a;">Kód platí 15 minut</div>
     </div>
 
-    <p style="color:#475569; font-size:14px;">Kód zadejte do okna v aplikaci. Pokud jste se neregistrovali, tento e-mail jednoduše ignorujte – účet nebude aktivován.</p>
+    <p style="margin:0;font-size:14px;line-height:1.6;color:#5a6578;">Kód stačí zkopírovat nebo opsat do registračního okna. Pokud ses do ProEdu neregistroval(a), nic se neděje – tento e-mail můžeš smazat a účet se nevytvoří.</p>
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
-  return sendEmail({ to, subject, html });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#4a7ce0',
+    linkColor: '#2e5cb8',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
+  return sendEmail({
+    to,
+    subject,
+    html,
+    text: `Ahoj, díky za registraci do ProEdu! Tvůj 6místný ověřovací kód je: ${code}. Kód platí 15 minut. Pokud ses neregistroval(a), můžeš tento e-mail smazat.`
+  });
 }
 
 /**
@@ -398,61 +531,75 @@ export async function sendOrderQrEmail({ to, name, orderId, amount, variableSymb
  * 3. Šablona: Potvrzení platby a aktivace předplatného ProEducator Premium
  */
 export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, planTitle = 'ProEducator Premium', periodEnd, invoiceNumber, attachments = [] }) {
-  const safeName = escapeHtml(name || 'studente');
   const safePlanTitle = escapeHtml(planTitle);
-  const safeOrderId = escapeHtml(orderId);
-  const safeInvoiceNumber = invoiceNumber ? escapeHtml(invoiceNumber) : '';
-  const safeAmount = escapeHtml(amount);
+  const formattedPeriod = periodEnd ? new Date(periodEnd).toLocaleDateString('cs-CZ') : 'dle tvého tarifu';
 
-  const subject = `Potvrzení platby – Váš balíček ${sanitizeHeaderValue(planTitle)} je aktivní!`;
+  const subject = `Platba byla úspěšně přijata – ${sanitizeHeaderValue(planTitle)}`;
   const headline = 'Platba byla úspěšně přijata';
-  const subheadline = `Balíček ${planTitle} byl aktivován`;
-  const previewText = `Vaše platba ve výši ${amount} Kč byla schválena. Prémiové funkce jsou vám k dispozici!`;
+  const subheadline = `Balíček ${planTitle} je aktivní`;
+  const previewText = `Tvoje platba ${amount} Kč dorazila v pořádku. Balíček ${planTitle} je aktivní!`;
 
-  const formattedPeriod = periodEnd ? new Date(periodEnd).toLocaleDateString('cs-CZ') : 'dle vašeho tarifu';
-  const safePeriod = escapeHtml(formattedPeriod);
+  const recapRows = [
+    { label: 'Číslo objednávky', value: String(orderId ?? '') },
+    ...(invoiceNumber ? [{ label: 'Číslo faktury', value: String(invoiceNumber) }] : []),
+    { label: 'Uhrazená částka', value: `${amount} Kč` },
+    { label: 'Předplaceno do', value: formattedPeriod, highlight: true },
+    { label: 'Stav účtu', value: 'Aktivní (Premium)' }
+  ];
+
+  const premiumBenefits = [
+    'Neomezené procvičování bez žolíků a čekání',
+    'Podrobné statistiky a chytrá doporučení k procvičování',
+    'Chytrý studijní plánovač v kalendáři',
+    'Přehledné grafické listy',
+    '100% bez reklam a přerušování',
+    'Všechny budoucí funkce v ceně 99 Kč'
+  ];
+
+  const benefitsHtml = premiumBenefits
+    .map(
+      (item, idx) => `
+      <tr>
+        <td style="width:22px;padding:${idx === 0 ? '0' : '6px'} 8px 0 0;vertical-align:top;font-size:14px;font-weight:700;color:#0fa384;">&#10003;</td>
+        <td style="padding:${idx === 0 ? '0' : '6px'} 0 0 0;vertical-align:top;font-size:14px;line-height:1.5;color:#26354d;${idx === premiumBenefits.length - 1 ? 'font-weight:700;' : ''}">${escapeHtml(item)}</td>
+      </tr>
+    `
+    )
+    .join('');
 
   const bodyHtml = `
-    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
-    <p>s radostí potvrzujeme, že vaše platba za balíček <strong>${safePlanTitle}</strong> proběhla v pořádku a prémiové funkce máte okamžitě k dispozici!</p>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 14px;">tvoje platba dorazila v pořádku a balíček <strong style="color:#26354d;">${safePlanTitle}</strong> je aktivní. Tady je rekapitulace:</p>
 
-    <table class="info-table">
-      <tr>
-        <td class="label">Číslo objednávky:</td>
-        <td class="value">${safeOrderId}</td>
-      </tr>
-      ${safeInvoiceNumber ? `
-      <tr>
-        <td class="label">Číslo faktury:</td>
-        <td class="value"><strong>${safeInvoiceNumber}</strong></td>
-      </tr>
-      ` : ''}
-      <tr>
-        <td class="label">Uhrazená částka:</td>
-        <td class="value"><strong>${safeAmount} Kč</strong></td>
-      </tr>
-      <tr>
-        <td class="label">Předplaceno do:</td>
-        <td class="value"><span style="color:#16A34A; font-weight:800;">${safePeriod}</span></td>
-      </tr>
-      <tr>
-        <td class="label">Stav účtu:</td>
-        <td class="value">Aktivní (Premium)</td>
-      </tr>
-    </table>
+    ${renderTealRecapTable(recapRows)}
 
-    ${attachments.length > 0 ? `<p style="font-size:13px; color:#334155;">📄 Fakturu / daňový doklad naleznete přiloženou v příloze tohoto e-mailu (PDF).</p>` : ''}
+    ${attachments.length > 0 ? `<p style="margin:0;font-size:14px;color:#5a6578;">Fakturu / daňový doklad najdeš v příloze tohoto e-mailu (PDF).</p>` : ''}
 
-    <div style="text-align: center; margin: 28px 0;">
-      <a href="${escapeHtml(SAFE_APP_URL)}/dashboard" class="btn">Vstoupit do aplikace ProEdu</a>
+    ${renderBrandedCtaButton({
+      href: `${SAFE_APP_URL}/dashboard`,
+      label: 'Vstoupit do aplikace ProEdu',
+      bgColor: '#0fa384',
+      textColor: '#ffffff'
+    })}
+
+    <div style="background-color:#f4fbf9;border:1px solid #c9e8de;border-radius:18px;padding:16px 20px;margin:0 0 14px;">
+      <p style="margin:0 0 10px;font-size:14px;font-weight:700;color:#0a6f5a;">Co všechno máš s ProEdu Premium k dispozici:</p>
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">
+        ${benefitsHtml}
+      </table>
     </div>
 
-    <p style="font-size:14px; color:#475569;">
-      Jako Premium uživatel máte neomezený přístup ke všem testům, detailním rozborům a procvičování bez reklamních limitů. Přejeme hodně úspěchů při studiu!
-    </p>
+    <p style="margin:0;">Ať se ti při učení daří!</p>
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#0fa384',
+    linkColor: '#0a6f5a',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
   const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
   const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
@@ -465,51 +612,47 @@ export async function sendPaymentConfirmedEmail({ to, name, orderId, amount, pla
  * Vyžadováno pravidly karetních asociací Visa/Mastercard.
  */
 export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amount, nextPeriodEnd, invoiceNumber, attachments = [] }) {
-  const safeName = escapeHtml(name || 'zákazníku');
-  const safeOrderId = escapeHtml(orderId);
-  const safeInvoiceNumber = invoiceNumber ? escapeHtml(invoiceNumber) : '';
-  const safeAmount = escapeHtml(amount);
   const formattedPeriod = nextPeriodEnd ? new Date(nextPeriodEnd).toLocaleDateString('cs-CZ') : '';
-  const safePeriod = escapeHtml(formattedPeriod);
 
-  const subject = `Potvrzení o prodloužení předplatného ProEducator Premium (${sanitizeHeaderValue(amount)} Kč)`;
-  const headline = 'Předplatné bylo úspěšně prodlouženo';
-  const subheadline = `Měsíční platba ${amount} Kč byla zprocesována`;
-  const previewText = `Vaše předplatné ProEducator Premium bylo automaticky prodlouženo do ${formattedPeriod}.`;
+  const subject = `Předplatné ProEducator Premium bylo prodlouženo (${sanitizeHeaderValue(amount)} Kč)`;
+  const headline = 'Předplatné bylo prodlouženo';
+  const subheadline = `Měsíční platba ${amount} Kč proběhla v pořádku`;
+  const previewText = `Tvoje předplatné ProEducator Premium bylo automaticky prodlouženo do ${formattedPeriod}.`;
+
+  const recapRows = [
+    { label: 'Číslo transakce', value: String(orderId ?? '') },
+    ...(invoiceNumber ? [{ label: 'Číslo faktury', value: String(invoiceNumber) }] : []),
+    { label: 'Uhrazená částka', value: `${amount} Kč` },
+    { label: 'Předplaceno do', value: formattedPeriod, highlight: true },
+    { label: 'Stav účtu', value: 'Aktivní (Premium)' }
+  ];
 
   const bodyHtml = `
-    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
-    <p>potvrzujeme úspěšné automatické stržení pravidelné měsíční platby za vaše předplatné <strong>ProEducator Premium</strong> prostřednictvím platební brány Comgate.</p>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 14px;">tvoje pravidelná měsíční platba za <strong style="color:#26354d;">ProEducator Premium</strong> přes platební bránu Comgate proběhla v pořádku. Tady je rekapitulace:</p>
 
-    <table class="info-table">
-      <tr>
-        <td class="label">Číslo transakce:</td>
-        <td class="value">${safeOrderId}</td>
-      </tr>
-      ${safeInvoiceNumber ? `
-      <tr>
-        <td class="label">Číslo faktury:</td>
-        <td class="value"><strong>${safeInvoiceNumber}</strong></td>
-      </tr>
-      ` : ''}
-      <tr>
-        <td class="label">Částka:</td>
-        <td class="value"><strong>${safeAmount} Kč</strong></td>
-      </tr>
-      <tr>
-        <td class="label">Platnost do:</td>
-        <td class="value"><span style="color:#16A34A; font-weight:800;">${safePeriod}</span></td>
-      </tr>
-    </table>
+    ${renderTealRecapTable(recapRows)}
 
-    ${attachments.length > 0 ? `<p style="font-size:13px; color:#334155;">📄 Fakturu / daňový doklad za toto období naleznete v příloze (PDF).</p>` : ''}
+    ${attachments.length > 0 ? `<p style="margin:0;font-size:14px;color:#5a6578;">Fakturu / daňový doklad za toto období najdeš v příloze tohoto e-mailu (PDF).</p>` : ''}
 
-    <p style="font-size:13px; color:#64748B;">
-      Podrobnosti o předplatném nebo případné zrušení můžete kdykoliv provést přímo ve svém profilu v sekci <a href="${escapeHtml(SAFE_APP_URL)}/settings">Nastavení účtu</a>.
-    </p>
+    ${renderBrandedCtaButton({
+      href: `${SAFE_APP_URL}/dashboard`,
+      label: 'Vstoupit do aplikace ProEdu',
+      bgColor: '#0fa384',
+      textColor: '#ffffff'
+    })}
+
+    <p style="margin:0;font-size:14px;color:#5a6578;">Podrobnosti o předplatném nebo jeho zrušení najdeš kdykoliv ve svém profilu v sekci <a href="${escapeHtml(SAFE_APP_URL)}/settings?tab=subscription" style="color:#0a6f5a;text-decoration:underline;">Nastavení účtu</a>.</p>
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#0fa384',
+    linkColor: '#0a6f5a',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
   const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
   const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
@@ -521,28 +664,42 @@ export async function sendRecurringChargeSuccessEmail({ to, name, orderId, amoun
  * 5. Šablona: Upozornění na selhání automatické opakované platby
  */
 export async function sendRecurringChargeFailedEmail({ to, name, amount, reason }) {
-  const safeName = escapeHtml(name || 'zákazníku');
   const safeAmount = escapeHtml(amount);
   const rawReason = reason || 'Karta byla zamítnuta vydavatelskou bankou';
   const safeReason = escapeHtml(rawReason);
 
-  const subject = 'Upozornění: Nepodařilo se obnovit vaše předplatné ProEducator Premium';
-  const headline = 'Platba předplatného se nezdařila';
-  const subheadline = 'Je vyžadována aktualizace platební karty';
-  const previewText = `Automatická platba za ProEducator Premium selhala (${reason || 'Zamítnuto bankou'}).`;
+  const subject = 'Nepodařilo se obnovit tvoje předplatné ProEducator Premium';
+  const headline = 'Platba za Premium neprošla';
+  const subheadline = 'Aktualizuj prosím svou platební kartu';
+  const previewText = `Automatická platba za ProEducator Premium (${amount} Kč) neprošla. Běží 3denní ochranná lhůta.`;
 
   const bodyHtml = `
-    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
-    <p>při pokusu o automatické obnovení vašeho předplatného <strong>ProEducator Premium</strong> (${safeAmount} Kč) došlo k chybě: <em>${safeReason}</em>.</p>
-    
-    <p>Aby vaše prémiové funkce a přístup k výukovým materiálům zůstaly zachovány, běží nyní <strong>3denní ochranná lhůta (Grace Period)</strong>, během které se pokusíme platbu zopakovat. Kartu můžete také kdykoliv okamžitě aktualizovat v nastavení předplatného:</p>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 14px;">při automatickém prodloužení tvého předplatného <strong style="color:#26354d;">ProEducator Premium</strong> (${safeAmount} Kč) se platbu nepodařilo strhnout.</p>
 
-    <div style="text-align: center; margin: 24px 0;">
-      <a href="${escapeHtml(SAFE_APP_URL)}/settings?tab=subscription" class="btn">Aktualizovat platební kartu</a>
+    <div style="background-color:#f8e9f0;border:1px solid #efcddd;border-radius:18px;padding:16px 20px;font-size:15px;line-height:1.55;color:#6b2f4a;margin:0 0 16px;">
+      <strong>Důvod:</strong> ${safeReason}<br>
+      Aby ti výhody Premium zůstaly aktivní, běží teď <strong>3denní ochranná lhůta</strong>, během které platbu zkusíme strhnout znovu.
     </div>
+
+    <p style="margin:0;">Platební kartu můžeš kdykoliv hned aktualizovat v nastavení svého předplatného:</p>
+
+    ${renderBrandedCtaButton({
+      href: `${SAFE_APP_URL}/settings?tab=subscription`,
+      label: 'Aktualizovat platební kartu',
+      bgColor: '#c47294',
+      textColor: '#ffffff'
+    })}
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#c47294',
+    linkColor: '#7e3b59',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
   const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
   const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
@@ -803,33 +960,42 @@ export async function sendBugReportEmail({
  * 7. Šablona: Obnovení zapomenutého hesla
  */
 export async function sendPasswordResetEmailTemplate({ to, name, resetLink }) {
-  const safeName = escapeHtml(name || 'uživateli');
   const safeLink = sanitizeHttpUrl(resetLink) || resetLink;
-  const subject = 'Obnovení hesla k vašemu účtu ProEdu';
-  const headline = 'Obnovení zapomenutého hesla';
-  const subheadline = 'Nastavení nového přístupového hesla';
-  const previewText = 'Požadavek na obnovení hesla k vašemu účtu ProEdu. Platnost odkazu je 1 hodina.';
+  const escapedLink = escapeHtml(safeLink);
+  const subject = 'Nastav si nové heslo – ProEdu';
+  const headline = 'Nastav si nové heslo';
+  const subheadline = 'Obnovení zapomenutého hesla';
+  const previewText = 'Požadavek na obnovení zapomenutého hesla k účtu ProEdu. Odkaz platí 1 hodinu.';
 
   const bodyHtml = `
-    <p style="margin-top:0;">Ahoj <strong>${safeName}</strong>,</p>
-    <p>obdrželi jsme žádost o obnovení hesla k vašemu účtu v aplikaci <strong>ProEdu</strong>.</p>
-    <p>Kliknutím na tlačítko níže si můžete jednoduše nastavit nové heslo:</p>
-    
-    <div style="text-align: center; margin: 28px 0;">
-      <a href="${safeLink}" class="btn" target="_blank" rel="noopener noreferrer" style="color:#ffffff !important;">Nastavit nové heslo</a>
-    </div>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 14px;">požádal(a) jsi o obnovení zapomenutého hesla. Klikni na tlačítko a nastav si nové.</p>
 
-    <p style="font-size:13px; color:#64748B; word-break:break-all;">
-      Pokud tlačítko nefunguje, zkopírujte a otevřete následující odkaz ve svém prohlížeči:<br/>
-      <a href="${safeLink}" style="color:#2B44B8;">${escapeHtml(safeLink)}</a>
+    ${renderBrandedCtaButton({
+      href: safeLink,
+      label: 'Nastavit nové heslo',
+      bgColor: '#f5c400',
+      textColor: '#26354d'
+    })}
+
+    <p style="margin:0 0 4px;font-size:14px;color:#5a6578;">Pokud tlačítko nefunguje, zkopíruj tento odkaz do prohlížeče:</p>
+    <p style="margin:0 0 20px;font-size:14px;word-break:break-all;color:#7a5a00;">
+      <a href="${escapedLink}" style="color:#7a5a00;text-decoration:underline;word-break:break-all;">${escapedLink}</a>
     </p>
 
-    <div style="background-color:#F1F5F9; border-radius:12px; padding:14px; margin-top:24px; font-size:13px; color:#475569;">
-      ⏱️ <strong>Bezpečnostní upozornění:</strong> Tento odkaz je platný <strong>1 hodinu</strong>. Pokud jste o obnovení hesla nežádali, váš účet je v bezpečí a tento e-mail můžete ignorovat.
+    <div style="background-color:#fff6d1;border:1px solid #f1dc8a;border-radius:18px;padding:16px 20px;font-size:15px;line-height:1.55;color:#5a4300;">
+      <strong>Pozor, odkaz platí jen 1 hodinu.</strong> Pokud jsi o obnovení hesla nežádal(a), nic se neděje – tvůj účet je v bezpečí a e-mail můžeš smazat.
     </div>
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#f5c400',
+    linkColor: '#7a5a00',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
   return sendEmail({ to, subject, html, logDetails: { resetLink } });
 }
 
@@ -837,7 +1003,6 @@ export async function sendPasswordResetEmailTemplate({ to, name, resetLink }) {
  * 8. Šablona: Potvrzení o zrušení předplatného a opakovaných plateb
  */
 export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, immediate = false }) {
-  const safeName = escapeHtml(name || 'zákazníku');
   const formattedEndDate = periodEnd
     ? new Date(periodEnd).toLocaleDateString('cs-CZ', {
         day: 'numeric',
@@ -845,31 +1010,47 @@ export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, imme
         year: 'numeric'
       })
     : null;
+  const isActiveUntilEnd = !immediate && Boolean(formattedEndDate);
 
-  const subject = 'Potvrzení o zrušení předplatného – ProEducator';
-  const headline = 'Automatické platby byly zrušeny';
-  const subheadline = formattedEndDate
-    ? `Výhody Premium jsou aktivní do ${escapeHtml(formattedEndDate)}`
-    : 'Opakované strhávání z karty bylo vypnuto';
-  const previewText = 'Potvrzení o zrušení předplatného ProEducator. Další platba z karty již neproběhne.';
+  const subject = 'Automatické platby jsou zrušené – ProEdu';
+  const headline = 'Automatické platby jsou zrušené';
+  const subheadline = isActiveUntilEnd
+    ? `Výhody Premium ti běží do ${formattedEndDate}`
+    : 'Předplatné bylo okamžitě ukončeno';
+  const previewText = isActiveUntilEnd
+    ? `Tvoje automatické platby jsme zrušili. Výhody Premium ti běží do ${formattedEndDate}.`
+    : 'Tvoje automatické platby jsme zrušili a předplatné skončilo. Z tvé karty už žádná další platba neproběhne.';
+
+  const introParagraph = isActiveUntilEnd
+    ? `tvoje automatické platby jsme zrušili. Všechny výhody <strong style="color:#26354d;">ProEducator Premium</strong> můžeš dál naplno využívat až do <strong style="color:#26354d;">${escapeHtml(formattedEndDate)}</strong>, pak se účet přepne na bezplatný tarif.`
+    : 'tvoje automatické platby jsme zrušili a předplatné skončilo.';
 
   const bodyHtml = `
-    <p style="margin-top:0;">Dobrý den, <strong>${safeName}</strong>,</p>
-    <p>potvrzujeme, že Vaše předplatné <strong>ProEducator Premium</strong> a související <strong>opakované strhávání plateb přes platební bránu Comgate bylo úspěšně zrušeno</strong>.</p>
-    
-    <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
-      <p style="margin: 0; color: #166534; font-weight: 600;">✓ Žádná další platba z Vaší platební karty již neproběhne.</p>
+    <p style="margin:0 0 14px;">Ahoj,</p>
+    <p style="margin:0 0 14px;">${introParagraph}</p>
+
+    <div style="background-color:#f8e9f0;border:1px solid #efcddd;border-radius:18px;padding:16px 20px;font-size:15px;line-height:1.55;color:#6b2f4a;">
+      <strong>Z tvé platební karty už žádná další platba neproběhne.</strong>
     </div>
 
-    ${formattedEndDate
-      ? `<p>Všechny výhody tarifu Premium můžete plně využívat až do konce stávajícího zaplaceného období, tedy do <strong>${escapeHtml(formattedEndDate)}</strong>. Po tomto datu bude Váš účet automaticky přepnut na bezplatný tarif bez jakéhokoliv dalšího poplatku.</p>`
-      : `<p>Váš účet byl bezpečně odhlášen z automatického obnovování.</p>`
-    }
+    <p style="margin:16px 0 0;">Pokud se k Premium budeš někdy chtít vrátit, stačí si tarif znovu aktivovat ve svém profilu.</p>
 
-    <p style="color: #6b7280; font-size: 13px; margin-top: 24px;">Pokud se kdykoliv v budoucnu rozhodnete k Premium vrátit, můžete si tarif znovu jednoduše aktivovat ve svém profilu.</p>
+    ${renderBrandedCtaButton({
+      href: `${SAFE_APP_URL}/settings?tab=subscription`,
+      label: 'Přejít do profilu',
+      bgColor: '#c47294',
+      textColor: '#ffffff'
+    })}
   `;
 
-  const html = renderEmailLayout({ previewText, headline, subheadline, bodyHtml });
+  const html = renderBrandedEmailLayout({
+    accentColor: '#c47294',
+    linkColor: '#7e3b59',
+    previewText,
+    headline,
+    subheadline,
+    bodyHtml
+  });
   const normalizedTo = typeof to === 'string' ? to.trim().toLowerCase() : '';
   const bcc = (ADMIN_ORDER_NOTIFICATION_EMAIL && ADMIN_ORDER_NOTIFICATION_EMAIL.toLowerCase() !== normalizedTo)
     ? ADMIN_ORDER_NOTIFICATION_EMAIL
@@ -879,6 +1060,8 @@ export async function sendSubscriptionCancelledEmail({ to, name, periodEnd, imme
     bcc,
     subject,
     html,
-    text: `Dobrý den, ${name || 'zákazníku'}, potvrzujeme zrušení předplatného ProEducator a zastavení opakovaných plateb. Další platba z karty již neproběhne.`
+    text: isActiveUntilEnd
+      ? `Ahoj, tvoje automatické platby jsme zrušili. Z tvé platební karty už žádná další platba neproběhne. Výhody Premium můžeš využívat až do ${formattedEndDate}.`
+      : 'Ahoj, tvoje automatické platby jsme zrušili a předplatné skončilo. Z tvé platební karty už žádná další platba neproběhne.'
   });
 }
